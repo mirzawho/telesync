@@ -1,0 +1,17 @@
+{
+  "go_type": "wordpressPermissionsEntry",
+  "properties": {
+    "site_id": {
+      "$ref": "#/components/schemas/int64",
+      "go_type": "int64",
+      "type": "integer"
+    },
+    "permissions": {
+      "go_type": "map[string]string"
+    }
+  },
+  "required": [
+    "permissions",
+    "site_id"
+  ]
+}

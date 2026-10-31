@@ -1,0 +1,46 @@
+{
+  "go_type": "wordpressRequest",
+  "properties": {
+    "url": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "username": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "password": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "category_ids": {
+      "$ref": "#/components/schemas/int64",
+      "go_type": "[]int64",
+      "items": "int64",
+      "type": "array"
+    },
+    "add_category_ids": {
+      "$ref": "#/components/schemas/int64",
+      "go_type": "[]int64",
+      "items": "int64",
+      "type": "array"
+    },
+    "remove_category_ids": {
+      "$ref": "#/components/schemas/int64",
+      "go_type": "[]int64",
+      "items": "int64",
+      "type": "array"
+    }
+  },
+  "required": [
+    "add_category_ids",
+    "category_ids",
+    "password",
+    "remove_category_ids",
+    "url",
+    "username"
+  ]
+}

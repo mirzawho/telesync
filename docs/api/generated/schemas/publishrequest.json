@@ -1,0 +1,27 @@
+{
+  "go_type": "publishRequest",
+  "properties": {
+    "source": {
+      "go_type": "struct { LocalChannelID int64 `json:\"local_channel_id\"` MessageID int `json:\"message_id\"` }"
+    },
+    "destination": {
+      "go_type": "struct { ChannelID string `json:\"channel_id\"` }"
+    },
+    "content": {
+      "go_type": "struct { Text string `json:\"text\"` Entities []rpc.Entity `json:\"entities\"` }"
+    },
+    "media": {
+      "go_type": "struct { Mode string `json:\"mode\"` }"
+    },
+    "options": {
+      "go_type": "struct { Silent bool `json:\"silent\"` DisableWebPagePreview bool `json:\"disable_web_page_preview\"` }"
+    }
+  },
+  "required": [
+    "content",
+    "destination",
+    "media",
+    "options",
+    "source"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "go_type": "loginRequest",
+  "properties": {
+    "username": {
+      "$ref": "#/components/schemas/string",
+      "go_type": "string",
+      "type": "string"
+    },
+    "password": {
+      "$ref": "#/components/schemas/string",
+      "go_type": "string",
+      "type": "string"
+    }
+  },
+  "required": [
+    "password",
+    "username"
+  ]
+}

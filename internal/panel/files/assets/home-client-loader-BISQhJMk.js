@@ -1,0 +1,1 @@
+import{D as e}from"./utils-Ba9q0Lno.js";async function t(){return e(`/dashboard`)}export{t as clientLoader};

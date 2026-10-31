@@ -1,0 +1,33 @@
+services:
+  telesync:
+    build:
+      context: .
+      args:
+        # The git tag without its v, e.g. 1.4.2: the panel shows it. Empty is
+        # no version, as on a local `make build` without a tag.
+        VERSION: ${VERSION:-}
+    image: telesync:local
+    env_file:
+      - .env
+    environment:
+      TELESYNC_CONFIG: /etc/telesync/telesync.json
+    volumes:
+      # The configuration file references secrets by variable name; it holds
+      # none itself, so mounting it read-only is safe.
+      - ./telesync.json:/etc/telesync/telesync.json:ro
+      # Sessions and worker sockets must outlive containers.
+      - sessdata:/data
+      # The backend RSA public key, read-only, never baked into the image.
+      - ./secrets:/run/secrets:ro
+    # Interactive authorization runs in a one-off container:
+    #   docker compose run --rm telesync auth --key official
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    # The API binds loopback by default; expose it explicitly if you set a
+    # bearer token and change api.listen_addr to 0.0.0.0.
+    # ports:
+    #   - "127.0.0.1:8080:8080"
+
+volumes:
+  sessdata:

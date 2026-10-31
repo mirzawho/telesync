@@ -1,0 +1,5913 @@
+{
+ "source": {
+  "credentials": "the credential and permission checks in the handler's own package functions",
+  "example": "the requests in docs/api/examples/*.http, replayed in order",
+  "handler": "the ServeHTTP branch in internal/gateway that routes to each handler",
+  "probe": "requests sent to a gateway over an in-memory SQLite store, with an invalid value in every path variable",
+  "request": "the type each handler decodes a JSON body into",
+  "response": "the value each handler passes to writeJSON, and its status argument",
+  "routes": "internal/apidocs/table.go, checked against the gateway by TestDocumentationCoversEveryRoute"
+ },
+ "routes": [
+  {
+   "pattern": "/api/v1/auth/login",
+   "method": "POST",
+   "handler": "login",
+   "file": "auth.go",
+   "line": 0,
+   "response": "map[string]any{ \"access_token\": token, \"token_type\": \"Bearer\", \"expires_in\": ttl, }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "request_type": "loginRequest",
+   "request_schema": "schemas/loginrequest.json",
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/auth/login",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/auth/login",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/auth/login",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/auth/login",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/auth/login",
+     "status": 200,
+     "json": true,
+     "body": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiaXNzIjoidGVsZXN5bmMiLCJhdWQiOiJ0ZWxlc3luYy1hcGkiLCJpYXQiOjE3OTI5MjI0MDAsImV4cCI6MTc5MjkyNjAwMH0.JK7TwjrKcnHF4NDuPihQWyA3WJJsiWDe4F9L_l1Xvac",
+      "expires_in": 3600,
+      "token_type": "Bearer"
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/auth/login",
+     "status": 200,
+     "json": true,
+     "body": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiaXNzIjoidGVsZXN5bmMiLCJhdWQiOiJ0ZWxlc3luYy1hcGkiLCJpYXQiOjE3OTI5MjI0MDAsImV4cCI6MTc5MjkyNjAwMH0.JK7TwjrKcnHF4NDuPihQWyA3WJJsiWDe4F9L_l1Xvac",
+      "expires_in": 3600,
+      "token_type": "Bearer"
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/auth/me",
+   "method": "GET",
+   "handler": "me",
+   "file": "auth.go",
+   "line": 0,
+   "response": "envelope{ Data: view, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "a.auth.CanList(channelstore.KindCategory)  (auth.go:me)",
+    "a.auth.CanList(channelstore.KindChannel)  (auth.go:me)",
+    "a.auth.CanList(channelstore.KindUser)  (auth.go:me)",
+    "a.auth.Global(channelstore.PermissionContentPublish)  (auth.go:me)",
+    "a.auth.Global(channelstore.PermissionServersView)  (auth.go:me)"
+   ],
+   "credential_count": 5,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/auth/me",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/auth/me",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "id": 0,
+       "fullname": "",
+       "username": "operator",
+       "is_active": true,
+       "created_at": "",
+       "updated_at": "",
+       "access": {
+        "channels": true,
+        "categories": true,
+        "users": true,
+        "servers": true,
+        "content": true
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/auth/me",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "id": 2,
+       "fullname": "Documented Limited User",
+       "username": "doc-limited",
+       "is_active": true,
+       "created_at": "2026-10-25T10:00:00Z",
+       "updated_at": "2026-10-25T10:00:00Z",
+       "permissions": {
+        "global": [],
+        "channels": [],
+        "categories": [
+         {
+          "category_id": 1,
+          "view": "allow",
+          "update": "allow",
+          "delete": "allow"
+         }
+        ],
+        "wordpress": []
+       },
+       "access": {
+        "channels": false,
+        "categories": false,
+        "users": false,
+        "servers": false,
+        "content": false
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/auth/me",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "id": 1,
+       "fullname": "Documented Administrator",
+       "username": "admin",
+       "is_active": true,
+       "created_at": "2026-10-25T10:00:00Z",
+       "updated_at": "2026-10-25T10:00:00Z",
+       "permissions": {
+        "global": [
+         "categories.create",
+         "categories.view",
+         "channels.create",
+         "channels.view",
+         "content.publish",
+         "servers.view",
+         "users.manage",
+         "users.view",
+         "wordpress.create",
+         "wordpress.view"
+        ],
+        "channels": [],
+        "categories": [],
+        "wordpress": []
+       },
+       "access": {
+        "channels": true,
+        "categories": true,
+        "users": true,
+        "servers": true,
+        "content": true
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/auth/me",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "id": 0,
+       "fullname": "",
+       "username": "operator",
+       "is_active": true,
+       "created_at": "",
+       "updated_at": "",
+       "access": {
+        "channels": true,
+        "categories": true,
+        "users": true,
+        "servers": true,
+        "content": true
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/auth/me",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "id": 0,
+       "fullname": "",
+       "username": "operator",
+       "is_active": true,
+       "created_at": "",
+       "updated_at": "",
+       "access": {
+        "channels": true,
+        "categories": true,
+        "users": true,
+        "servers": true,
+        "content": true
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/categories",
+   "method": "GET",
+   "handler": "listCategories",
+   "file": "categories.go",
+   "line": 0,
+   "response": "envelope{Data: map[string]any{\"categories\": views}, Meta: meta}",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(channelstore.KindCategory)  (categories.go:listCategories)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/categories",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/categories",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "categories": [
+        {
+         "id": 1,
+         "name": "Documented category",
+         "description": "Created by the documentation generator",
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z"
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 1,
+       "total_pages": 1
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/categories",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "categories": [
+        {
+         "id": 1,
+         "name": "Documented category",
+         "description": "Created by the documentation generator",
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z"
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 1,
+       "total_pages": 1
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/categories",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "categories": [
+        {
+         "id": 1,
+         "name": "Documented category",
+         "description": "Created by the documentation generator",
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z"
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 1,
+       "total_pages": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/categories",
+   "method": "POST",
+   "handler": "createCategory",
+   "file": "categories.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"category\": categoryViewOf(cat)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusCreated",
+   "status": 201,
+   "request_type": "categoryRequest",
+   "request_schema": "schemas/categoryrequest.json",
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/local/categories",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/categories",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/local/categories",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/local/categories",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/categories",
+     "status": 201,
+     "json": true,
+     "body": {
+      "data": {
+       "category": {
+        "id": 2,
+        "name": "Technology",
+        "description": "Technology channels",
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/categories",
+     "status": 201,
+     "json": true,
+     "body": {
+      "data": {
+       "category": {
+        "id": 3,
+        "name": "Technology",
+        "description": "Technology channels",
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/categories/{id}",
+   "method": "DELETE",
+   "handler": "deleteCategory",
+   "file": "categories.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"deleted\": true, \"id\": id}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "DELETE /api/v1/local/categories/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/categories/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "DELETE /api/v1/local/categories/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "DELETE /api/v1/local/categories/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/categories/2",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "deleted": true,
+       "id": 2
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/categories/3",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "deleted": true,
+       "id": 3
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/categories/{id}",
+   "method": "GET",
+   "handler": "getCategory",
+   "file": "categories.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"category\": categoryViewOf(cat)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/categories/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/categories/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/categories/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/categories/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/categories/2",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "category": {
+        "id": 2,
+        "name": "Technology",
+        "description": "Technology channels",
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/categories/3",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "category": {
+        "id": 3,
+        "name": "Technology",
+        "description": "Technology channels",
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/categories/{id}",
+   "method": "PUT",
+   "handler": "updateCategory",
+   "file": "categories.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"category\": categoryViewOf(cat)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "request_type": "categoryRequest",
+   "request_schema": "schemas/categoryrequest.json",
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "PUT /api/v1/local/categories/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/local/categories/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "PUT /api/v1/local/categories/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "PUT /api/v1/local/categories/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/local/categories/2",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "category": {
+        "id": 2,
+        "name": "Tech",
+        "description": "All technology channels",
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/local/categories/3",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "category": {
+        "id": 3,
+        "name": "Tech",
+        "description": "All technology channels",
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/categories/{id}/channels",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/categories/not-an-id/channels",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/categories/not-an-id/channels",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/categories/not-an-id/channels",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/categories/not-an-id/channels",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/categories/2/channels",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channels": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/channels",
+   "method": "GET",
+   "handler": "listLocalChannels",
+   "file": "local_channels.go",
+   "line": 0,
+   "response": "envelope{Data: map[string]any{\"channels\": views}, Meta: meta}",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(channelstore.KindChannel)  (local_channels.go:listLocalChannels)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/channels",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/channels",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "channels": [
+        {
+         "id": 1,
+         "client_key": "doc-client",
+         "channel_id": 1,
+         "type": "channel",
+         "title": "Documented channel",
+         "avatar_available": true,
+         "avatar_url": "/api/v1/local/channels/1/avatar",
+         "membership_status": "member",
+         "participants_count": null,
+         "created_at": "",
+         "updated_at": "",
+         "last_synced_at": ""
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 1,
+       "total_pages": 1
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/channels",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "channels": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 0,
+       "total_pages": 0
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/channels",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "channels": [
+        {
+         "id": 1,
+         "client_key": "doc-client",
+         "channel_id": 1,
+         "type": "channel",
+         "title": "Documented channel",
+         "avatar_available": true,
+         "avatar_url": "/api/v1/local/channels/1/avatar",
+         "membership_status": "member",
+         "participants_count": null,
+         "created_at": "",
+         "updated_at": "",
+         "last_synced_at": ""
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 1,
+       "total_pages": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/channels/{id}",
+   "method": "GET",
+   "handler": "getLocalChannel",
+   "file": "local_channels.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"channel\": localChannelDetail(ch)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/channels/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/channels/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/channels/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/channels/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/channels/1",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channel": {
+        "id": "1",
+        "type": "channel",
+        "title": "Documented channel",
+        "avatar_available": true,
+        "avatar_url": "/api/v1/local/channels/1/avatar",
+        "is_member": true,
+        "is_managed": true,
+        "membership_status": "member",
+        "permissions": {
+         "new": false,
+         "edit": false,
+         "delete": false,
+         "read": true
+        },
+        "verified": false,
+        "scam": false,
+        "fake": false,
+        "participants_count": null
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/channels/{id}/avatar",
+   "method": "GET",
+   "handler": "localChannelAvatar",
+   "file": "local_channels.go",
+   "line": 0,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/channels/not-an-id/avatar",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/channels/not-an-id/avatar",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/channels/not-an-id/avatar",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/channels/not-an-id/avatar",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/channels/1/avatar",
+     "status": 200,
+     "json": false
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/channels/{id}/categories",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/channels/not-an-id/categories",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/channels/not-an-id/categories",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/channels/not-an-id/categories",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/channels/not-an-id/categories",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/channels/{id}/categories",
+   "method": "PUT",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "PUT /api/v1/local/channels/not-an-id/categories",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/local/channels/not-an-id/categories",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "PUT /api/v1/local/channels/not-an-id/categories",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "PUT /api/v1/local/channels/not-an-id/categories",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/channels/{id}/leave",
+   "method": "POST",
+   "handler": "leaveLocalChannel",
+   "file": "local_channels.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"local_deleted\": true, \"telegram_left\": telegram}, Meta: meta, }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "request_type": "leaveRequest",
+   "request_schema": "schemas/leaverequest.json",
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)",
+    "s.authenticate(r)  (local_channels.go:leaveCaller)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/local/channels/not-an-id/leave",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/channels/not-an-id/leave",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/local/channels/not-an-id/leave",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/local/channels/not-an-id/leave",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/channels/1/leave",
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "A local channel is removed by an account holding the channel's delete permission; the operator token is not an account.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/channels/{id}/messages",
+   "method": "GET",
+   "handler": "localChannelMessages",
+   "file": "local_channels.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"messages\": views}, Meta: pageMeta(requestID, s.cfg.Now(), result.Page, false), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/channels/not-an-id/messages",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/channels/not-an-id/messages",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/channels/not-an-id/messages",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/channels/not-an-id/messages",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/users",
+   "method": "GET",
+   "handler": "listUsers",
+   "file": "users.go",
+   "line": 0,
+   "response": "envelope{Data: map[string]any{\"users\": views}, Meta: meta}",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Global(channelstore.PermissionUsersManage)  (users.go:users)",
+    "authr.Global(channelstore.PermissionUsersView)  (users.go:canSeeAllUsers)",
+    "caller.auth.Global(channelstore.PermissionUsersManage)  (users.go:updateUser)",
+    "caller.auth.Global(channelstore.PermissionUsersView)  (users.go:userPermissions)"
+   ],
+   "credential_count": 4,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/users",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/users",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "users": [
+        {
+         "id": 3,
+         "fullname": "Documented Other User",
+         "username": "doc-other",
+         "is_active": true,
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z"
+        },
+        {
+         "id": 2,
+         "fullname": "Documented Limited User",
+         "username": "doc-limited",
+         "is_active": true,
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z"
+        },
+        {
+         "id": 1,
+         "fullname": "Documented Administrator",
+         "username": "admin",
+         "is_active": true,
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z"
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 3,
+       "total_pages": 1
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/users",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "users": [
+        {
+         "id": 2,
+         "fullname": "Documented Limited User",
+         "username": "doc-limited",
+         "is_active": true,
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z"
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 1,
+       "total_pages": 1
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/users",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "users": [
+        {
+         "id": 3,
+         "fullname": "Documented Other User",
+         "username": "doc-other",
+         "is_active": true,
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z"
+        },
+        {
+         "id": 2,
+         "fullname": "Documented Limited User",
+         "username": "doc-limited",
+         "is_active": true,
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z"
+        },
+        {
+         "id": 1,
+         "fullname": "Documented Administrator",
+         "username": "admin",
+         "is_active": true,
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z"
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 3,
+       "total_pages": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/users",
+   "method": "POST",
+   "handler": "createUser",
+   "file": "users.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"user\": userViewOf(user, nil)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusCreated",
+   "status": 201,
+   "request_type": "createUserRequest",
+   "request_schema": "schemas/createuserrequest.json",
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/local/users",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/users",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/local/users",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/local/users",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/users",
+     "status": 201,
+     "json": true,
+     "body": {
+      "data": {
+       "user": {
+        "id": 4,
+        "fullname": "Example Operator",
+        "username": "example-user",
+        "is_active": true,
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/users",
+     "status": 201,
+     "json": true,
+     "body": {
+      "data": {
+       "user": {
+        "id": 5,
+        "fullname": "Example Operator",
+        "username": "example-user",
+        "is_active": true,
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/users/{id}",
+   "method": "DELETE",
+   "handler": "deleteUser",
+   "file": "users.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"deleted\": true, \"id\": id}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "caller.auth.Global(channelstore.PermissionUsersManage)  (users.go:deleteUser)"
+   ],
+   "credential_count": 1,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "DELETE /api/v1/local/users/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/users/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "DELETE /api/v1/local/users/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "DELETE /api/v1/local/users/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/users/4",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "deleted": true,
+       "id": 4
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/users/5",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "deleted": true,
+       "id": 5
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/users/{id}",
+   "method": "GET",
+   "handler": "getUser",
+   "file": "users.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"user\": userViewOf(user, \u0026set)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Global(channelstore.PermissionUsersManage)  (users.go:canReadUser)",
+    "authr.Global(channelstore.PermissionUsersView)  (users.go:canReadUser)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/users/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/users/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/users/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/users/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/users/4",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "user": {
+        "id": 4,
+        "fullname": "Example Operator",
+        "username": "example-user",
+        "is_active": true,
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z",
+        "permissions": {
+         "global": [],
+         "channels": [],
+         "categories": [],
+         "wordpress": []
+        }
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/users/5",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "user": {
+        "id": 5,
+        "fullname": "Example Operator",
+        "username": "example-user",
+        "is_active": true,
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z",
+        "permissions": {
+         "global": [],
+         "channels": [],
+         "categories": [],
+         "wordpress": []
+        }
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/users/{id}",
+   "method": "PUT",
+   "handler": "updateUser",
+   "file": "users.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"user\": userViewOf(user, \u0026set)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "request_type": "updateUserRequest",
+   "request_schema": "schemas/updateuserrequest.json",
+   "credentials": [
+    "caller.auth.Global(channelstore.PermissionUsersManage)  (users.go:updateUser)"
+   ],
+   "credential_count": 1,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "PUT /api/v1/local/users/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/local/users/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "PUT /api/v1/local/users/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "PUT /api/v1/local/users/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/local/users/4",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "user": {
+        "id": 4,
+        "fullname": "Example O.",
+        "username": "example-user",
+        "is_active": true,
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z",
+        "permissions": {
+         "global": [],
+         "channels": [],
+         "categories": [],
+         "wordpress": []
+        }
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/local/users/5",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "user": {
+        "id": 5,
+        "fullname": "Example O.",
+        "username": "example-user",
+        "is_active": true,
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z",
+        "permissions": {
+         "global": [],
+         "channels": [],
+         "categories": [],
+         "wordpress": []
+        }
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/users/{id}/permissions",
+   "method": "GET",
+   "handler": "userPermissions",
+   "file": "users.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"permissions\": permissionsViewOf(\u0026set)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "request_type": "permissionsRequest",
+   "request_schema": "schemas/permissionsrequest.json",
+   "credentials": [
+    "caller.auth.Global(channelstore.PermissionUsersManage)  (users.go:userPermissions)",
+    "caller.auth.Global(channelstore.PermissionUsersView)  (users.go:userPermissions)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/users/not-an-id/permissions",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/users/not-an-id/permissions",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/users/not-an-id/permissions",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/users/not-an-id/permissions",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/users/4/permissions",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "permissions": {
+        "global": [],
+        "channels": [],
+        "categories": [],
+        "wordpress": []
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/users/5/permissions",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "permissions": {
+        "global": [],
+        "channels": [],
+        "categories": [],
+        "wordpress": []
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/users/{id}/permissions",
+   "method": "PUT",
+   "handler": "userPermissions",
+   "file": "users.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"permissions\": permissionsViewOf(\u0026set)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "request_type": "permissionsRequest",
+   "request_schema": "schemas/permissionsrequest.json",
+   "credentials": [
+    "caller.auth.Global(channelstore.PermissionUsersManage)  (users.go:userPermissions)",
+    "caller.auth.Global(channelstore.PermissionUsersView)  (users.go:userPermissions)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "PUT /api/v1/local/users/not-an-id/permissions",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/local/users/not-an-id/permissions",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "PUT /api/v1/local/users/not-an-id/permissions",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "PUT /api/v1/local/users/not-an-id/permissions",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/local/users/4/permissions",
+     "status": 400,
+     "code": "invalid_input",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channelstore: resource not found: no channel has id 3",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/local/users/5/permissions",
+     "status": 400,
+     "code": "invalid_input",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channelstore: resource not found: no channel has id 3",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/wordpress",
+   "method": "GET",
+   "handler": "listWordPressSites",
+   "file": "wordpress.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"sites\": views}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/wordpress",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/wordpress",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "sites": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/wordpress",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/wordpress",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "sites": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/wordpress",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "sites": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/wordpress",
+   "method": "POST",
+   "handler": "createWordPressSite",
+   "file": "wordpress.go",
+   "line": 0,
+   "request_type": "wordpressRequest",
+   "request_schema": "schemas/wordpressrequest.json",
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionWordPressManage)  (wordpress.go:createWordPressSite)"
+   ],
+   "credential_count": 1,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/local/wordpress",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/wordpress",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/local/wordpress",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/local/wordpress",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/wordpress",
+     "status": 201,
+     "json": true,
+     "body": {
+      "data": {
+       "saved": {
+        "id": 1,
+        "redirect_to": "/api/v1/local/wordpress/1",
+        "refresh": true
+       },
+       "site": {
+        "id": 1,
+        "url": "https://blog.example.com",
+        "domain": "blog.example.com",
+        "title": "Example publishing site",
+        "site_icon_url": "https://blog.example.com/icon.png",
+        "username": "editor",
+        "category_ids": [
+         1
+        ],
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/wordpress/{id}",
+   "method": "DELETE",
+   "handler": "deleteWordPressSite",
+   "file": "wordpress.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"deleted\": true, \"id\": id, \"redirect_to\": wordpressPrefix}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionWordPressManage)  (wordpress.go:deleteWordPressSite)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)",
+    "authr.Global(channelstore.PermissionWordPressManage)  (wordpress.go:siteViewer)"
+   ],
+   "credential_count": 4,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "DELETE /api/v1/local/wordpress/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/wordpress/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "DELETE /api/v1/local/wordpress/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "DELETE /api/v1/local/wordpress/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/wordpress/1",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "deleted": true,
+       "id": 1,
+       "redirect_to": "/api/v1/local/wordpress"
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/wordpress/{id}",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/wordpress/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/wordpress/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/wordpress/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/wordpress/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/wordpress/1",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "site": {
+        "id": 1,
+        "url": "https://blog.example.com",
+        "domain": "blog.example.com",
+        "title": "Example publishing site",
+        "site_icon_url": "https://blog.example.com/icon.png",
+        "username": "editor",
+        "category_ids": [
+         1
+        ],
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/wordpress/{id}",
+   "method": "PATCH",
+   "handler": "updateWordPressSite",
+   "file": "wordpress.go",
+   "line": 0,
+   "request_type": "wordpressRequest",
+   "request_schema": "schemas/wordpressrequest.json",
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionCategoriesCreate)  (categories.go:categories)",
+    "actorAuth(r).Global(channelstore.PermissionWordPressManage)  (wordpress.go:updateWordPressSite)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(channelstore.KindCategory)  (categories.go:listCategories)",
+    "authr.CanList(kind)  (access.go:visible)",
+    "authr.Global(channelstore.PermissionWordPressManage)  (wordpress.go:siteViewer)"
+   ],
+   "credential_count": 6,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "PATCH /api/v1/local/wordpress/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PATCH /api/v1/local/wordpress/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "PATCH /api/v1/local/wordpress/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "PATCH /api/v1/local/wordpress/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "PATCH /api/v1/local/wordpress/1",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "saved": {
+        "id": 1,
+        "redirect_to": "/api/v1/local/wordpress/1",
+        "refresh": true
+       },
+       "site": {
+        "id": 1,
+        "url": "https://blog.example.com",
+        "domain": "blog.example.com",
+        "title": "Example publishing site",
+        "site_icon_url": "https://blog.example.com/icon.png",
+        "username": "publisher",
+        "category_ids": [
+         1
+        ],
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/wordpress/{id}/posts",
+   "method": "POST",
+   "handler": "publishWordPress",
+   "file": "publish.go",
+   "line": 0,
+   "response": "answer",
+   "status_name": "StatusOK",
+   "status": 200,
+   "request_type": "wpPostRequest",
+   "request_schema": "schemas/wppostrequest.json",
+   "credentials": [
+    "a.auth.Global(channelstore.PermissionContentPublish)  (publish.go:publishWordPress)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/local/wordpress/not-an-id/posts",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/wordpress/not-an-id/posts",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/local/wordpress/not-an-id/posts",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/local/wordpress/not-an-id/posts",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram",
+   "method": "GET",
+   "handler": "servers",
+   "file": "servers.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"servers\": rows}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionServersView)  (telemetry.go:requireServersView)"
+   ],
+   "credential_count": 1,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "servers": [
+        {
+         "key": "official",
+         "type": "official",
+         "enabled": true,
+         "health_checkable": true,
+         "state": "connected",
+         "authorized": true,
+         "transport": "ready",
+         "last_success_at": null,
+         "last_error": "",
+         "user": {
+          "id": 1,
+          "first_name": "",
+          "last_name": "",
+          "username": ""
+         }
+        },
+        {
+         "key": "doc-client",
+         "type": "official",
+         "enabled": true,
+         "health_checkable": true,
+         "state": "connected",
+         "authorized": true,
+         "transport": "ready",
+         "last_success_at": null,
+         "last_error": "",
+         "user": {
+          "id": 1,
+          "first_name": "",
+          "last_name": "",
+          "username": ""
+         }
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "servers": [
+        {
+         "key": "official",
+         "type": "official",
+         "enabled": true,
+         "health_checkable": true,
+         "state": "connected",
+         "authorized": true,
+         "transport": "ready",
+         "last_success_at": null,
+         "last_error": "",
+         "user": {
+          "id": 1,
+          "first_name": "",
+          "last_name": "",
+          "username": ""
+         }
+        },
+        {
+         "key": "doc-client",
+         "type": "official",
+         "enabled": true,
+         "health_checkable": true,
+         "state": "connected",
+         "authorized": true,
+         "transport": "ready",
+         "last_success_at": null,
+         "last_error": "",
+         "user": {
+          "id": 1,
+          "first_name": "",
+          "last_name": "",
+          "username": ""
+         }
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "servers": [
+        {
+         "key": "official",
+         "type": "official",
+         "enabled": true,
+         "health_checkable": true,
+         "state": "connected",
+         "authorized": true,
+         "transport": "ready",
+         "last_success_at": null,
+         "last_error": "",
+         "user": {
+          "id": 1,
+          "first_name": "",
+          "last_name": "",
+          "username": ""
+         }
+        },
+        {
+         "key": "doc-client",
+         "type": "official",
+         "enabled": true,
+         "health_checkable": true,
+         "state": "connected",
+         "authorized": true,
+         "transport": "ready",
+         "last_success_at": null,
+         "last_error": "",
+         "user": {
+          "id": 1,
+          "first_name": "",
+          "last_name": "",
+          "username": ""
+         }
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels",
+   "method": "GET",
+   "handler": "channels",
+   "file": "gateway.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"channels\": channels}, Meta: pageMeta(requestID, s.cfg.Now(), result.Page, true), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.CanList(channelstore.KindChannel)  (access.go:allowedAnyChannel)",
+    "authr.HasAny(channelstore.KindChannel)  (access.go:allowedAnyChannel)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/channels",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "channels": [
+        {
+         "id": 1,
+         "title": "Documented channel",
+         "kind": "channel",
+         "has_avatar": false,
+         "last_message_id": 1,
+         "permissions": {
+          "new": false,
+          "edit": false,
+          "delete": false,
+          "read": true
+         }
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 1
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "channels": [
+        {
+         "id": 1,
+         "title": "Documented channel",
+         "kind": "channel",
+         "has_avatar": false,
+         "last_message_id": 1,
+         "permissions": {
+          "new": false,
+          "edit": false,
+          "delete": false,
+          "read": true
+         }
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/find",
+   "method": "GET",
+   "handler": "find",
+   "file": "channels.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"channels\": channels}, Meta: map[string]any{\"count\": len(channels)}, }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.CanList(channelstore.KindChannel)  (access.go:allowedAnyChannel)",
+    "authr.HasAny(channelstore.KindChannel)  (access.go:allowedAnyChannel)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/channels/find",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/find",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "q is required",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels/find",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "q is required",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels/find",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "q is required",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}",
+   "method": "GET",
+   "handler": "channel",
+   "file": "channels.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"channel\": s.channelViewOf(key, result.Channel, managed)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(channelstore.KindChannel)  (access.go:allowedAnyChannel)",
+    "authr.CanList(kind)  (access.go:visible)",
+    "authr.HasAny(channelstore.KindChannel)  (access.go:allowedAnyChannel)"
+   ],
+   "credential_count": 4,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/find?q=%40telegram",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channels": [
+        {
+         "id": "1",
+         "type": "channel",
+         "title": "Documented channel",
+         "avatar_available": true,
+         "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
+         "is_member": true,
+         "is_managed": true,
+         "membership_status": "member",
+         "permissions": {
+          "new": false,
+          "edit": false,
+          "delete": false,
+          "read": true
+         },
+         "verified": false,
+         "scam": false,
+         "fake": false,
+         "participants_count": null
+        }
+       ]
+      },
+      "meta": {
+       "count": 1
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channel": {
+        "id": "1",
+        "type": "channel",
+        "title": "Documented channel",
+        "avatar_available": true,
+        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
+        "is_member": true,
+        "is_managed": false,
+        "membership_status": "member",
+        "permissions": {
+         "new": false,
+         "edit": false,
+         "delete": false,
+         "read": true
+        },
+        "verified": false,
+        "scam": false,
+        "fake": false,
+        "participants_count": null
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/%2BAbCdEf123456",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channel": {
+        "id": "1",
+        "type": "channel",
+        "title": "Documented channel",
+        "avatar_available": true,
+        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
+        "is_member": true,
+        "is_managed": false,
+        "membership_status": "member",
+        "permissions": {
+         "new": false,
+         "edit": false,
+         "delete": false,
+         "read": true
+        },
+        "verified": false,
+        "scam": false,
+        "fake": false,
+        "participants_count": null
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/find?q=%40telegram",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channels": [
+        {
+         "id": "1",
+         "type": "channel",
+         "title": "Documented channel",
+         "avatar_available": true,
+         "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
+         "is_member": true,
+         "is_managed": true,
+         "membership_status": "member",
+         "permissions": {
+          "new": false,
+          "edit": false,
+          "delete": false,
+          "read": true
+         },
+         "verified": false,
+         "scam": false,
+         "fake": false,
+         "participants_count": null
+        }
+       ]
+      },
+      "meta": {
+       "count": 1
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channel": {
+        "id": "1",
+        "type": "channel",
+        "title": "Documented channel",
+        "avatar_available": true,
+        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
+        "is_member": true,
+        "is_managed": false,
+        "membership_status": "member",
+        "permissions": {
+         "new": false,
+         "edit": false,
+         "delete": false,
+         "read": true
+        },
+        "verified": false,
+        "scam": false,
+        "fake": false,
+        "participants_count": null
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/%2BAbCdEf123456",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channel": {
+        "id": "1",
+        "type": "channel",
+        "title": "Documented channel",
+        "avatar_available": true,
+        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
+        "is_member": true,
+        "is_managed": false,
+        "membership_status": "member",
+        "permissions": {
+         "new": false,
+         "edit": false,
+         "delete": false,
+         "read": true
+        },
+        "verified": false,
+        "scam": false,
+        "fake": false,
+        "participants_count": null
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/avatar",
+   "method": "GET",
+   "handler": "avatar",
+   "file": "channels.go",
+   "line": 0,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/avatar",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/avatar",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "avatar needs a numeric channel_id; resolve the invite first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/avatar",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "avatar needs a numeric channel_id; resolve the invite first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/avatar",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "avatar needs a numeric channel_id; resolve the invite first.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563/avatar",
+     "status": 200,
+     "json": false
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563/avatar",
+     "status": 200,
+     "json": false
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/join",
+   "method": "POST",
+   "handler": "join",
+   "file": "channels.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{ \"channel\": view, \"result\": joinResultOf(result.Outcome, alreadyManaged, pending), }, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionChannelsCreate)  (channels.go:join)"
+   ],
+   "credential_count": 1,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/join",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/join",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/join",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/join",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/telegram/official/channels/1671633563/join",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channel": {
+        "id": "1",
+        "type": "channel",
+        "title": "Documented channel",
+        "avatar_available": true,
+        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
+        "is_member": true,
+        "is_managed": true,
+        "membership_status": "member",
+        "permissions": {
+         "new": false,
+         "edit": false,
+         "delete": false,
+         "read": true
+        },
+        "verified": false,
+        "scam": false,
+        "fake": false,
+        "participants_count": null
+       },
+       "result": "joined_and_added_to_management"
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channel": {
+        "id": "1",
+        "type": "channel",
+        "title": "Documented channel",
+        "avatar_available": true,
+        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
+        "is_member": true,
+        "is_managed": true,
+        "membership_status": "member",
+        "permissions": {
+         "new": false,
+         "edit": false,
+         "delete": false,
+         "read": true
+        },
+        "verified": false,
+        "scam": false,
+        "fake": false,
+        "participants_count": null
+       },
+       "result": "joined_and_added_to_management"
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/telegram/official/channels/1671633563/join",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channel": {
+        "id": "1",
+        "type": "channel",
+        "title": "Documented channel",
+        "avatar_available": true,
+        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
+        "is_member": true,
+        "is_managed": true,
+        "membership_status": "member",
+        "permissions": {
+         "new": false,
+         "edit": false,
+         "delete": false,
+         "read": true
+        },
+        "verified": false,
+        "scam": false,
+        "fake": false,
+        "participants_count": null
+       },
+       "result": "joined_and_added_to_management"
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "channel": {
+        "id": "1",
+        "type": "channel",
+        "title": "Documented channel",
+        "avatar_available": true,
+        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
+        "is_member": true,
+        "is_managed": true,
+        "membership_status": "member",
+        "permissions": {
+         "new": false,
+         "edit": false,
+         "delete": false,
+         "read": true
+        },
+        "verified": false,
+        "scam": false,
+        "fake": false,
+        "participants_count": null
+       },
+       "result": "joined_and_added_to_management"
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/messages",
+   "method": "GET",
+   "handler": "messages",
+   "file": "gateway.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"messages\": views}, Meta: pageMeta(requestID, s.cfg.Now(), result.Page, false), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}",
+   "method": "GET",
+   "handler": "message",
+   "file": "gateway.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"messages\": views}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563/messages/1233",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "messages": [
+        {
+         "id": 1,
+         "date": "2026-10-25T09:00:00Z",
+         "text": "Documented post",
+         "sender": {
+          "id": 1,
+          "name": "Documented",
+          "username": "documented"
+         },
+         "media": {
+          "id": "1:1",
+          "type": "photo",
+          "label": "photo",
+          "mime_type": "image/jpeg",
+          "size": 5,
+          "url": "/telegram/official/channels/1671633563/messages/1/media"
+         },
+         "views": null,
+         "reactions": [],
+         "entities": []
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563/messages/1233",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "messages": [
+        {
+         "id": 1,
+         "date": "2026-10-25T09:00:00Z",
+         "text": "Documented post",
+         "sender": {
+          "id": 1,
+          "name": "Documented",
+          "username": "documented"
+         },
+         "media": {
+          "id": "1:1",
+          "type": "photo",
+          "label": "photo",
+          "mime_type": "image/jpeg",
+          "size": 5,
+          "url": "/telegram/official/channels/1671633563/messages/1/media"
+         },
+         "views": null,
+         "reactions": [],
+         "entities": []
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/media",
+   "method": "GET",
+   "handler": "media",
+   "file": "gateway.go",
+   "line": 0,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/media",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/media",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/media",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/media",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563/messages/1233/media",
+     "status": 200,
+     "json": false
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563/messages/1233/media",
+     "status": 200,
+     "json": false
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/custom_emoji/{document_id}",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/custom_emoji/invalid",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/custom_emoji/invalid",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "document_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/custom_emoji/invalid",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "document_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/custom_emoji/invalid",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "document_id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/custom_emoji/5368324170671202286",
+     "status": 200,
+     "json": false
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/health",
+   "method": "GET",
+   "handler": "health",
+   "file": "gateway.go",
+   "line": 0,
+   "response": "envelope{Data: data, Meta: metaFor(requestID, s.cfg.Now())}",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/health",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/health",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "authorized": true,
+       "key": "doc-client",
+       "pid": 1,
+       "rpc_ready": true,
+       "started_at": null,
+       "state": "connected",
+       "this_dc": 2,
+       "transport": "ready",
+       "type": "official",
+       "uptime_seconds": 0
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/health",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "authorized": true,
+       "key": "doc-client",
+       "pid": 1,
+       "rpc_ready": true,
+       "started_at": null,
+       "state": "connected",
+       "this_dc": 2,
+       "transport": "ready",
+       "type": "official",
+       "uptime_seconds": 0
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/health",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "authorized": true,
+       "key": "doc-client",
+       "pid": 1,
+       "rpc_ready": true,
+       "started_at": null,
+       "state": "connected",
+       "this_dc": 2,
+       "transport": "ready",
+       "type": "official",
+       "uptime_seconds": 0
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/health",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "authorized": true,
+       "key": "doc-client",
+       "pid": 1,
+       "rpc_ready": true,
+       "started_at": null,
+       "state": "connected",
+       "this_dc": 2,
+       "transport": "ready",
+       "type": "official",
+       "uptime_seconds": 0
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/health",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "authorized": true,
+       "key": "doc-client",
+       "pid": 1,
+       "rpc_ready": true,
+       "started_at": null,
+       "state": "connected",
+       "this_dc": 2,
+       "transport": "ready",
+       "type": "official",
+       "uptime_seconds": 0
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/messages",
+   "method": "POST",
+   "handler": "publishTelegram",
+   "file": "publish.go",
+   "line": 0,
+   "response": "answer",
+   "status_name": "StatusOK",
+   "status": 200,
+   "request_type": "publishRequest",
+   "request_schema": "schemas/publishrequest.json",
+   "credentials": [
+    "a.auth.Global(channelstore.PermissionContentPublish)  (publish.go:publishTelegram)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/telegram/official/messages",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/telegram/official/messages",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/telegram/official/messages",
+     "status": 403,
+     "code": "publish_forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "publish_forbidden",
+       "message": "Publishing a message needs the content.publish permission.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/telegram/official/messages",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/telegram/official/messages",
+     "status": 400,
+     "code": "invalid_input",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "an entity span falls outside content.text",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/profile",
+   "method": "GET",
+   "handler": "profile",
+   "file": "gateway.go",
+   "line": 0,
+   "response": "envelope{Data: data, Meta: metaFor(requestID, s.cfg.Now())}",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.CanList(channelstore.KindChannel)  (access.go:allowedAnyChannel)",
+    "authr.HasAny(channelstore.KindChannel)  (access.go:allowedAnyChannel)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/profile",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/profile",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "authorization_state": "authorized",
+       "authorized": true,
+       "key": "doc-client",
+       "this_dc": 2,
+       "type": "official",
+       "user": {
+        "first_name": "",
+        "id": 1,
+        "last_name": "",
+        "username": ""
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/profile",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/profile",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "authorization_state": "authorized",
+       "authorized": true,
+       "key": "doc-client",
+       "this_dc": 2,
+       "type": "official",
+       "user": {
+        "first_name": "",
+        "id": 1,
+        "last_name": "",
+        "username": ""
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/profile",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "authorization_state": "authorized",
+       "authorized": true,
+       "key": "doc-client",
+       "this_dc": 2,
+       "type": "official",
+       "user": {
+        "first_name": "",
+        "id": 1,
+        "last_name": "",
+        "username": ""
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/profile",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "authorization_state": "authorized",
+       "authorized": true,
+       "key": "doc-client",
+       "this_dc": 2,
+       "type": "official",
+       "user": {
+        "first_name": "",
+        "id": 1,
+        "last_name": "",
+        "username": ""
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/docs",
+   "method": "GET",
+   "handler": "docs",
+   "file": "docs.go",
+   "line": 0,
+   "credentials": [
+    "s.authenticate(r)  (gateway.go:serveTelegram)",
+    "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.me(w, r, requestID) })  (gateway.go:serveAPI)",
+    "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.serveLocal(w, r, requestID) })  (gateway.go:serveAPI)",
+    "s.requireAuth(s.servers)  (gateway.go:serveAPI)"
+   ],
+   "credential_count": 4,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /docs",
+     "status": 404,
+     "code": "not_found",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "not_found",
+       "message": "The requested resource does not exist.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /docs",
+     "status": 404,
+     "code": "not_found",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "not_found",
+       "message": "The requested resource does not exist.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /docs",
+     "status": 404,
+     "code": "not_found",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "not_found",
+       "message": "The requested resource does not exist.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /docs",
+     "status": 404,
+     "code": "not_found",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "not_found",
+       "message": "The requested resource does not exist.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "anonymous",
+     "request": "GET /docs",
+     "status": 200,
+     "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+     },
+     "json": false
+    },
+    {
+     "caller": "operator",
+     "request": "GET /docs",
+     "status": 200,
+     "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+     },
+     "json": false
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /docs",
+     "status": 200,
+     "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+     },
+     "json": false
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /docs",
+     "status": 200,
+     "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+     },
+     "json": false
+    }
+   ]
+  },
+  {
+   "pattern": "/docs/{path}",
+   "method": "GET",
+   "handler": "docs",
+   "file": "docs.go",
+   "line": 0,
+   "credentials": [
+    "s.authenticate(r)  (gateway.go:serveTelegram)",
+    "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.me(w, r, requestID) })  (gateway.go:serveAPI)",
+    "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.serveLocal(w, r, requestID) })  (gateway.go:serveAPI)",
+    "s.requireAuth(s.servers)  (gateway.go:serveAPI)"
+   ],
+   "credential_count": 4,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /docs/missing-manual-document.md",
+     "status": 404,
+     "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+     },
+     "json": false
+    },
+    {
+     "caller": "operator",
+     "request": "GET /docs/missing-manual-document.md",
+     "status": 404,
+     "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+     },
+     "json": false
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /docs/missing-manual-document.md",
+     "status": 404,
+     "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+     },
+     "json": false
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /docs/missing-manual-document.md",
+     "status": 404,
+     "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+     },
+     "json": false
+    }
+   ]
+  },
+  {
+   "pattern": "/healthz",
+   "method": "GET",
+   "handler": "gatewayHealth",
+   "file": "gateway.go",
+   "line": 0,
+   "response": "map[string]any{ \"status\": \"ok\", \"time\": RFC3339String(s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /healthz",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "status": "ok",
+      "time": "2026-10-25T10:00:00Z"
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /healthz",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "status": "ok",
+      "time": "2026-10-25T10:00:00Z"
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /healthz",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "status": "ok",
+      "time": "2026-10-25T10:00:00Z"
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /healthz",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "status": "ok",
+      "time": "2026-10-25T10:00:00Z"
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /healthz",
+     "status": 200,
+     "json": true,
+     "body": {
+      "status": "ok",
+      "time": "2026-10-25T10:00:00Z"
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /healthz",
+     "status": 200,
+     "json": true,
+     "body": {
+      "status": "ok",
+      "time": "2026-10-25T10:00:00Z"
+     }
+    }
+   ]
+  }
+ ],
+ "schemas": {
+  "categoryPermissionsEntry": {
+   "go_type": "categoryPermissionsEntry",
+   "properties": {
+    "category_id": {
+     "$ref": "#/components/schemas/int64",
+     "go_type": "int64",
+     "type": "integer"
+    },
+    "permissions": {
+     "go_type": "map[string]string"
+    }
+   },
+   "required": [
+    "category_id",
+    "permissions"
+   ]
+  },
+  "categoryRequest": {
+   "go_type": "categoryRequest",
+   "properties": {
+    "name": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "description": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    }
+   },
+   "required": [
+    "description",
+    "name"
+   ]
+  },
+  "channelPermissionsEntry": {
+   "go_type": "channelPermissionsEntry",
+   "properties": {
+    "channel_id": {
+     "$ref": "#/components/schemas/int64",
+     "go_type": "int64",
+     "type": "integer"
+    },
+    "permissions": {
+     "go_type": "map[string]string"
+    }
+   },
+   "required": [
+    "channel_id",
+    "permissions"
+   ]
+  },
+  "createUserRequest": {
+   "go_type": "createUserRequest",
+   "properties": {
+    "fullname": {
+     "$ref": "#/components/schemas/string",
+     "go_type": "string",
+     "type": "string"
+    },
+    "username": {
+     "$ref": "#/components/schemas/string",
+     "go_type": "string",
+     "type": "string"
+    },
+    "password": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "is_active": {
+     "go_type": "*bool",
+     "nullable": true,
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "fullname",
+    "is_active",
+    "password",
+    "username"
+   ]
+  },
+  "leaveRequest": {
+   "go_type": "leaveRequest",
+   "properties": {},
+   "required": null
+  },
+  "loginRequest": {
+   "go_type": "loginRequest",
+   "properties": {
+    "username": {
+     "$ref": "#/components/schemas/string",
+     "go_type": "string",
+     "type": "string"
+    },
+    "password": {
+     "$ref": "#/components/schemas/string",
+     "go_type": "string",
+     "type": "string"
+    }
+   },
+   "required": [
+    "password",
+    "username"
+   ]
+  },
+  "permissionsRequest": {
+   "go_type": "permissionsRequest",
+   "properties": {
+    "global_permissions": {
+     "$ref": "#/components/schemas/string",
+     "go_type": "[]string",
+     "items": "string",
+     "type": "array"
+    },
+    "channel_permissions": {
+     "$ref": "#/components/schemas/channelPermissionsEntry",
+     "go_type": "[]channelPermissionsEntry",
+     "items": "channelPermissionsEntry",
+     "type": "array"
+    },
+    "category_permissions": {
+     "$ref": "#/components/schemas/categoryPermissionsEntry",
+     "go_type": "[]categoryPermissionsEntry",
+     "items": "categoryPermissionsEntry",
+     "type": "array"
+    },
+    "wordpress_permissions": {
+     "$ref": "#/components/schemas/wordpressPermissionsEntry",
+     "go_type": "[]wordpressPermissionsEntry",
+     "items": "wordpressPermissionsEntry",
+     "type": "array"
+    }
+   },
+   "required": [
+    "category_permissions",
+    "channel_permissions",
+    "global_permissions",
+    "wordpress_permissions"
+   ]
+  },
+  "publishRequest": {
+   "go_type": "publishRequest",
+   "properties": {
+    "source": {
+     "go_type": "struct { LocalChannelID int64 `json:\"local_channel_id\"` MessageID int `json:\"message_id\"` }"
+    },
+    "destination": {
+     "go_type": "struct { ChannelID string `json:\"channel_id\"` }"
+    },
+    "content": {
+     "go_type": "struct { Text string `json:\"text\"` Entities []rpc.Entity `json:\"entities\"` }"
+    },
+    "media": {
+     "go_type": "struct { Mode string `json:\"mode\"` }"
+    },
+    "options": {
+     "go_type": "struct { Silent bool `json:\"silent\"` DisableWebPagePreview bool `json:\"disable_web_page_preview\"` }"
+    }
+   },
+   "required": [
+    "content",
+    "destination",
+    "media",
+    "options",
+    "source"
+   ]
+  },
+  "updateUserRequest": {
+   "go_type": "updateUserRequest",
+   "properties": {
+    "fullname": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "username": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "password": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "is_active": {
+     "go_type": "*bool",
+     "nullable": true,
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "fullname",
+    "is_active",
+    "password",
+    "username"
+   ]
+  },
+  "wordpressPermissionsEntry": {
+   "go_type": "wordpressPermissionsEntry",
+   "properties": {
+    "site_id": {
+     "$ref": "#/components/schemas/int64",
+     "go_type": "int64",
+     "type": "integer"
+    },
+    "permissions": {
+     "go_type": "map[string]string"
+    }
+   },
+   "required": [
+    "permissions",
+    "site_id"
+   ]
+  },
+  "wordpressRequest": {
+   "go_type": "wordpressRequest",
+   "properties": {
+    "url": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "username": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "password": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "category_ids": {
+     "$ref": "#/components/schemas/int64",
+     "go_type": "[]int64",
+     "items": "int64",
+     "type": "array"
+    },
+    "add_category_ids": {
+     "$ref": "#/components/schemas/int64",
+     "go_type": "[]int64",
+     "items": "int64",
+     "type": "array"
+    },
+    "remove_category_ids": {
+     "$ref": "#/components/schemas/int64",
+     "go_type": "[]int64",
+     "items": "int64",
+     "type": "array"
+    }
+   },
+   "required": [
+    "add_category_ids",
+    "category_ids",
+    "password",
+    "remove_category_ids",
+    "url",
+    "username"
+   ]
+  },
+  "wpPostRequest": {
+   "go_type": "wpPostRequest",
+   "properties": {
+    "source": {
+     "go_type": "struct { LocalChannelID int64 `json:\"local_channel_id\"` MessageID int `json:\"message_id\"` }"
+    },
+    "post": {
+     "go_type": "struct { Title string `json:\"title\"` Content string `json:\"content\"` Status string `json:\"status\"` Tags []string `json:\"tags\"` }"
+    },
+    "media": {
+     "go_type": "struct { Mode string `json:\"mode\"` }"
+    },
+    "options": {
+     "go_type": "struct { CommentStatus string `json:\"comment_status\"` }"
+    }
+   },
+   "required": [
+    "media",
+    "options",
+    "post",
+    "source"
+   ]
+  }
+ },
+ "permissions": null,
+ "unresolved": [
+  {
+   "route": "DELETE /api/v1/local/categories/{id}",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "deleteCategory (categories.go)",
+    "probe: anonymous → unauthorized, operator → invalid_input, limited user → invalid_input, administrator → invalid_input"
+   ]
+  },
+  {
+   "route": "GET /api/v1/local/channels/{id}/avatar",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "localChannelAvatar (local_channels.go)"
+   ]
+  },
+  {
+   "route": "GET /api/v1/telegram/{key}/channels/{channel_id}/avatar",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "avatar (channels.go)"
+   ]
+  },
+  {
+   "route": "GET /api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/media",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "media (gateway.go)"
+   ]
+  },
+  {
+   "route": "GET /api/v1/telegram/{key}/health",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "health (gateway.go)",
+    "probe: anonymous → unauthorized, operator → 200, limited user → 200, administrator → 200"
+   ]
+  },
+  {
+   "route": "GET /docs",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "docs (docs.go)"
+   ]
+  },
+  {
+   "route": "GET /docs/{path}",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "docs (docs.go)"
+   ]
+  },
+  {
+   "route": "GET /healthz",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "gatewayHealth (gateway.go)",
+    "probe: anonymous → 200, operator → 200, limited user → 200, administrator → 200"
+   ]
+  },
+  {
+   "route": "PATCH /api/v1/local/wordpress/{id}",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "updateWordPressSite (wordpress.go)"
+   ]
+  },
+  {
+   "route": "POST /api/v1/auth/login",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "login (auth.go)",
+    "probe: anonymous → invalid_input, operator → invalid_input, limited user → invalid_input, administrator → invalid_input"
+   ]
+  },
+  {
+   "route": "POST /api/v1/local/categories",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "createCategory (categories.go)",
+    "probe: anonymous → unauthorized, operator → invalid_input, limited user → forbidden, administrator → invalid_input"
+   ]
+  },
+  {
+   "route": "POST /api/v1/local/users",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "createUser (users.go)",
+    "probe: anonymous → unauthorized, operator → invalid_input, limited user → forbidden, administrator → invalid_input"
+   ]
+  },
+  {
+   "route": "POST /api/v1/local/wordpress",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "createWordPressSite (wordpress.go)"
+   ]
+  },
+  {
+   "route": "PUT /api/v1/local/categories/{id}",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "updateCategory (categories.go)",
+    "probe: anonymous → unauthorized, operator → invalid_input, limited user → invalid_input, administrator → invalid_input"
+   ]
+  }
+ ]
+}

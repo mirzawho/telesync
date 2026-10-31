@@ -1,0 +1,46 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+# Anchored to the root: the live keys beside the config, not the Go package
+# internal/secrets/ (without the slash this pattern hides that source).
+/secrets/
+*.pem
+!**/testdata/**/*.pem
+# The live runtime config names real clients, hosts and paths; the tracked
+# template is docs/telesync.example.json.
+/telesync.json
+
+# Session files are authentication credentials
+sessions/
+*.session.json
+data/
+
+# Local secrets and scratch state (the WordPress key and demo configs)
+/local/
+*.key
+
+# Build output
+/telesync
+/bin/
+dist/
+
+# Local tooling
+.DS_Store
+*.log
+coverage.out
+*.tsbuildinfo
+*.prof
+
+# Node / frontend build intermediates (copies of web/.gitignore for the root)
+node_modules/
+dist/
+.cache/
+.turbo/
+.react-router/
+
+# At the repository root: past `go build ./cmd/docsgen` runs
+/docsgen
+
+# The panel build, produced by `make panel`
+web/apps/web/build/

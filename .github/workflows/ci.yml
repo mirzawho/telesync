@@ -1,0 +1,114 @@
+# Validates the project and builds the Docker image as a check.
+#
+# It does NOT deploy anything, does NOT sign in to any registry, and does NOT
+# push the image (push: false). The image is built here only to prove the
+# multi-stage Dockerfile compiles the real frontend build and the real Go
+# binary; after this workflow the image is discarded.
+#
+# Jobs:
+#   go        gofmt, go vet, go test, go build, documentation check
+#   frontend  npm ci from the lockfile, typecheck, tests, panel build/embed
+#   docker    Docker Buildx + a full multi-stage image build (not pushed)
+#
+# Release tagging and publishing to a registry are deliberately not part of
+# this workflow; make them a separate, explicitly requested change if needed.
+
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # One run per ref; a newer push supersedes an older in-flight run.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "gofmt needs to run on:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test ./... -count=1
+
+      - name: build
+        run: go build -o /tmp/telesync ./cmd/telesync
+
+      - name: documentation is current
+        run: go run ./cmd/docsgen --check
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: install
+        run: npm ci --no-audit --no-fund
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: panel build tooling tests
+        run: node --test scripts/version.test.mjs
+
+      - name: content tests
+        run: npm test -w apps/web
+
+      - name: build and embed the panel
+        run: node scripts/build-panel.mjs
+
+  docker:
+    name: docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build image (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: telesync:ci
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

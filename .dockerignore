@@ -1,0 +1,50 @@
+# Git metadata and CI config — not needed inside the image build
+.git
+.gitignore
+.github
+
+# Editor/OS noise
+.DS_Store
+
+# Local secrets — never enter the build context
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# Telegram session files and local SQLite runtime state
+sessions/
+*.session.json
+data/
+run/
+*.sock
+local/
+
+# Build output — the image builds these from source inside the multi-stage
+# Dockerfile; nothing from the host's build steps is reused
+bin/
+dist/
+/telesync
+/docsgen
+web/apps/web/build/
+*.tsbuildinfo
+
+# Host node_modules — the Dockerfile runs `npm ci` from the lockfile inside the
+# build itself. Docker matches a pattern only at the context root, so the
+# nested workspace's tree needs its own line.
+node_modules/
+web/node_modules
+web/apps/web/node_modules
+web/packages/ui/node_modules
+
+# Test/coverage artifacts
+coverage.out
+*.prof
+
+# Project memory and skills for the coding agent — not part of the product
+.agents/
+.claude/
+
+TASKS.md

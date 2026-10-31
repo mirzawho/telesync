@@ -1,0 +1,212 @@
+# Every request in docs/api, in the order they can be run.
+#
+# Format: one block per request. The first line is "METHOD /path", then any
+# unindented "Name: value" headers, then an indented body. Blank lines and "#"
+# lines are ignored.
+#
+# internal/apidocs runs every block in this file against a handler in which the
+# client key "official" is configured and the token below is valid, so:
+#   - a path, method or body that the gateway does not accept fails the test;
+#   - every method listed in README.md must appear here, and every method here
+#     must be listed there.
+#
+# docs/api/examples/README.md shows each of these as a curl command, and lists
+# which requests capture an id ("/capture:<name>") for "{{name}}" to use later.
+
+# --- gateway and identity -------------------------------------------------
+
+GET /healthz
+
+POST /api/v1/auth/login
+Content-Type: application/json
+
+	{
+	  "username": "admin",
+	  "password": "example-doc-password"
+	}
+
+GET /api/v1/auth/me
+
+# --- the rendered documentation -----------------------------------------
+
+GET /docs
+
+# --- telegram: the selectable servers ------------------------------------
+
+GET /api/v1/telegram
+
+# --- telegram: health and profile ----------------------------------------
+
+GET /api/v1/telegram/official/health
+
+GET /api/v1/telegram/official/profile
+
+# --- telegram: channels --------------------------------------------------
+
+GET /api/v1/telegram/official/channels?page=1&per_page=5
+
+GET /api/v1/telegram/official/channels/find?q=%40telegram
+
+GET /api/v1/telegram/official/channels/1671633563
+
+GET /api/v1/telegram/official/channels/%2BAbCdEf123456
+
+POST /api/v1/telegram/official/channels/1671633563/join
+
+POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join
+
+GET /api/v1/telegram/official/channels/1671633563/avatar
+
+# --- telegram: messages --------------------------------------------------
+
+GET /api/v1/telegram/official/channels/1671633563/messages?page=1&per_page=10
+
+GET /api/v1/telegram/official/channels/1671633563/messages/1233
+
+GET /api/v1/telegram/official/channels/1671633563/messages/1233/media
+
+# --- telegram: publishing ------------------------------------------------
+
+POST /api/v1/telegram/official/messages
+Content-Type: application/json
+Idempotency-Key: publish-example-1
+
+	{
+	  "source": {"local_channel_id": 1, "message_id": 9},
+	  "destination": {"channel_id": "1671633563"},
+	  "content": {"text": "A prepared post #news", "entities": [{"type": "hashtag", "offset": 18, "length": 4}]},
+	  "media": {"mode": "omit"},
+	  "options": {"silent": false, "disable_web_page_preview": false}
+	}
+
+# --- telegram: custom emoji ----------------------------------------------
+
+GET /api/v1/telegram/official/custom_emoji/5368324170671202286
+
+# --- local: categories ---------------------------------------------------
+
+GET /api/v1/local/categories?page=1&per_page=10&q=technology
+
+POST /api/v1/local/categories/capture:category
+Content-Type: application/json
+
+	{
+	  "name": "Technology",
+	  "description": "Technology channels"
+	}
+
+GET /api/v1/local/categories/{{category}}
+
+PUT /api/v1/local/categories/{{category}}
+Content-Type: application/json
+
+	{
+	  "name": "Tech",
+	  "description": "All technology channels"
+	}
+
+GET /api/v1/local/categories/{{category}}/channels
+
+DELETE /api/v1/local/categories/{{category}}
+
+# --- local: channels -----------------------------------------------------
+
+GET /api/v1/local/channels?page=1&per_page=10
+
+GET /api/v1/local/channels/1
+
+GET /api/v1/local/channels/1/messages?page=1&per_page=10
+
+GET /api/v1/local/channels/1/avatar
+
+GET /api/v1/local/channels/1/categories
+
+PUT /api/v1/local/channels/1/categories
+Content-Type: application/json
+
+	{
+	  "category_ids": []
+	}
+
+POST /api/v1/local/channels/1/leave
+Content-Type: application/json
+
+	{
+	  "telegram": false
+	}
+
+# --- local: wordpress ----------------------------------------------------
+
+GET /api/v1/local/wordpress
+
+POST /api/v1/local/wordpress/capture:site
+Content-Type: application/json
+
+	{
+	  "url": "https://blog.example.com",
+	  "username": "editor",
+	  "password": "abcd EFGH 1234 ijkl MNOP",
+	  "category_ids": [1]
+	}
+
+GET /api/v1/local/wordpress/{{site}}
+
+PATCH /api/v1/local/wordpress/{{site}}
+Content-Type: application/json
+
+	{
+	  "username": "publisher"
+	}
+
+# --- local: wordpress publishing ----------------------------------------
+
+POST /api/v1/local/wordpress/{{site}}/posts
+Content-Type: application/json
+Idempotency-Key: wp-publish-example-1
+
+	{
+	  "source": {"local_channel_id": 1, "message_id": 9},
+	  "post": {"title": "A prepared post", "content": "<p>Body</p>", "status": "publish", "tags": ["technology"]},
+	  "media": {"mode": "omit"},
+	  "options": {"comment_status": "open"}
+	}
+
+DELETE /api/v1/local/wordpress/{{site}}
+
+# --- local: users --------------------------------------------------------
+
+GET /api/v1/local/users?q=example&page=1&per_page=20
+
+POST /api/v1/local/users/capture:user
+Content-Type: application/json
+
+	{
+	  "fullname": "Example Operator",
+	  "username": "example-user",
+	  "password": "example password 123"
+	}
+
+GET /api/v1/local/users/{{user}}
+
+PUT /api/v1/local/users/{{user}}
+Content-Type: application/json
+
+	{
+	  "fullname": "Example O."
+	}
+
+GET /api/v1/local/users/{{user}}/permissions
+
+PUT /api/v1/local/users/{{user}}/permissions
+Content-Type: application/json
+
+	{
+	  "global_permissions": ["channels.view", "categories.view"],
+	  "channel_permissions": [
+	    {"channel_id": 3, "permissions": {"view": "allow"}}
+	  ],
+	  "category_permissions": []
+	}
+
+
+DELETE /api/v1/local/users/{{user}}

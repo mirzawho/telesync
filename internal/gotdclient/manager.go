@@ -1,0 +1,687 @@
+package gotdclient
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"sync"
+	"time"
+
+	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
+
+	"github.com/mirza/telesync/internal/peerstore"
+	"github.com/mirza/telesync/internal/profile"
+	"github.com/mirza/telesync/internal/tgapi"
+)
+
+// Manager maintains one long-running Telegram client for one configured instance.
+//
+// It owns the connection lifecycle; every RPC a worker issues goes through the
+// live client, never through a freshly dialed one.
+type Manager struct {
+	spec *profile.Spec
+	// log receives gotd diagnostics; nil disables them.
+	log     io.Writer
+	mu      sync.Mutex
+	client  *telegram.Client
+	api     *tg.Client
+	state   tgapi.State
+	lastErr string
+	account *tgapi.Account
+	thisDC  int
+	// lastSuccess is when the last authorized probe succeeded. It is evidence
+	// of a working account, so it is only ever set from a successful Self call.
+	lastSuccess time.Time
+	ready       chan struct{}
+	// runDone closes when the client goroutine started by Start has fully
+	// stopped, including its final session write.
+	runDone chan struct{}
+	// everReady is true once the first connection completed initConnection.
+	// After that gotd itself blocks requests until a reconnect succeeds, so
+	// callers must not wait for a second "ready" event of their own.
+	everReady bool
+	// peers remembers channel access hashes across requests and restarts,
+	// because MTProto cannot address a channel by numeric id alone.
+	peers *peerstore.Store
+	// reconnect is how long the watchdog waits before rebuilding a client that
+	// is still not connected. Zero disables the watchdog: gotd's own backoff is
+	// then alone.
+	reconnect time.Duration
+	// logged is the last connection state written to the log; a line is emitted
+	// per transition, never per callback.
+	logged tgapi.State
+	// connectedAt is when the current connected spell started.
+	connectedAt time.Time
+	// lastDisconnect is the most recent reason the connection dropped, kept for
+	// the next "disconnected" line and exposed through Status.
+	lastDisconnect string
+	// cancel stops the current client generation.
+	cancel context.CancelFunc
+	// now dates the cached custom-emoji set. Nil means time.Now.
+	now func() time.Time
+	// emojiMu guards the cached reaction sticker set's documents.
+	emojiMu      sync.Mutex
+	emojiDocs    map[int64]*tg.Document
+	emojiExpires time.Time
+	// logMu serializes log writes with the state they describe.
+	logMu sync.Mutex
+	// eventf emits one line per connection transition. Never nil after
+	// NewManager.
+	eventf func(format string, args ...any)
+}
+
+// ManagerOptions configures the manager.
+type ManagerOptions struct {
+	// Log receives gotd's structured logs. They contain no credentials.
+	Log io.Writer
+	// Verbose enables gotd's debug logs. They are very noisy, so the worker
+	// leaves them off by default.
+	Verbose bool
+	// Peers remembers channel access hashes. Nil disables persistence, which
+	// only means numeric channel ids cannot be resolved after a restart.
+	Peers *peerstore.Store
+	// Reconnect is how long to wait between attempts to restore a connection
+	// that dropped. Zero means DefaultReconnect.
+	//
+	// This exists for networks where the link is simply absent for minutes at a
+	// time (a filtered network, a VPN that is not up yet): a fixed interval
+	// brings the connection back as soon as the network returns, which an
+	// exponential backoff that has already reached its ceiling does not.
+	Reconnect time.Duration
+	// OnEvent receives one line per connection transition (connected,
+	// disconnected, reconnect failed). Nil discards them.
+	OnEvent func(format string, args ...any)
+	// Now overrides the clock, which dates the cached custom-emoji set
+	// (tests). Nil means time.Now.
+	Now func() time.Time
+}
+
+// DefaultReconnect is the retry interval when the configuration does not set
+// one.
+const DefaultReconnect = 10 * time.Second
+
+// NewManager creates a Manager for a fully resolved profile spec.
+func NewManager(spec *profile.Spec, opts ManagerOptions) *Manager {
+	// Verbose logging is opt-in; see Options.Log.
+	logw := opts.Log
+	if logw != nil && !opts.Verbose {
+		// Connection state is reported through Status; gotd's own debug stream
+		// is only useful when diagnosing a handshake.
+		logw = io.Discard
+	}
+	reconnect := opts.Reconnect
+	if reconnect <= 0 {
+		reconnect = DefaultReconnect
+	}
+	m := &Manager{
+		spec:      spec,
+		log:       logw,
+		state:     tgapi.StateDisconnected,
+		ready:     make(chan struct{}),
+		peers:     opts.Peers,
+		reconnect: reconnect,
+		now:       opts.Now,
+	}
+	m.eventf = opts.OnEvent
+	if m.eventf == nil {
+		m.eventf = func(string, ...any) {}
+	}
+	return m
+}
+
+// remember records a channel's access hash so later requests can address it by
+// id. It never fails a request: the cache is an optimization over Telegram.
+func (m *Manager) remember(ch *tg.Channel) {
+	if m.peers == nil || ch == nil || ch.ID <= 0 || ch.AccessHash == 0 {
+		return
+	}
+	_ = m.peers.Save(ch.ID, ch.AccessHash, ch.Title, ch.Username)
+}
+
+// peerHash returns a remembered access hash.
+func (m *Manager) peerHash(id int64) (int64, bool) {
+	if m.peers == nil {
+		return 0, false
+	}
+	return m.peers.Find(id)
+}
+
+// Start connects and keeps the connection alive until ctx is cancelled.
+//
+// It returns immediately; Status reports progress. gotd reconnects on its own,
+// and a watchdog on top of it rebuilds the whole client whenever the connection
+// stays down: a network that is unreachable for minutes (a filtered link, a
+// VPN that is not up yet) can leave gotd retrying an address from a DNS answer
+// that has long expired, and only a fresh client re-resolves and redials.
+func (m *Manager) Start(ctx context.Context) {
+	m.mu.Lock()
+	if m.client != nil {
+		m.mu.Unlock()
+		return
+	}
+	m.state = tgapi.StateConnecting
+	done := make(chan struct{})
+	m.runDone = done
+	m.mu.Unlock()
+
+	go m.watchFirstConnect(ctx)
+	go func() {
+		defer close(done)
+		m.supervise(ctx)
+	}()
+}
+
+// supervise runs one client after another until ctx ends.
+//
+// Each generation is a fresh gotd client (and therefore a fresh DNS lookup and
+// connection), because an existing one keeps retrying what it has already
+// resolved. A generation that stays connected is left alone; one that is still
+// down after the retry interval is replaced.
+func (m *Manager) supervise(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		client := m.newClient()
+		ran := make(chan struct{})
+		go func() {
+			defer close(ran)
+			m.runClient(ctx, client)
+		}()
+
+		timer := time.NewTimer(m.reconnect)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			<-ran
+			return
+		case <-ran:
+			timer.Stop()
+			// The generation ended on its own (shutdown or a fatal client
+			// error). Give the next one a moment rather than spinning.
+			if ctx.Err() != nil {
+				return
+			}
+			m.eventf("client %s: connection loop ended (%s); retrying in %s",
+				m.spec.Key, m.reason(), m.reconnect)
+			if !sleep(ctx, m.reconnect) {
+				return
+			}
+			continue
+		case <-timer.C:
+			// Still not connected after one full interval: replace the client.
+		}
+
+		m.mu.Lock()
+		up := m.state == tgapi.StateReady || m.state == tgapi.StateUnauthorized
+		m.mu.Unlock()
+		if up {
+			// gotd is healthy; wait for this generation to end on its own.
+			<-ran
+			continue
+		}
+
+		m.eventf("client %s: still not connected after %s; reconnecting with a fresh client",
+			m.spec.Key, m.reconnect)
+		// Cancel the old generation and give it a moment to stop before a new
+		// client writes the same session file.
+		m.detach()
+		m.cancelRun()
+		if !waitWithin(ran, 5*time.Second) {
+			m.eventf("client %s: the previous connection did not stop in time; starting a new one anyway",
+				m.spec.Key)
+		}
+	}
+}
+
+// newClient builds one gotd client generation and publishes it.
+func (m *Manager) newClient() *telegram.Client {
+	client := m.spec.NewClientWithBackoff(m.onConnectionState, m.log, nil)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.client = client
+	m.api = client.API()
+	return client
+}
+
+// runClient runs one client generation until it stops.
+func (m *Manager) runClient(ctx context.Context, client *telegram.Client) {
+	runCtx, cancel := context.WithCancel(ctx)
+	m.mu.Lock()
+	m.cancel = cancel
+	m.mu.Unlock()
+	defer cancel()
+
+	err := client.Run(runCtx, func(cbCtx context.Context) error {
+		m.setReady()
+		m.refreshAccount(cbCtx)
+		// Block until the manager is stopped; the client's Run treats a
+		// returning callback as "stop the client".
+		<-cbCtx.Done()
+		return cbCtx.Err()
+	})
+	// A run that ends while the manager is still alive left the connection
+	// down; record why, so the log line and the next attempt carry a reason.
+	if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
+		m.setError(err)
+	}
+}
+
+// detach forgets the current client so Status stops reporting its state.
+func (m *Manager) detach() {
+	m.mu.Lock()
+	m.client = nil
+	m.api = nil
+	m.mu.Unlock()
+}
+
+// cancelRun stops the current generation if one is running.
+func (m *Manager) cancelRun() {
+	m.mu.Lock()
+	cancel := m.cancel
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// reason is the last recorded connection problem, or "no error" when none.
+func (m *Manager) reason() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.lastErr == "" && m.lastDisconnect == "" {
+		return "no error"
+	}
+	if m.lastErr != "" {
+		return m.lastErr
+	}
+	return m.lastDisconnect
+}
+
+func sleep(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func waitWithin(done <-chan struct{}, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// firstConnectTimeout is how long a client may keep retrying before health
+// carries a diagnostic saying it has not connected yet.
+const firstConnectTimeout = 45 * time.Second
+
+// watchFirstConnect records a diagnostic when the client keeps retrying without
+// ever becoming ready. The client keeps reconnecting; only the message changes.
+func (m *Manager) watchFirstConnect(ctx context.Context) {
+	timer := time.NewTimer(firstConnectTimeout)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+		m.mu.Lock()
+		stillConnecting := m.state == tgapi.StateConnecting || m.state == tgapi.StateDisconnected
+		if stillConnecting {
+			m.lastErr = "No Telegram connection yet; retrying in the background."
+		}
+		m.mu.Unlock()
+	}
+}
+
+// Wait blocks until the client goroutine has stopped and its session has been
+// written. It is what makes shutdown ordered: the process must not exit while
+// gotd is still persisting credentials.
+func (m *Manager) Wait(ctx context.Context) error {
+	m.mu.Lock()
+	done := m.runDone
+	m.mu.Unlock()
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Stop closes the client. The session file stays on disk.
+func (m *Manager) Stop() {
+	m.mu.Lock()
+	client := m.client
+	m.client = nil
+	m.api = nil
+	m.state = tgapi.StateDisconnected
+	m.mu.Unlock()
+	_ = client
+}
+
+// onConnectionState mirrors gotd's states into tgapi states.
+func (m *Manager) onConnectionState(state telegram.ConnectionState) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	switch state {
+	case telegram.ConnectionStateConnecting:
+		if m.state != tgapi.StateReady {
+			m.state = tgapi.StateConnecting
+		}
+	case telegram.ConnectionStateReady:
+		// Authorization is decided by refreshAccount, which must also run after
+		// every reconnect: a dropped connection returns the state to
+		// "connecting" and would otherwise never recover.
+		if m.state != tgapi.StateReady && m.state != tgapi.StateUnauthorized {
+			m.state = tgapi.StateConnecting
+		}
+		go m.refreshAfterReconnect()
+	case telegram.ConnectionStateDisconnected:
+		if m.state != tgapi.StateDisconnected {
+			m.state = tgapi.StateConnecting
+		}
+	}
+	m.emitLocked(m.state)
+}
+
+// emitLocked logs one line when the observable state changes. Caller holds mu.
+//
+// The state is decided here rather than by gotd's transient callbacks, so the
+// log carries a reconnect exactly once instead of per connection attempt.
+func (m *Manager) emitLocked(phase tgapi.State) {
+	if phase == m.logged {
+		return
+	}
+	m.logged = phase
+
+	key := m.spec.Key
+	remote := m.remoteLocked()
+	switch phase {
+	case tgapi.StateReady:
+		m.connectedAt = time.Now()
+		m.logMu.Lock()
+		m.eventf("client %s: connected to %s", key, remote)
+		m.logMu.Unlock()
+	case tgapi.StateUnauthorized:
+		m.logMu.Lock()
+		m.eventf("client %s: connected to %s but the account is not authorized; run `auth --key %s`",
+			key, remote, key)
+		m.logMu.Unlock()
+	case tgapi.StateError:
+		m.logMu.Lock()
+		m.eventf("client %s: %s", key, m.reasonLocked())
+		m.logMu.Unlock()
+	case tgapi.StateDisconnected:
+		// A clean stop; nothing to report beyond the shutdown line.
+	case tgapi.StateConnecting:
+		downtime := ""
+		if !m.connectedAt.IsZero() {
+			downtime = fmt.Sprintf(" (connection lost after %s)", time.Since(m.connectedAt).Round(time.Second))
+		}
+		connected := m.everReady
+		m.connectedAt = time.Time{}
+		m.logMu.Lock()
+		if connected || downtime != "" {
+			m.eventf("client %s: disconnected from %s%s; reconnecting", key, remote, downtime)
+		} else {
+			m.eventf("client %s: connecting to %s", key, remote)
+		}
+		m.logMu.Unlock()
+	}
+}
+
+// reasonLocked renders the current problem without leaking credentials.
+func (m *Manager) reasonLocked() string {
+	if m.lastDisconnect != "" {
+		return "connection error: " + m.lastDisconnect
+	}
+	if m.lastErr != "" {
+		return "connection error: " + m.lastErr
+	}
+	return "connection error"
+}
+
+// remoteLocked is the endpoint this client talks to, without credentials.
+func (m *Manager) remoteLocked() string {
+	if m.spec.Endpoint != "" {
+		return m.spec.Endpoint
+	}
+	return "Telegram production"
+}
+
+func (m *Manager) setReady() {
+	m.mu.Lock()
+	ch := m.ready
+	m.ready = make(chan struct{})
+	m.everReady = true
+	m.mu.Unlock()
+	close(ch)
+}
+
+// firstRequestWait bounds how long a request waits for the very first
+// connection before the panel answers "not connected" instead of hanging.
+const firstRequestWait = 4 * time.Second
+
+// waitReady waits for the first connection, bounded in time.
+//
+// Once the client has connected at least once, this returns immediately: gotd
+// keeps retrying in the background and its own Invoke waits for the next
+// connection, so a second wait here would only duplicate it.
+func (m *Manager) waitReady(ctx context.Context) error {
+	m.mu.Lock()
+	ch := m.ready
+	everReady := m.everReady
+	state := m.state
+	m.mu.Unlock()
+	if everReady || (state != tgapi.StateConnecting && state != tgapi.StateDisconnected) {
+		return nil
+	}
+	timer := time.NewTimer(firstRequestWait)
+	defer timer.Stop()
+	select {
+	case <-ch:
+		return nil
+	case <-timer.C:
+		return tgapi.ErrNotConnected
+	case <-ctx.Done():
+		return fmt.Errorf("%w: %w", tgapi.ErrNotConnected, ctx.Err())
+	}
+}
+
+func (m *Manager) setError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastErr = describe(err)
+	if m.lastDisconnect == "" {
+		m.lastDisconnect = m.lastErr
+	}
+	m.state = tgapi.StateError
+	m.emitLocked(m.state)
+}
+
+// refreshAfterReconnect re-probes the session after gotd reports a ready
+// connection. It is bounded so a hung probe cannot leak a goroutine forever.
+func (m *Manager) refreshAfterReconnect() {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	m.mu.Lock()
+	running := m.client != nil
+	m.mu.Unlock()
+	if !running {
+		return
+	}
+	m.refreshAccount(ctx)
+}
+
+// refreshAccount probes the session and updates the state.
+func (m *Manager) refreshAccount(ctx context.Context) {
+	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	m.mu.Lock()
+	api := m.client
+	m.mu.Unlock()
+	if api == nil {
+		return
+	}
+
+	user, err := api.Self(probeCtx)
+	switch {
+	case err == nil && user != nil:
+		m.mu.Lock()
+		m.state = tgapi.StateReady
+		m.lastErr = ""
+		m.lastDisconnect = ""
+		m.account = accountFromUser(user)
+		m.thisDC = m.client.Config().ThisDC
+		m.lastSuccess = time.Now().UTC()
+		m.emitLocked(m.state)
+		m.mu.Unlock()
+	case err == nil:
+		m.mu.Lock()
+		m.state = tgapi.StateUnauthorized
+		m.account = nil
+		m.emitLocked(m.state)
+		m.mu.Unlock()
+	case auth.IsUnauthorized(err), tgerr.Is(err, "AUTH_KEY_UNREGISTERED", "SESSION_EXPIRED"):
+		m.mu.Lock()
+		m.state = tgapi.StateUnauthorized
+		m.lastErr = ""
+		m.account = nil
+		m.emitLocked(m.state)
+		m.mu.Unlock()
+	default:
+		m.setStateError(err)
+	}
+}
+
+func (m *Manager) setStateError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.state = tgapi.StateError
+	m.lastErr = describe(err)
+	m.lastDisconnect = m.lastErr
+	m.emitLocked(m.state)
+}
+
+// Status implements tgapi.Client.
+func (m *Manager) Status(ctx context.Context) tgapi.Status {
+	m.mu.Lock()
+	state := m.state
+	thisDC := m.thisDC
+	lastErr := m.lastErr
+	lastSuccess := m.lastSuccess
+	var account *tgapi.Account
+	if m.account != nil {
+		copy := *m.account
+		account = &copy
+	}
+	m.mu.Unlock()
+
+	if state == tgapi.StateReady && account == nil {
+		// Connected but we never got a user; ask once, cheaply.
+		m.refreshAccount(ctx)
+		m.mu.Lock()
+		state = m.state
+		thisDC = m.thisDC
+		lastErr = m.lastErr
+		lastSuccess = m.lastSuccess
+		if m.account != nil {
+			copy := *m.account
+			account = &copy
+		}
+		m.mu.Unlock()
+	}
+
+	return tgapi.Status{State: state, ThisDC: thisDC, User: account, Err: lastErr, LastSuccess: lastSuccess}
+}
+
+func accountFromUser(u *tg.User) *tgapi.Account {
+	if u == nil {
+		return nil
+	}
+	return &tgapi.Account{
+		ID:        u.ID,
+		Username:  u.Username,
+		FirstName: u.FirstName,
+		LastName:  u.LastName,
+	}
+}
+
+// apiClient returns the live tg client, waiting briefly for the first
+// connection before Telegram is reachable.
+func (m *Manager) apiClient(ctx context.Context) (*telegram.Client, *tg.Client, error) {
+	m.mu.Lock()
+	client, api := m.client, m.api
+	state := m.state
+	everReady := m.everReady
+	m.mu.Unlock()
+	if client == nil {
+		return nil, nil, tgapi.ErrNotConnected
+	}
+	if everReady {
+		// Once connected, gotd itself blocks requests until the next
+		// connection, including across a client the watchdog replaced.
+		if api == nil {
+			return nil, nil, tgapi.ErrNotConnected
+		}
+		if state == tgapi.StateUnauthorized {
+			return nil, nil, tgapi.ErrNotAuthorized
+		}
+		return client, api, nil
+	}
+	if api == nil || state == tgapi.StateConnecting || state == tgapi.StateDisconnected {
+		if err := m.waitReady(ctx); err != nil {
+			return nil, nil, err
+		}
+	}
+	m.mu.Lock()
+	client, api = m.client, m.api
+	state = m.state
+	m.mu.Unlock()
+	if client == nil || api == nil {
+		return nil, nil, tgapi.ErrNotConnected
+	}
+	if state == tgapi.StateUnauthorized {
+		return nil, nil, tgapi.ErrNotAuthorized
+	}
+	return client, api, nil
+}
+
+// describe renders a short, sanitized explanation.
+//
+// The technical error goes to the log; health exposes only this summary so a
+// client's state is legible without leaking RPC internals.
+func describe(err error) string {
+	if err == nil {
+		return ""
+	}
+	var fw tgapi.FloodWait
+	if errors.As(err, &fw) {
+		return fmt.Sprintf("Telegram is rate limiting this client for about %d seconds.", fw.Seconds)
+	}
+	switch {
+	case errors.Is(err, tgapi.ErrNotAuthorized):
+		return "The Telegram account is not authorized."
+	case errors.Is(err, tgapi.ErrNotConnected):
+		return "No live Telegram connection."
+	}
+	return "The Telegram connection failed; see the worker log for details."
+}

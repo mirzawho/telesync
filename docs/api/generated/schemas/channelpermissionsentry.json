@@ -1,0 +1,17 @@
+{
+  "go_type": "channelPermissionsEntry",
+  "properties": {
+    "channel_id": {
+      "$ref": "#/components/schemas/int64",
+      "go_type": "int64",
+      "type": "integer"
+    },
+    "permissions": {
+      "go_type": "map[string]string"
+    }
+  },
+  "required": [
+    "channel_id",
+    "permissions"
+  ]
+}

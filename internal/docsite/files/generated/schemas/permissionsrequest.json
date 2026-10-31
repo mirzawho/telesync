@@ -1,0 +1,35 @@
+{
+  "go_type": "permissionsRequest",
+  "properties": {
+    "global_permissions": {
+      "$ref": "#/components/schemas/string",
+      "go_type": "[]string",
+      "items": "string",
+      "type": "array"
+    },
+    "channel_permissions": {
+      "$ref": "#/components/schemas/channelPermissionsEntry",
+      "go_type": "[]channelPermissionsEntry",
+      "items": "channelPermissionsEntry",
+      "type": "array"
+    },
+    "category_permissions": {
+      "$ref": "#/components/schemas/categoryPermissionsEntry",
+      "go_type": "[]categoryPermissionsEntry",
+      "items": "categoryPermissionsEntry",
+      "type": "array"
+    },
+    "wordpress_permissions": {
+      "$ref": "#/components/schemas/wordpressPermissionsEntry",
+      "go_type": "[]wordpressPermissionsEntry",
+      "items": "wordpressPermissionsEntry",
+      "type": "array"
+    }
+  },
+  "required": [
+    "category_permissions",
+    "channel_permissions",
+    "global_permissions",
+    "wordpress_permissions"
+  ]
+}

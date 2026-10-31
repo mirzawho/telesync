@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "telesync",
+      "runtimeExecutable": "./bin/telesync",
+      "runtimeArgs": ["daemon"],
+      "port": 8080,
+      "url": "http://127.0.0.1:8080"
+    },
+    {
+      "name": "panel",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--workspace=apps/web"],
+      "cwd": "web",
+      "port": 5173,
+      "url": "http://localhost:5173/admin/"
+    }
+  ]
+}

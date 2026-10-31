@@ -1,0 +1,31 @@
+{
+  "go_type": "updateUserRequest",
+  "properties": {
+    "fullname": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "username": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "password": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "is_active": {
+      "go_type": "*bool",
+      "nullable": true,
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "fullname",
+    "is_active",
+    "password",
+    "username"
+  ]
+}

@@ -1,0 +1,1 @@
+import{i as e}from"./session-CRMQmFL2.js";function t(e){let t=e.headers.get(`Cookie`)?.match(/(?:^|;\s*)sidebar_state=(true|false)/);return!t||t[1]===`true`}async function n({request:n}){let{me:r}=await e(n);return{me:r,sidebarOpen:t(n)}}export{n as clientLoader};

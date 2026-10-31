@@ -1,0 +1,1 @@
+import{D as e}from"./utils-Ba9q0Lno.js";function t(){return e(`/login`)}export{t as clientLoader};

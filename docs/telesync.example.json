@@ -1,0 +1,54 @@
+{
+  "api": {
+    "listen_addr": "127.0.0.1:8080",
+    "request_timeout": "30s",
+    "jwt": {
+      "secret_env": "TELESYNC_JWT_SECRET",
+      "token_ttl": "1h"
+    },
+    "wordpress": {
+      "encryption_key_path": "/run/secrets/wordpress_encryption_key"
+    }
+  },
+  "runtime": {
+    "run_dir": "/data/run",
+    "session_dir": "/data/sessions",
+    "data_dir": "/data/db",
+    "cache_dir": "/data/cache/avatars",
+    "peer_dir": "/data/peers",
+    "avatar_ttl": "24h",
+    "reconnect": 10,
+    "restart_initial_delay": "1s",
+    "restart_max_delay": "30s",
+    "max_restart_attempts": 10,
+    "startup_timeout": "60s",
+    "shutdown_timeout": "15s"
+  },
+  "clients": [
+    {
+      "key": "official",
+      "type": "official",
+      "enabled": true,
+      "app_id": 123456,
+      "app_hash_env": "OFFICIAL_API_HASH",
+      "phone_env": "OFFICIAL_PHONE"
+    },
+    {
+      "key": "the-cat",
+      "type": "custom",
+      "enabled": true,
+      "app_id": 654321,
+      "app_hash_env": "THE_CAT_API_HASH",
+      "phone_env": "THE_CAT_PHONE",
+      "server": {
+        "host": "127.0.0.1",
+        "port": 443,
+        "dc_id": 2,
+        "rsa_public_key_path": "/run/secrets/custom_server_rsa_public_key.pem",
+        "transport": "intermediate",
+        "routing": "single-dc",
+        "obfuscated": false
+      }
+    }
+  ]
+}

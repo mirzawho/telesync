@@ -1,0 +1,31 @@
+{
+  "go_type": "createUserRequest",
+  "properties": {
+    "fullname": {
+      "$ref": "#/components/schemas/string",
+      "go_type": "string",
+      "type": "string"
+    },
+    "username": {
+      "$ref": "#/components/schemas/string",
+      "go_type": "string",
+      "type": "string"
+    },
+    "password": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "is_active": {
+      "go_type": "*bool",
+      "nullable": true,
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "fullname",
+    "is_active",
+    "password",
+    "username"
+  ]
+}
