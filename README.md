@@ -180,11 +180,20 @@ Sessions persist in the `sessdata` named volume across container recreation.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` validates the project and builds the Docker image:
-it does **not** deploy anything, does **not** push the image to Docker Hub,
-GHCR or any other registry, and needs no credentials. The image build is a
-check that the multi-stage Dockerfile really compiles the panel and the binary;
-after the workflow finishes, the image is discarded.
+`.github/workflows/ci.yml` validates the project (gofmt, vet, tests, docs,
+frontend typecheck and tests) and builds the Docker image, **pushing it to
+GHCR**:
+
+| trigger | image tags |
+| --- | --- |
+| push to a branch, `workflow_dispatch` | `ghcr.io/mirzawho/telesync:development` |
+| git tag `v*` | `ghcr.io/mirzawho/telesync:<tag>` and `:production` |
+| pull request | built only, not pushed |
+
+It needs no credential beyond the run's own `GITHUB_TOKEN`
+(`permissions: packages: write`) and deploys nothing. The image version in the
+panel comes from the tag (`--stamp`), so a version only appears on a tagged
+build. Publishing to GHCR was made a requested change on 2026-10-31.
 
 Local equivalents:
 

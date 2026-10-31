@@ -22,8 +22,8 @@
 #                   first after adding or changing a dependency)
 #   make web-test   the panel's own tests (content parser)
 #   make docker     build the image locally: docker build -t telesync:local .
-#                   (validates the multi-stage Dockerfile; never run or pushed
-#                   by CI's workflow)
+#                   (validates the multi-stage Dockerfile; CI pushes the same
+#                   Dockerfile's image to ghcr.io itself)
 #   make version v1.0.2
 #                   release: write 1.0.2 into the panel's package.json and
 #                   create the git tag v1.0.2 at HEAD

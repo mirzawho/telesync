@@ -5,9 +5,16 @@ per-client worker processes + JSON HTTP API v1 (read, manage, publish).
 **Built and unit/integration-tested; not yet run against live Telegram from an
 unrestricted shell.**
 
-**Last updated:** 2026-10-31 (local channel avatar 502: `no_avatar`/
-`peer_unresolved` classified; worker log now keeps the adapter error; not
-live-verified — see LOG). Release-readiness audit the same day: stale `panel/`
+**Last updated:** 2026-10-31 (later): `ci.yml` now builds **and pushes** the
+Docker image to GHCR — every branch push → `ghcr.io/mirzawho/telesync:development`;
+a tag `v*` → `:`+tag and `:production`; pull requests build only. Needs
+`permissions: packages: write` and `docker/login-action` with the run's own
+`GITHUB_TOKEN`. This reverses the "build-only, no registry" note below, which is
+what that same day's audit set up (owner's written request, see LOG).
+
+Earlier that day: local channel avatar 502 was classified (`no_avatar`/
+`peer_unresolved`); the worker log now keeps the adapter error — not
+live-verified, see LOG. Release-readiness audit the same day: stale `panel/`
 scaffold removed, CI rewritten to build-only (`ci.yml`, no registry, no
 deploy), `version.mjs --stamp` fixed with tests, docs status claims realigned
 with the implemented publishing work, `.dockerignore` nested-`node_modules` gap

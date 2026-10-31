@@ -284,3 +284,30 @@ panel in a browser, the Docker image build.
   `TestWordPressCreateRejectsACategoryThatDoesNotExist` failed; it passed alone
   and in three further `internal/gateway` runs and two further whole-suite runs.
   Not reproduced, not explained, not fixed — watch it in CI. No test was changed.
+
+## 2026-10-31 (later) — CI pushes the image to GHCR (owner's written request)
+
+Owner, in Persian: every push/commit is a **development** build →
+`ghcr.io/mirzawho/telesync:development`; a git tag `v*` → `ghcr.io/mirzawho/telesync:<tag>`
+**and** `ghcr.io/mirzawho/telesync:production`. This reverses the audit earlier
+the same day that made `ci.yml` build-only (that audit was also an owner request;
+this one supersedes it).
+
+- `.github/workflows/ci.yml` — `permissions: packages: write` added; docker job
+  now logs in (`docker/login-action@v3`, `${{ secrets.GITHUB_TOKEN }}`) unless
+  the run is a pull request, and `push: false` became
+  `push: ${{ github.event_name != 'pull_request' }}` (PRs have no write token
+  anyway; nothing is published by a PR). Tags: `ghcr.io/mirzawho/telesync:development`
+  always; on a tag, the same build is **re-pushed** under `:`+tag and
+  `:production` (second `build-push-action` step, a cache hit on rebuild).
+  Retag instead of racing the branch run's `development` push. Two deliberate
+  choices: no `latest` tag on purpose (`production` is the owner's name for it);
+  `VERSION` build-arg is the tag on a tagged build and empty otherwise, so a
+  development image shows no version rather than invented one.
+- **Not yet verified:** the workflow has not run — first push to a branch will
+  prove it. Not tested locally (no Docker daemon here; `make verify` covers the
+  same Dockerfile build on a runner). No `deploy` was added: ghcr publish only.
+- Docs moved with the change: README's CI section now has the trigger → tag
+  table instead of "does not push"; `Makefile` `docker`/`verify` comments no
+  longer claim CI never pushes; STATE.md records the inversion of the earlier
+  build-only note (with both claims kept, dated).

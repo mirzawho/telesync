@@ -1,17 +1,16 @@
-# Validates the project and builds the Docker image as a check.
-#
-# It does NOT deploy anything, does NOT sign in to any registry, and does NOT
-# push the image (push: false). The image is built here only to prove the
-# multi-stage Dockerfile compiles the real frontend build and the real Go
-# binary; after this workflow the image is discarded.
+# Validates the project and builds + pushes the Docker image to ghcr.io.
 #
 # Jobs:
 #   go        gofmt, go vet, go test, go build, documentation check
 #   frontend  npm ci from the lockfile, typecheck, tests, panel build/embed
-#   docker    Docker Buildx + a full multi-stage image build (not pushed)
+#   docker    Docker Buildx: build the multi-stage image and push it
 #
-# Release tagging and publishing to a registry are deliberately not part of
-# this workflow; make them a separate, explicitly requested change if needed.
+# What the docker job pushes:
+#   push to a branch            ghcr.io/mirzawho/telesync:development
+#   tag v*                      ghcr.io/mirzawho/telesync:<tag> and :production
+# Not a release: every push is a development build; only a git tag names a
+# version. Release tagging and publishing were previously made a separate
+# change, as requested by the owner (2026-10-31).
 
 name: ci
 
@@ -29,6 +28,8 @@ concurrency:
 
 permissions:
   contents: read
+  # Needed only by the docker job to write packages to ghcr.io.
+  packages: write
 
 jobs:
   go:
@@ -96,19 +97,57 @@ jobs:
   docker:
     name: docker
     runs-on: ubuntu-latest
+    # Renames the tag-triggered free run's image "development" → the tag.
+    env:
+      OWNER: ${{ github.repository_owner }}
+      TAG: ${{ github.ref_name }}
+      RETAG: ${{ github.ref_type == 'tag' && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: docker/setup-buildx-action@v3
 
-      - name: build image (not pushed)
+      - name: build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          push: false
-          tags: telesync:ci
+          # A pull request runs from a token that may not write and checks
+          # only that the image builds; there is nothing to publish.
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ghcr.io/${{ env.OWNER }}/telesync:development
           build-args: |
             VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # A tag run rebuilt the same image as the branch run that started it.
+      # Give it the release names instead of exploiting the tag-starts-two-runs
+      # race. The retag failure will not print the computed tags, so they are
+      # logged first here (the image itself is not readable from a failed step).
+      - name: release names
+        if: env.RETAG == 'true' && github.event_name != 'pull_request'
+        run: echo "tags ghcr.io/$OWNER/telesync:$TAG and ghcr.io/$OWNER/telesync:production"
+
+      - name: retag as the release
+        if: env.RETAG == 'true' && github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/telesync:${{ env.TAG }}
+            ghcr.io/${{ env.OWNER }}/telesync:production
+          build-args: |
+            VERSION=${{ env.TAG }}
+          cache-from: type=gha
