@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -19,10 +20,16 @@ import (
 type PostInput struct {
 	// Title is the post title. WordPress requires one.
 	Title string
+	// Slug is the post's slug. Empty lets WordPress generate one from the
+	// title, which is what a non-Latin title needs.
+	Slug string
 	// Content is the post body, already converted to safe HTML.
 	Content string
 	// Status is "publish" for immediate publication, or "draft".
 	Status string
+	// CategoryIDs are the WordPress category term ids to attach. They belong to
+	// the site being posted to and are never shared between sites.
+	CategoryIDs []int
 	// TagIDs are the WordPress post_tag term ids to attach.
 	TagIDs []int
 	// FeaturedMedia is the attachment id to use as the featured image.
@@ -33,11 +40,12 @@ type PostInput struct {
 
 // PostResult is what the site confirmed about the created post.
 type PostResult struct {
-	ID     int
-	Link   string
-	Status string
-	Title  string
-	TagIDs []int
+	ID          int
+	Link        string
+	Status      string
+	Title       string
+	CategoryIDs []int
+	TagIDs      []int
 }
 
 // MediaRef is an uploaded attachment.
@@ -71,6 +79,17 @@ func (c *Client) CreatePost(ctx context.Context, baseURL, username, password str
 	if in.Status == "" {
 		body["status"] = "publish"
 	}
+	// A slug is only named when the caller has one. An absent slug is not sent
+	// as an empty string: WordPress generates one from the title, which is the
+	// only sensible answer for a title with no Latin in it.
+	if in.Slug != "" {
+		body["slug"] = in.Slug
+	}
+	if len(in.CategoryIDs) > 0 {
+		categories := make([]int, 0, len(in.CategoryIDs))
+		categories = append(categories, in.CategoryIDs...)
+		body["categories"] = categories
+	}
 	if len(in.TagIDs) > 0 {
 		tags := make([]int, 0, len(in.TagIDs))
 		tags = append(tags, in.TagIDs...)
@@ -90,7 +109,8 @@ func (c *Client) CreatePost(ctx context.Context, baseURL, username, password str
 		Title  struct {
 			Rendered string `json:"rendered"`
 		} `json:"title"`
-		Tags []int `json:"tags"`
+		Categories []int `json:"categories"`
+		Tags       []int `json:"tags"`
 	}
 	if err := c.postJSON(ctx, target, username, password, body, &reply); err != nil {
 		return PostResult{}, err
@@ -103,7 +123,11 @@ func (c *Client) CreatePost(ctx context.Context, baseURL, username, password str
 		Link:   reply.Link,
 		Status: reply.Status,
 		Title:  reply.Title.Rendered,
-		TagIDs: append([]int(nil), reply.Tags...),
+	}
+	result.CategoryIDs = append([]int(nil), reply.Categories...)
+	result.TagIDs = append([]int(nil), reply.Tags...)
+	if result.CategoryIDs == nil {
+		result.CategoryIDs = []int{}
 	}
 	if result.TagIDs == nil {
 		result.TagIDs = []int{}
@@ -204,6 +228,105 @@ func (c *Client) CreateTag(ctx context.Context, baseURL, username, password, nam
 		return TagRef{}, fmt.Errorf("%w: the answer names no term id", ErrIncompatible)
 	}
 	return TagRef{ID: reply.ID, Name: reply.Name, Slug: reply.Slug}, nil
+}
+
+// TermRef is one WordPress term: a category or a tag.
+type TermRef struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+	// Count is how many posts carry the term. WordPress reports it; it is not
+	// computed here.
+	Count int `json:"count"`
+}
+
+// TermPage is one page of a site's taxonomy.
+type TermPage struct {
+	Terms []TermRef
+	// Total and TotalPages are the site's own counts, which is why a caller can
+	// page without guessing.
+	Total      int
+	TotalPages int
+	Page       int
+	PerPage    int
+}
+
+// ListTerms reads one page of a site's categories or tags.
+//
+// taxonomy is "categories" or "tags" — the REST resource WordPress itself
+// exposes. The search narrows by name on the site's side, and pagination is the
+// site's own, so a large taxonomy is never fetched in one go.
+func (c *Client) ListTerms(ctx context.Context, baseURL, username, password, taxonomy, search string, page, perPage int) (TermPage, error) {
+	if taxonomy != "categories" && taxonomy != "tags" {
+		return TermPage{}, fmt.Errorf("wordpress: unknown taxonomy %q", taxonomy)
+	}
+	target, err := c.apiTarget(baseURL, taxonomy)
+	if err != nil {
+		return TermPage{}, err
+	}
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 100 {
+		// 100 is WordPress's own ceiling for per_page.
+		perPage = 100
+	}
+	query := url.Values{}
+	query.Set("page", strconv.Itoa(page))
+	query.Set("per_page", strconv.Itoa(perPage))
+	if search != "" {
+		query.Set("search", search)
+	}
+	target += "?" + query.Encode()
+
+	var reply []TermRef
+	resp, err := c.getJSONPage(ctx, target, username, password, &reply)
+	if err != nil {
+		return TermPage{}, err
+	}
+	terms := append([]TermRef(nil), reply...)
+	if terms == nil {
+		terms = []TermRef{}
+	}
+	result := TermPage{Terms: terms, Page: page, PerPage: perPage}
+	result.Total = headerInt(resp, "X-WP-Total")
+	result.TotalPages = headerInt(resp, "X-WP-TotalPages")
+	return result, nil
+}
+
+// getJSONPage performs one authenticated GET and decodes it, keeping the
+// response so its pagination headers can still be read afterwards.
+func (c *Client) getJSONPage(ctx context.Context, target, username, password string, out any) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
+	}
+	req.SetBasicAuth(username, password)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "telesync")
+
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, describeRequestError(ctx, err)
+	}
+	defer resp.Body.Close()
+	if err := c.readJSONResponse(resp, requestTarget(target), out); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// headerInt reads one of WordPress's pagination counters. A header the site did
+// not send is zero, which callers read as "unknown" rather than as a count.
+func headerInt(resp *http.Response, name string) int {
+	if resp == nil {
+		return 0
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get(name)))
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 // quoteDisposition keeps a file name inside a Content-Disposition value.

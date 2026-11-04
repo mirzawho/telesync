@@ -7,7 +7,7 @@
 
 | Method | Path | Auth conditions | Success |
 | --- | --- | --- | --- |
-| GET | `/docs` | 4 | — |
+| GET | `/docs` | 5 | — |
 
 ## GET
 
@@ -17,6 +17,7 @@
 ### Authorization conditions in the source
 
 - `s.authenticate(r)  (gateway.go:serveTelegram)`
+- `s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.changePassword(w, r, requestID) })  (gateway.go:serveAPI)`
 - `s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.me(w, r, requestID) })  (gateway.go:serveAPI)`
 - `s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.serveLocal(w, r, requestID) })  (gateway.go:serveAPI)`
 - `s.requireAuth(s.servers)  (gateway.go:serveAPI)`

@@ -282,7 +282,7 @@ type WorkerManager interface {
 	Status(ctx context.Context) tgapi.Status
 	Dialogs(ctx context.Context) ([]tgapi.Channel, error)
 	History(ctx context.Context, channel tgapi.Channel, beforeID, limit int) (tgapi.HistoryPage, error)
-	DownloadMedia(ctx context.Context, channel tgapi.Channel, messageID int) (tgapi.MediaFile, error)
+	DownloadMedia(ctx context.Context, channel tgapi.Channel, messageID int, slice tgapi.MediaSlice) (tgapi.MediaStream, error)
 	Message(ctx context.Context, channel tgapi.Channel, messageID int) (tgapi.Message, error)
 	FindChannels(ctx context.Context, q tgapi.ChannelQuery) ([]tgapi.ChannelInfo, error)
 	ResolveChannel(ctx context.Context, ref tgapi.ChannelRef) (tgapi.ChannelInfo, error)

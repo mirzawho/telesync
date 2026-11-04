@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/rpc"
@@ -60,6 +61,11 @@ type publishRequest struct {
 		// Mode is "preserve_source" to send the source attachment along, or
 		// "omit" for text only.
 		Mode string `json:"mode"`
+		// AttachmentID is the media id of the attachment to send, exactly as
+		// the message listing reported it. It is compared against the source's
+		// own id and never read as a coordinate. Empty names no attachment, and
+		// the message's own is sent.
+		AttachmentID string `json:"attachment_id,omitempty"`
 	} `json:"media"`
 	Options struct {
 		Silent                bool `json:"silent"`
@@ -337,7 +343,17 @@ func (s *Server) buildSend(ctx context.Context, source sourceMessage, key string
 		// attachment is sent as the text it is.
 		return send, nil
 	}
-	file, err := worker.Media(ctx, source.row.ChannelID, source.message.ID, 0)
+	if err := namedAttachment(req.Media.AttachmentID, source.message.Media); err != nil {
+		return rpc.SendRequest{}, err
+	}
+	stream, err := worker.Media(ctx, source.row.ChannelID, source.message.ID, largestPhotoSize, rpc.MediaSlice{})
+	if err != nil {
+		return rpc.SendRequest{}, &publishError{http.StatusInternalServerError, CodePublishPartial,
+			"The source attachment could not be read; publish without media or retry."}
+	}
+	// A post is sent as one buffer, so the stream is collected here. This is the
+	// one place that is allowed: answering a reader streams instead.
+	data, err := stream.ReadAll()
 	if err != nil {
 		return rpc.SendRequest{}, &publishError{http.StatusInternalServerError, CodePublishPartial,
 			"The source attachment could not be read; publish without media or retry."}
@@ -349,15 +365,24 @@ func (s *Server) buildSend(ctx context.Context, source sourceMessage, key string
 	send.Media = &rpc.SendMedia{
 		Kind:     kind,
 		Name:     sendFileName(source.message.Media),
-		MimeType: file.MimeType,
-		Data:     file.Data,
+		MimeType: stream.MimeType,
+		Data:     data,
 	}
 	return send, nil
 }
 
+// sendFileName is the name the outgoing attachment is sent under.
+//
+// It is the name the sender gave the file, when Telegram reported one: a
+// document that arrived as "original-app-name.apk" must not go out as "فایل".
+// The label is a description of the media kind, and is only ever a fallback for
+// an attachment Telegram never named.
 func sendFileName(m *rpc.Media) string {
 	if m == nil {
 		return "attachment"
+	}
+	if m.Filename != "" {
+		return sanitiseFileName(m.Filename)
 	}
 	if m.Label != "" {
 		return sanitiseFileName(m.Label)
@@ -379,7 +404,12 @@ func sanitiseFileName(name string) string {
 		return "attachment"
 	}
 	if len(name) > 64 {
+		// Cut on a rune boundary: a name is UTF-8, and half a rune is not a
+		// name a receiver can restore.
 		name = name[:64]
+		for len(name) > 0 && !utf8.ValidString(name) {
+			name = name[:len(name)-1]
+		}
 	}
 	return name
 }
@@ -411,6 +441,31 @@ func mustChannelID(raw string) int64 {
 	id, _ := strconv.ParseInt(raw, 10, 64)
 	return id
 }
+
+// namedAttachment refuses a request that names an attachment other than the
+// one the source message carries.
+//
+// The media id is opaque. This build's worker writes "channel:message" into it,
+// and the API documents it as something to hand back, not to read — so it is
+// compared against the source's own id and never decoded into anything. A
+// request that names a different attachment is refused rather than quietly
+// answered with this one.
+//
+// An id left empty on either side is not a claim and is not checked: a caller
+// that does not name one gets the attachment the message has.
+func namedAttachment(want string, media *rpc.Media) error {
+	if want == "" || media == nil || media.ID == "" || want == media.ID {
+		return nil
+	}
+	return &publishError{http.StatusBadRequest, CodeInvalidInput,
+		"media.attachment_id is not an attachment of the source message."}
+}
+
+// photoSizeOfPhoto is the photo size an attachment is read at. photoIndex in
+// the worker's Media call is not an attachment selector: it picks which of a
+// photo's sizes is wanted, and 0 is the largest. The gateway's own media route
+// reads at 0 for the same reason, and so must a publish.
+const largestPhotoSize = 0
 
 // beginPublish records the attempt, or reports the state of an earlier one.
 //
@@ -535,13 +590,23 @@ type wpPostRequest struct {
 		MessageID      int   `json:"message_id"`
 	} `json:"source"`
 	Post struct {
-		Title   string   `json:"title"`
-		Content string   `json:"content"`
-		Status  string   `json:"status"`
-		Tags    []string `json:"tags"`
+		Title   string `json:"title"`
+		Slug    string `json:"slug"`
+		Content string `json:"content"`
+		Status  string `json:"status"`
+		// Tags are tag names, resolved against the site by this route.
+		Tags []string `json:"tags"`
+		// TagIDs and CategoryIDs are term ids on the destination site. They are
+		// used as they are: a term id is never invented, and a name is never
+		// sent where an id belongs.
+		TagIDs      []int `json:"tag_ids"`
+		CategoryIDs []int `json:"categories"`
 	} `json:"post"`
 	Media struct {
 		Mode string `json:"mode"`
+		// AttachmentID is the media id of the attachment to feature, exactly as
+		// the message listing reported it. It is compared, never decoded.
+		AttachmentID string `json:"attachment_id,omitempty"`
 	} `json:"media"`
 	Options struct {
 		CommentStatus string `json:"comment_status"`
@@ -657,8 +722,18 @@ func (s *Server) runWordPressPublish(ctx context.Context, a *actor, source sourc
 	site channelstore.WordPressSite, password string, req wpPostRequest) (map[string]any, error) {
 
 	client := s.cfg.WordPressClient
-	tagIDs := make([]int, 0, len(req.Post.Tags))
+
+	// Term ids the caller named are used as they are. Names are only resolved
+	// when no ids were sent: a request never carries both, and a name is never
+	// mistaken for an id.
+	tagIDs := append([]int(nil), req.Post.TagIDs...)
+	if len(tagIDs) == 0 {
+		tagIDs = make([]int, 0, len(req.Post.Tags))
+	}
 	for _, name := range req.Post.Tags {
+		if len(req.Post.TagIDs) > 0 {
+			break
+		}
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
@@ -682,13 +757,22 @@ func (s *Server) runWordPressPublish(ctx context.Context, a *actor, source sourc
 
 	featured := 0
 	if req.Media.Mode == mediaPreserveSource && source.message.Media != nil && mediaHasBytes(source.message.Media.Type) {
-		file, err := s.publishWorkerFor(source.row.ClientKey).Media(ctx, source.row.ChannelID, source.message.ID, 0)
+		if err := namedAttachment(req.Media.AttachmentID, source.message.Media); err != nil {
+			return nil, err
+		}
+		stream, err := s.publishWorkerFor(source.row.ClientKey).Media(ctx, source.row.ChannelID, source.message.ID,
+			largestPhotoSize, rpc.MediaSlice{})
+		if err != nil {
+			return nil, &publishError{http.StatusInternalServerError, CodePublishPartial,
+				"The source attachment could not be read; publish without media or retry."}
+		}
+		data, err := stream.ReadAll()
 		if err != nil {
 			return nil, &publishError{http.StatusInternalServerError, CodePublishPartial,
 				"The source attachment could not be read; publish without media or retry."}
 		}
 		uploaded, err := client.UploadMedia(ctx, site.URL, site.Username, password,
-			sendFileName(source.message.Media), file.MimeType, file.Data)
+			sendFileName(source.message.Media), stream.MimeType, data)
 		if err != nil {
 			// An upload that failed is not reported as published media.
 			return nil, &publishError{http.StatusBadGateway, CodePublishFailed,
@@ -701,8 +785,10 @@ func (s *Server) runWordPressPublish(ctx context.Context, a *actor, source sourc
 
 	post, err := client.CreatePost(ctx, site.URL, site.Username, password, wordpress.PostInput{
 		Title:         req.Post.Title,
+		Slug:          strings.TrimSpace(req.Post.Slug),
 		Content:       req.Post.Content,
 		Status:        req.Post.Status,
+		CategoryIDs:   req.Post.CategoryIDs,
 		TagIDs:        tagIDs,
 		FeaturedMedia: featured,
 		CommentStatus: req.Options.CommentStatus,
@@ -712,11 +798,12 @@ func (s *Server) runWordPressPublish(ctx context.Context, a *actor, source sourc
 	}
 	result := map[string]any{
 		"post": map[string]any{
-			"id":     post.ID,
-			"title":  post.Title,
-			"link":   post.Link,
-			"status": post.Status,
-			"tags":   post.TagIDs,
+			"id":         post.ID,
+			"title":      post.Title,
+			"link":       post.Link,
+			"status":     post.Status,
+			"categories": post.CategoryIDs,
+			"tags":       post.TagIDs,
 		},
 		"site": map[string]any{"id": site.ID, "url": site.URL},
 	}

@@ -47,8 +47,8 @@ func (f *fakeUpstream) Messages(context.Context, int64, int, int) (rpc.MessagePa
 	return rpc.MessagePage{}, nil
 }
 
-func (f *fakeUpstream) Media(context.Context, int64, int, int) (rpc.MediaFile, error) {
-	return rpc.MediaFile{}, nil
+func (f *fakeUpstream) Media(context.Context, int64, int, int, rpc.MediaSlice) (rpc.MediaStream, error) {
+	return rpc.MediaStream{Body: io.NopCloser(strings.NewReader(""))}, nil
 }
 
 func (f *fakeUpstream) Message(context.Context, int64, int) (rpc.MessagePage, error) {
@@ -353,8 +353,8 @@ func (f *fakeManager) Message(context.Context, tgapi.Channel, int) (tgapi.Messag
 	return tgapi.Message{}, tgapi.ErrMessageNotFound
 }
 
-func (f *fakeManager) DownloadMedia(context.Context, tgapi.Channel, int) (tgapi.MediaFile, error) {
-	return tgapi.MediaFile{}, tgapi.ErrMediaNotFound
+func (f *fakeManager) DownloadMedia(context.Context, tgapi.Channel, int, tgapi.MediaSlice) (tgapi.MediaStream, error) {
+	return tgapi.MediaStream{}, tgapi.ErrMediaNotFound
 }
 
 func (f *fakeManager) FindChannels(context.Context, tgapi.ChannelQuery) ([]tgapi.ChannelInfo, error) {

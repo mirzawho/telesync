@@ -159,6 +159,7 @@ function MultiCombobox<T>({
   emptyText,
   labelOf,
   className,
+  disabled,
 }: {
   items: T[]
   value: T[]
@@ -167,19 +168,25 @@ function MultiCombobox<T>({
   emptyText?: string
   labelOf: (item: T) => string
   className?: string
+  disabled?: boolean
 }) {
   const anchor = useComboboxAnchor()
   return (
     <Combobox
       multiple
       autoHighlight
+      disabled={disabled}
       items={items}
       value={value}
       onValueChange={(next) => onValueChange((next as T[] | null) ?? [])}
       itemToStringLabel={labelOf}
       itemToStringValue={labelOf}
     >
-      <ComboboxChips ref={anchor} className={cn("w-full", className)}>
+      <ComboboxChips
+        ref={anchor}
+        className={cn("w-full", className)}
+        data-disabled={disabled ? "" : undefined}
+      >
         <ComboboxValue>
           {(values: T[]) => (
             <React.Fragment>

@@ -5,10 +5,14 @@
 # lines are ignored.
 #
 # internal/apidocs runs every block in this file against a handler in which the
-# client key "official" is configured and the token below is valid, so:
+# client key "official" is configured, so:
 #   - a path, method or body that the gateway does not accept fails the test;
 #   - every method listed in README.md must appear here, and every method here
 #     must be listed there.
+#
+# Do not add an "Authorization" header to a block: the test injects its own
+# token for every request, and one written by hand would be silently ignored,
+# so the example would read as if credentials were part of the request.
 #
 # docs/api/examples/README.md shows each of these as a curl command, and lists
 # which requests capture an id ("/capture:<name>") for "{{name}}" to use later.
@@ -26,6 +30,14 @@ Content-Type: application/json
 	}
 
 GET /api/v1/auth/me
+
+POST /api/v1/auth/password
+Content-Type: application/json
+
+	{
+	  "current_password": "example-doc-password",
+	  "new_password": "example-doc-new-password"
+	}
 
 # --- the rendered documentation -----------------------------------------
 
@@ -151,6 +163,10 @@ Content-Type: application/json
 
 GET /api/v1/local/wordpress/{{site}}
 
+GET /api/v1/local/wordpress/{{site}}/categories?page=1&per_page=20
+
+GET /api/v1/local/wordpress/{{site}}/tags?page=1&per_page=20
+
 PATCH /api/v1/local/wordpress/{{site}}
 Content-Type: application/json
 
@@ -166,7 +182,7 @@ Idempotency-Key: wp-publish-example-1
 
 	{
 	  "source": {"local_channel_id": 1, "message_id": 9},
-	  "post": {"title": "A prepared post", "content": "<p>Body</p>", "status": "publish", "tags": ["technology"]},
+	  "post": {"title": "A prepared post", "slug": "a-prepared-post", "content": "<p>Body</p>", "status": "publish", "categories": [4], "tag_ids": [8], "tags": ["technology"]},
 	  "media": {"mode": "omit"},
 	  "options": {"comment_status": "open"}
 	}
@@ -210,3 +226,7 @@ Content-Type: application/json
 
 
 DELETE /api/v1/local/users/{{user}}
+
+# --- local: stats --------------------------------------------------------
+
+GET /api/v1/local/stats/dashboard

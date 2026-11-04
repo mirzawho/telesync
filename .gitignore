@@ -44,3 +44,6 @@ dist/
 
 # The panel build, produced by `make panel`
 web/apps/web/build/
+
+
+.mcp.json

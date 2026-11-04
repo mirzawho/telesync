@@ -2,7 +2,6 @@ import { Form, Link, redirect, useNavigation } from "react-router"
 import { LockKeyholeIcon, RadioTowerIcon, UserIcon } from "lucide-react"
 import * as React from "react"
 
-import { Button } from "@workspace/ui/components/button"
 import {
   Field,
   FieldControl,
@@ -11,6 +10,7 @@ import {
 } from "@workspace/ui/components/field"
 
 import { appVersion } from "@/components/app-version"
+import { SubmitButton } from "@/components/submit-button"
 import { LOGIN_REDIRECT_TO, setToken } from "@/lib/session"
 import { strip, requestURL } from "@/path"
 
@@ -168,7 +168,9 @@ export default function Login({
             <Field
               data-invalid={touched && username.length === 0 ? "" : undefined}
             >
-              <FieldLabel htmlFor="username">نام کاربری</FieldLabel>
+              <FieldLabel htmlFor="username" required>
+                نام کاربری
+              </FieldLabel>
               <div className="relative">
                 <UserIcon className="text-muted-foreground pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2" />
                 <FieldControl
@@ -189,7 +191,9 @@ export default function Login({
             </Field>
 
             <Field>
-              <FieldLabel htmlFor="password">رمز عبور</FieldLabel>
+              <FieldLabel htmlFor="password" required>
+                رمز عبور
+              </FieldLabel>
               <div className="relative">
                 <LockKeyholeIcon className="text-muted-foreground pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2" />
                 <FieldControl
@@ -213,14 +217,14 @@ export default function Login({
               </p>
             )}
 
-            <Button
-              type="submit"
+            <SubmitButton
+              pending={submitting}
+              submittingLabel="در حال ورود…"
               size="lg"
               className="w-full"
-              disabled={submitting}
             >
-              {submitting ? "در حال ورود…" : "ورود"}
-            </Button>
+              ورود
+            </SubmitButton>
           </Form>
         </div>
 

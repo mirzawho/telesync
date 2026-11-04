@@ -94,6 +94,23 @@ export interface Channel {
   last_synced_at: string
 }
 
+// Entity is one formatting span of a message text.
+//
+// Offset and Length are UTF-16 code units, not runes or bytes: "🙂" is one rune
+// and two units. That is what a JavaScript string index is already in, so the
+// span is used directly. `url` is the target of a text_url entity, `language`
+// the fenced language of a pre, `user_id` the referenced user of a mention_name
+// and `document_id` the custom emoji's document.
+export interface Entity {
+  type: string
+  offset: number
+  length: number
+  url?: string
+  language?: string
+  user_id?: number
+  document_id?: number
+}
+
 // MessageSender is whoever posted a message, when Telegram reported one. A
 // channel's own posts usually carry no sender at all.
 export interface MessageSender {
@@ -123,7 +140,13 @@ export type MediaType =
 export interface MessageMedia {
   id?: string
   type: MediaType
+  // label is the localised description of the media kind ("فایل", "صدا"). It is
+  // not the name of the file and never stands in for it.
   label?: string
+  // filename is the name the sender gave the file, exactly as Telegram reported
+  // it. The API omits it when Telegram never named the file; nothing here may
+  // invent one.
+  filename?: string
   mime_type?: string
   size?: number
   url?: string
@@ -154,6 +177,11 @@ export interface ChannelMessage {
   reply_to_message_id?: number
   views: number | null
   reactions: MessageReaction[]
+  // entities are the message's formatting spans, in UTF-16 code units exactly
+  // as Telegram reports them. Always an array in the response, empty when the
+  // message carries no formatting; optional here only because an older answer
+  // may omit the key entirely.
+  entities?: Entity[]
 }
 
 export type GlobalPermission =
@@ -171,6 +199,7 @@ export type GlobalPermission =
 export interface ResourcePermissions {
   channel_id?: number
   category_id?: number
+  site_id?: number
   view?: string
   update?: string
   delete?: string
@@ -180,6 +209,10 @@ export interface Permissions {
   global: string[]
   channels: ResourcePermissions[]
   categories: ResourcePermissions[]
+  // wordpress is the caller's per-site grants: `site_id` names a registered
+  // WordPress site, not a category or a channel. Deny-by-default applies like
+  // every other resource kind here.
+  wordpress: ResourcePermissions[]
 }
 
 export interface User {
@@ -212,6 +245,19 @@ export type ChannelAvailability =
     }
   | { state: "not_configured"; message: string }
   | { state: "unavailable"; message: string; code: string }
+
+// DashboardStats is `data.stats` from GET /api/v1/local/stats/dashboard: one
+// figure per collection. Every key is always present. A figure is null when the
+// caller may not see that collection at all — the API does not tell "there is
+// nothing there" from "not for you" — and otherwise counts only the rows that
+// caller may see. `administrators` is the total number of accounts, and is null
+// without a user right.
+export interface DashboardStats {
+  categories: number | null
+  channels: number | null
+  wordpress_sites: number | null
+  administrators: number | null
+}
 
 export type TelegramClient = {
   key: string

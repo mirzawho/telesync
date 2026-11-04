@@ -1,21 +1,15 @@
 package gotdclient
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
-	"github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/tg"
 
 	"github.com/mirza/telesync/internal/tgapi"
 )
-
-// maxMediaBytes bounds one download so a single request cannot exhaust memory.
-const maxMediaBytes = 32 << 20
 
 // Message returns exactly one post.
 //
@@ -70,54 +64,12 @@ func normalizeMessage(msg *tg.Message, users map[int64]*tg.User) tgapi.Message {
 		out.Media = &tgapi.Media{
 			Type:     kind,
 			Label:    MediaLabel(kind),
+			Filename: MediaFileName(msg.Media),
 			MimeType: MediaMimeType(msg.Media),
 			Size:     MediaSize(msg.Media),
 		}
 	}
 	return out
-}
-
-// DownloadMedia fetches the attachment of one message.
-//
-// It is read-only: fetching a photo or document has no effect on the account's
-// read state. A message without an attachment is ErrMediaNotFound.
-func (m *Manager) DownloadMedia(ctx context.Context, channel tgapi.Channel, messageID int) (tgapi.MediaFile, error) {
-	client, _, err := m.apiClient(ctx)
-	if err != nil {
-		return tgapi.MediaFile{}, err
-	}
-	msg, err := m.channelMessage(ctx, channel, messageID)
-	if err != nil {
-		if errors.Is(err, tgapi.ErrMessageNotFound) {
-			return tgapi.MediaFile{}, tgapi.ErrMediaNotFound
-		}
-		return tgapi.MediaFile{}, err
-	}
-
-	loc, mimeType, err := mediaLocation(msg.Media)
-	if err != nil {
-		return tgapi.MediaFile{}, err
-	}
-
-	var buf bytes.Buffer
-	if _, err := downloader.NewDownloader().Download(client.API(), loc).
-		Stream(ctx, &limitedWriter{w: &buf, limit: maxMediaBytes}); err != nil {
-		return tgapi.MediaFile{}, ClassifyError(err)
-	}
-	return tgapi.MediaFile{MimeType: mimeType, Data: buf.Bytes()}, nil
-}
-
-// limitedWriter fails once more than limit bytes have been written.
-type limitedWriter struct {
-	w     *bytes.Buffer
-	limit int
-}
-
-func (l *limitedWriter) Write(p []byte) (int, error) {
-	if l.w.Len()+len(p) > l.limit {
-		return 0, fmt.Errorf("attachment exceeds the %d byte limit", l.limit)
-	}
-	return l.w.Write(p)
 }
 
 // findMessage picks the message by id out of a getMessages result.
@@ -187,27 +139,8 @@ func mediaLocation(media tg.MessageMediaClass) (tg.InputFileLocationClass, strin
 // largestPhotoSize returns the thumbnail type of the biggest PhotoSize that
 // carries dimensions, which is what InputPhotoFileLocation.ThumbSize wants.
 func largestPhotoSize(sizes []tg.PhotoSizeClass) (string, bool) {
-	best := ""
-	bestArea := 0
-	for _, s := range sizes {
-		var w, h int
-		var kind string
-		switch v := s.(type) {
-		case *tg.PhotoSize:
-			w, h, kind = v.W, v.H, v.Type
-		case *tg.PhotoSizeProgressive:
-			w, h, kind = v.W, v.H, v.Type
-		default:
-			continue
-		}
-		if kind == "" {
-			continue
-		}
-		if area := w * h; area > bestArea {
-			best, bestArea = kind, area
-		}
-	}
-	return best, best != ""
+	kind, _, ok := largestPhoto(sizes)
+	return kind, ok
 }
 
 // dialogsPageSize is Telegram's maximum for messages.getDialogs.

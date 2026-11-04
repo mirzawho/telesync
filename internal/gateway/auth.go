@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -25,11 +26,141 @@ const (
 	CodeUserInactive = "user_inactive"
 )
 
-// loginPath is the public login route; mePath is the caller's own profile.
+// loginPath is the public login route; mePath is the caller's own profile;
+// changePasswordPath is how a caller changes their own password.
 const (
-	loginPath = "/api/v1/auth/login"
-	mePath    = "/api/v1/auth/me"
+	loginPath          = "/api/v1/auth/login"
+	mePath             = "/api/v1/auth/me"
+	changePasswordPath = "/api/v1/auth/password"
 )
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+	// UserID is recognized so a client that posts one is not rejected for
+	// quoting an unknown field, and is then ignored. The subject is always the
+	// bearer's account: see the handler below.
+	UserID int64 `json:"user_id,omitempty"`
+}
+
+// changePassword serves POST /api/v1/auth/password: the caller changes their
+// own password and gets a fresh token back.
+//
+// The subject is always the caller's own account. The body names no one: a
+// `user_id` field in it is ignored on purpose, so this route can never stand
+// in for the admin user routes, which are the only place one account may set
+// another's password.
+//
+// The account's previous HS256 token is NOT revoked. Those tokens are
+// stateless: Parse checks the signature and the claims only, and nothing on
+// either side records a password change. What invalidates a token on its next
+// request is the account itself: `loadActor` re-reads the user and refuses a
+// missing or inactive account. The token this route answers with is the
+// caller's fresh one; the old one carries on until it expires. That is the
+// existing design (internal/auth/token.go), stated as it is.
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+			"Changing a password must be sent as POST.", requestID)
+		return
+	}
+	if s.cfg.Users == nil || auth.Missing(s.cfg.Tokens) {
+		s.fail(w, http.StatusServiceUnavailable, CodeWorkerUnavail,
+			"User login is not configured: set api.jwt.secret_env (or api.jwt.secret) in the configuration.",
+			requestID)
+		return
+	}
+	var req changePasswordRequest
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		s.fail(w, statusOfBodyError(err), CodeInvalidInput, err.Error(), requestID)
+		return
+	}
+	if req.CurrentPassword == "" || req.NewPassword == "" {
+		s.fail(w, http.StatusBadRequest, CodeInvalidInput,
+			"current_password and new_password are required.", requestID)
+		return
+	}
+
+	// The caller is the subject: `requireAuth` resolved their account from the
+	// bearer token, and the body carries no identity of its own. Their stored
+	// hash is read here in case the account changed since authentication.
+	//
+	// A credential with no account behind it — the operator token — has no
+	// password to change and never reaches this route's write. That is refused
+	// outright rather than answered as a wrong password: see errNotAnAccount's
+	// own 403 elsewhere.
+	user := actorOf(r).user
+	if user.ID <= 0 {
+		s.forbidden(w, requestID)
+		return
+	}
+	stored, found, err := s.cfg.Users.GetUser(r.Context(), user.ID)
+	if err != nil {
+		s.storeError(w, "change_password", err, requestID)
+		return
+	}
+	if !found {
+		auth.BurnPasswordCheck(req.CurrentPassword)
+		s.invalidLogin(w, requestID)
+		return
+	}
+	ok, err := auth.VerifyPassword(stored.PasswordHash, req.CurrentPassword)
+	if err != nil {
+		s.logf("gateway: op=change_password request_id=%s user_id=%d has an unusable password hash",
+			requestID, user.ID)
+		s.invalidLogin(w, requestID)
+		return
+	}
+	if !ok {
+		s.invalidLogin(w, requestID)
+		return
+	}
+
+	if err := validateNewPassword(req.NewPassword); err != nil {
+		s.fail(w, http.StatusBadRequest, CodeInvalidInput, err.Error(), requestID)
+		return
+	}
+	hash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		s.storeError(w, "change_password", err, requestID)
+		return
+	}
+	// The same write the admin user routes use: one confirmed change to the
+	// stored hash, nothing else on the row.
+	if _, err := s.cfg.Users.UpdateUser(r.Context(), user.ID,
+		channelstore.UserUpdate{PasswordHash: &hash}); err != nil {
+		s.storeError(w, "change_password", err, requestID)
+		return
+	}
+
+	token, exp, err := s.cfg.Tokens.Issue(user.ID)
+	if err != nil {
+		s.storeError(w, "change_password", err, requestID)
+		return
+	}
+	ttl := int(exp.Sub(s.cfg.Now()).Seconds())
+	if ttl < 1 {
+		ttl = 1
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"access_token": token,
+		"token_type":   "Bearer",
+		"expires_in":   ttl,
+	})
+}
+
+// validateNewPassword applies the same policy the user routes enforce on a new
+// password.
+func validateNewPassword(password string) error {
+	if len(password) < channelstore.MinPasswordLen {
+		return fmt.Errorf("new_password must be at least %d characters", channelstore.MinPasswordLen)
+	}
+	if len(password) > channelstore.MaxPasswordLen {
+		return fmt.Errorf("new_password must be at most %d characters", channelstore.MaxPasswordLen)
+	}
+	return nil
+}
 
 // actor is the authenticated caller, as of this request.
 type actor struct {

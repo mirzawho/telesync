@@ -70,7 +70,7 @@ export function PageHeader({
 }) {
   return (
     <header className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-col gap-1">
           <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
           {description && (
@@ -85,7 +85,6 @@ export function PageHeader({
           </div>
         )}
       </div>
-      <Separator />
     </header>
   )
 }

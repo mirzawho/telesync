@@ -153,3 +153,35 @@ func (s *Store) siteCategoryCount(ctx context.Context, siteID int64) (int, error
 	}
 	return n, nil
 }
+
+// SiteCategoryMembers returns the site ids filed under one category.
+//
+// It is the read the list's category filter uses: a site is listed when it is
+// filed under at least one of the selected categories. A category with no
+// sites is an empty list, never an error; a missing category is
+// ErrCategoryNotFound so the caller does not treat an unknown id as "nothing
+// filed".
+func (s *Store) SiteCategoryMembers(ctx context.Context, categoryID int64) ([]int64, error) {
+	if _, err := s.categoryByID(ctx, categoryID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT site_id FROM wordpress_site_categories WHERE category_id = ? ORDER BY site_id`, categoryID)
+	if err != nil {
+		return nil, fmt.Errorf("channelstore: list the sites of category %d: %w", categoryID, err)
+	}
+	defer rows.Close()
+
+	out := []int64{}
+	for rows.Next() {
+		var siteID int64
+		if err := rows.Scan(&siteID); err != nil {
+			return nil, fmt.Errorf("channelstore: list the sites of category %d: %w", categoryID, err)
+		}
+		out = append(out, siteID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("channelstore: list the sites of category %d: %w", categoryID, err)
+	}
+	return out, nil
+}

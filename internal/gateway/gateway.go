@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,7 +30,7 @@ type Worker interface {
 	Channels(ctx context.Context, page, perPage int) (rpc.ChannelPage, error)
 	Messages(ctx context.Context, channelID int64, page, perPage int) (rpc.MessagePage, error)
 	Message(ctx context.Context, channelID int64, messageID int) (rpc.MessagePage, error)
-	Media(ctx context.Context, channelID int64, messageID, photoIndex int) (rpc.MediaFile, error)
+	Media(ctx context.Context, channelID int64, messageID, photoIndex int, slice rpc.MediaSlice) (rpc.MediaStream, error)
 	// CustomEmoji fetches the bytes of one reaction custom emoji.
 	CustomEmoji(ctx context.Context, documentID int64) (rpc.MediaFile, error)
 
@@ -258,10 +259,24 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, requestID stri
 			s.me(w, r, requestID)
 		})(w, r)
 		return
+	case path == changePasswordPath:
+		s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+			s.changePassword(w, r, requestID)
+		})(w, r)
+		return
 	case underPath(path, categoriesPrefix) || underPath(path, usersPrefix) ||
-		underPath(path, localChannelsPrefix) || underPath(path, wordpressPrefix):
-		// Local users, categories and channels are this application's data,
-		// not any one Telegram account's.
+		underPath(path, localChannelsPrefix) || underPath(path, wordpressPrefix) ||
+		underPath(path, statsPrefix):
+		// Local users, categories, channels and the dashboard's counts are this
+		// application's data, not any one Telegram account's.
+		if underPath(path, statsPrefix) && s.missingStatsStores() {
+			// The dashboard's answer is a count over these very stores, so a
+			// deployment that has none is told before its credential is read:
+			// with no account store no credential can be resolved at all, and
+			// there is no count behind the route to keep secret.
+			s.statsUnconfigured(w, requestID)
+			return
+		}
 		s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 			s.serveLocal(w, r, requestID)
 		})(w, r)
@@ -595,9 +610,14 @@ type messageView struct {
 }
 
 type mediaView struct {
-	ID       string `json:"id,omitempty"`
-	Type     string `json:"type"`
-	Label    string `json:"label,omitempty"`
+	ID    string `json:"id,omitempty"`
+	Type  string `json:"type"`
+	Label string `json:"label,omitempty"`
+	// Filename is the original name the sender gave the file. It is omitted
+	// when Telegram never reported one: an attachment with no name must not
+	// grow a name this build invented. It never replaces Label, which is the
+	// localised description of the media kind.
+	Filename string `json:"filename,omitempty"`
 	MimeType string `json:"mime_type,omitempty"`
 	Size     int64  `json:"size,omitempty"`
 	// URL streams the bytes. It is a path below the API root ("/telegram/…"),
@@ -635,6 +655,7 @@ func messageViewOf(key string, channelID int64, msg rpc.Message) messageView {
 		ID:       msg.Media.ID,
 		Type:     msg.Media.Type,
 		Label:    msg.Media.Label,
+		Filename: msg.Media.Filename,
 		MimeType: msg.Media.MimeType,
 		Size:     msg.Media.Size,
 	}
@@ -689,9 +710,13 @@ func (s *Server) message(ctx context.Context, w http.ResponseWriter, r *http.Req
 	})
 }
 
-// media streams one attachment's bytes. The worker returns the content; the
-// gateway only sets the headers, so the public API never proxies arbitrary
-// bytes as JSON.
+// media streams one attachment's bytes.
+//
+// The worker returns the content; the gateway decides what the public HTTP
+// answer looks like — the content type, the name a download is saved under, and
+// for a request that asks for part of the file, exactly which bytes and which
+// status. The bytes are forwarded as they arrive, so a 60 MB document never
+// accumulates here either.
 func (s *Server) media(ctx context.Context, w http.ResponseWriter, r *http.Request, key string,
 	worker Worker, rawChannelID, rawMessageID, requestID string) {
 
@@ -709,27 +734,64 @@ func (s *Server) media(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	if _, ok := s.requireChannelView(ctx, w, r, key, channelID, requestID); !ok {
 		return
 	}
-	file, err := worker.Media(ctx, channelID, messageID, 0)
+
+	wanted, kind := parseRange(r.Header.Get("Range"))
+	stream, err := worker.Media(ctx, channelID, messageID, 0, mediaSliceOf(wanted))
 	if err != nil {
 		s.upstreamError(w, key, "media", err, requestID)
 		return
 	}
-	if len(file.Data) == 0 {
-		s.fail(w, http.StatusNotFound, CodeNotFound, "The attachment is empty.", requestID)
+	if stream.Body == nil {
+		stream.Body = http.NoBody
+	}
+	defer stream.Body.Close()
+
+	// A range is only promised when the attachment's length is known: without
+	// one there is nothing to slice against and nothing to report in
+	// Content-Range. What cannot be honoured is not advertised.
+	if stream.Size > 0 {
+		w.Header().Set("Accept-Ranges", "bytes")
+	} else {
+		w.Header().Set("Accept-Ranges", "none")
+	}
+
+	// The error answer is JSON, so it must be decided before the attachment's
+	// own headers are written.
+	if kind == rangeSlice && stream.Size > 0 && unsatisfiableRange(stream.Size, stream.Length) {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", stream.Size))
+		s.fail(w, http.StatusRequestedRangeNotSatisfiable, CodeInvalidInput,
+			"The requested range is outside this attachment.", requestID)
 		return
 	}
 
-	contentType := file.MimeType
+	contentType := stream.MimeType
 	if contentType == "" {
-		contentType = http.DetectContentType(file.Data)
+		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Length", strconv.Itoa(len(file.Data)))
+	w.Header().Set("Content-Disposition", contentDisposition(stream.Filename))
+	// The bytes are a file the sender named, never a page: a browser must not
+	// second-guess the type and render something else.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// Attachments are immutable: the same message id always yields the same
 	// bytes, so a private cache can keep them.
 	w.Header().Set("Cache-Control", "private, max-age=86400")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(file.Data)
+
+	status := http.StatusOK
+	if kind == rangeSlice && stream.Size > 0 {
+		status = http.StatusPartialContent
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d",
+			stream.Offset, stream.Offset+stream.Length-1, stream.Size))
+	}
+	if stream.Length > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(stream.Length, 10))
+	}
+	w.WriteHeader(status)
+	// The headers go out before the bytes: a player reads the content type and
+	// the range it was given before the attachment starts arriving, and a
+	// download shows its name immediately.
+	http.NewResponseController(w).Flush()
+	_, _ = io.Copy(w, stream.Body)
 }
 
 // customEmoji streams one reaction custom emoji as its bytes.

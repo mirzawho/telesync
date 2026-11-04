@@ -1,9 +1,11 @@
 package worker_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,7 +31,10 @@ type fakeTelegram struct {
 	readCall int
 	// historyCalls records the (beforeID, limit) pairs requested.
 	historyCalls  [][2]int
-	media         tgapi.MediaFile
+	mediaBytes    []byte
+	mediaName     string
+	mediaType     string
+	mediaSize     int64
 	mediaErr      error
 	oneMessage    tgapi.Message
 	oneMessageErr error
@@ -642,10 +647,19 @@ func TestChannelDTOOmitsUnavailableUnreadCount(t *testing.T) {
 
 // --- media ---
 
-func (f *fakeTelegram) DownloadMedia(_ context.Context, _ tgapi.Channel, _ int) (tgapi.MediaFile, error) {
+func (f *fakeTelegram) DownloadMedia(_ context.Context, _ tgapi.Channel, _ int, _ tgapi.MediaSlice) (tgapi.MediaStream, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.media, f.mediaErr
+	if f.mediaErr != nil {
+		return tgapi.MediaStream{}, f.mediaErr
+	}
+	return tgapi.MediaStream{
+		MimeType: f.mediaType,
+		Filename: f.mediaName,
+		Size:     f.mediaSize,
+		Length:   int64(len(f.mediaBytes)),
+		Body:     io.NopCloser(bytes.NewReader(f.mediaBytes)),
+	}, nil
 }
 
 func TestMessagesCarryAMediaDescriptorWithAnID(t *testing.T) {
@@ -692,25 +706,88 @@ func TestMessagesCarryAMediaDescriptorWithAnID(t *testing.T) {
 	}
 }
 
-func TestMediaFetchesTheBytesForAMessage(t *testing.T) {
+func TestMessagesCarryTheOriginalFilename(t *testing.T) {
 	tg := &fakeTelegram{
 		status:  tgapi.Status{State: tgapi.StateReady, User: &tgapi.Account{ID: 1}},
 		dialogs: []tgapi.Channel{{ID: 500, Title: "chan"}},
-		media: tgapi.MediaFile{
-			MimeType: "image/jpeg",
-			Data:     []byte("bytes"),
-		},
+		hist: tgapi.HistoryPage{Messages: []tgapi.Message{
+			{
+				ID: 36,
+				Media: &tgapi.Media{
+					Type: "document", Label: "فایل", Filename: "original-app-name.apk",
+					MimeType: "application/vnd.android.package-archive", Size: 59797754,
+				},
+			},
+		}},
 	}
 	s := newService(t, tg)
 	if _, err := s.Channels(context.Background(), 1, 10); err != nil {
 		t.Fatal(err)
 	}
-	file, err := s.Media(context.Background(), 500, 179, 0)
+	page, err := s.Messages(context.Background(), 500, 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := page.Messages[0]
+	if m.Media == nil {
+		t.Fatal("media missing")
+	}
+	if m.Media.Filename != "original-app-name.apk" {
+		t.Fatalf("filename = %q, want %q", m.Media.Filename, "original-app-name.apk")
+	}
+	// The filename is a second, separate fact: it never becomes the label.
+	if m.Media.Label != "فایل" {
+		t.Fatalf("label = %q, want %q", m.Media.Label, "فایل")
+	}
+}
+
+func TestMessagesReportNoFilenameWhenTelegramSentNone(t *testing.T) {
+	tg := &fakeTelegram{
+		status:  tgapi.Status{State: tgapi.StateReady, User: &tgapi.Account{ID: 1}},
+		dialogs: []tgapi.Channel{{ID: 500, Title: "chan"}},
+		hist: tgapi.HistoryPage{Messages: []tgapi.Message{
+			{ID: 24, Media: &tgapi.Media{Type: "audio", Label: "صدا", MimeType: "audio/mpeg", Size: 10}},
+		}},
+	}
+	s := newService(t, tg)
+	if _, err := s.Channels(context.Background(), 1, 10); err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.Messages(context.Background(), 500, 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := page.Messages[0].Media.Filename; got != "" {
+		t.Fatalf("filename = %q, want empty", got)
+	}
+}
+
+func TestMediaFetchesTheBytesForAMessage(t *testing.T) {
+	tg := &fakeTelegram{
+		status:     tgapi.Status{State: tgapi.StateReady, User: &tgapi.Account{ID: 1}},
+		dialogs:    []tgapi.Channel{{ID: 500, Title: "chan"}},
+		mediaBytes: []byte("bytes"),
+		mediaType:  "image/jpeg",
+		mediaSize:  5,
+	}
+	s := newService(t, tg)
+	if _, err := s.Channels(context.Background(), 1, 10); err != nil {
+		t.Fatal(err)
+	}
+	file, err := s.Media(context.Background(), 500, 179, 0, rpc.MediaSlice{})
 	if err != nil {
 		t.Fatalf("Media: %v", err)
 	}
-	if string(file.Data) != "bytes" || file.MimeType != "image/jpeg" {
-		t.Fatalf("file = %+v", file)
+	defer file.Body.Close()
+	data, err := io.ReadAll(file.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "bytes" || file.MimeType != "image/jpeg" {
+		t.Fatalf("file = %+v (%q)", file, data)
+	}
+	if file.Length != 5 || file.Size != 5 {
+		t.Fatalf("length = %d size = %d", file.Length, file.Size)
 	}
 }
 
@@ -749,7 +826,7 @@ func TestCustomEmojiNeedsALiveClientAndMapsAMissingOne(t *testing.T) {
 func TestMediaRequiresAuthorization(t *testing.T) {
 	tg := &fakeTelegram{status: tgapi.Status{State: tgapi.StateUnauthorized}}
 	s := newService(t, tg)
-	if _, err := s.Media(context.Background(), 500, 1, 0); !errors.Is(err, rpc.ErrNeedsAuth) {
+	if _, err := s.Media(context.Background(), 500, 1, 0, rpc.MediaSlice{}); !errors.Is(err, rpc.ErrNeedsAuth) {
 		t.Fatalf("err = %v, want ErrNeedsAuth", err)
 	}
 }
@@ -764,7 +841,7 @@ func TestMediaRejectsAMessageWithoutAnAttachment(t *testing.T) {
 	if _, err := s.Channels(context.Background(), 1, 10); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.Media(context.Background(), 500, 179, 0)
+	_, err := s.Media(context.Background(), 500, 179, 0, rpc.MediaSlice{})
 	if err == nil {
 		t.Fatal("expected an error")
 	}

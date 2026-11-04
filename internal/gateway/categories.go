@@ -144,39 +144,9 @@ func (s *Server) listCategories(w http.ResponseWriter, r *http.Request, requestI
 		return
 	}
 
-	var (
-		cats  []channelstore.Category
-		total int
-	)
-	if authr := actorAuth(r); authr.CanList(channelstore.KindCategory) {
-		cats, total, err = s.cfg.Categories.ListCategories(r.Context(), channelstore.ListQuery{
-			Page: page, PerPage: perPage, Query: q,
-		})
-	} else {
-		// Without the global view the page is drawn from exactly the categories
-		// the caller may see, so the order, the page size and the total all
-		// describe what it is allowed to read.
-		ids := authr.ResourceIDs(channelstore.KindCategory, channelstore.ActionView)
-		var all []channelstore.Category
-		all, err = s.cfg.Categories.(CategoryByIDs).ListCategoriesByIDs(r.Context(), idList(ids))
-		if err == nil {
-			visible := make([]channelstore.Category, 0, len(all))
-			for _, c := range all {
-				if categoryMatches(c, q) {
-					visible = append(visible, c)
-				}
-			}
-			// Newest first, the same order the unfiltered list uses.
-			sort.Slice(visible, func(i, j int) bool {
-				if !visible[i].CreatedAt.Equal(visible[j].CreatedAt) {
-					return visible[i].CreatedAt.After(visible[j].CreatedAt)
-				}
-				return visible[i].ID > visible[j].ID
-			})
-			total = len(visible)
-			cats = pageSlice(visible, page, perPage)
-		}
-	}
+	cats, total, err := s.visibleCategories(r.Context(), actorAuth(r), channelstore.ListQuery{
+		Page: page, PerPage: perPage, Query: q,
+	})
 	if err != nil {
 		s.storeError(w, "list_categories", err, requestID)
 		return
@@ -419,6 +389,71 @@ func parseID(raw string) (int64, error) {
 // CategoryByIDs is the listing the filtered category page needs.
 type CategoryByIDs interface {
 	ListCategoriesByIDs(ctx context.Context, ids []int64) ([]channelstore.Category, error)
+}
+
+// visibleCategories draws one page of the categories a caller may read and
+// counts every category it may see.
+//
+// It is the one place the category visibility rule lives, so the list route and
+// the dashboard's count cannot disagree. The global view reads every category
+// except one carrying an explicit view:deny; without it, only a category with an
+// explicit view:allow is read. A page is then drawn from exactly those rows, so
+// the order, the page size and the total all describe what the caller may read.
+func (s *Server) visibleCategories(ctx context.Context, authr *channelstore.Authorizer,
+	q channelstore.ListQuery) ([]channelstore.Category, int, error) {
+
+	if authr.CanList(channelstore.KindCategory) && !authr.HasDenies(channelstore.KindCategory, channelstore.ActionView) {
+		// Nothing is denied per category, so the repository can search, count
+		// and page the whole collection itself.
+		return s.cfg.Categories.ListCategories(ctx, q)
+	}
+	var (
+		all []channelstore.Category
+		err error
+	)
+	if authr.CanList(channelstore.KindCategory) {
+		// A global view narrowed by explicit denies. There is no "every category
+		// but these" query, so the collection is read whole — it is small — and
+		// the denied rows are dropped from it below.
+		all, err = s.allCategories(ctx)
+	} else {
+		// Without the global view the page is drawn from exactly the categories
+		// the caller may see.
+		ids := authr.ResourceIDs(channelstore.KindCategory, channelstore.ActionView)
+		all, err = s.cfg.Categories.(CategoryByIDs).ListCategoriesByIDs(ctx, idList(ids))
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	shown := make([]channelstore.Category, 0, len(all))
+	for _, c := range all {
+		if visible(authr, channelstore.KindCategory, channelstore.ActionView, c.ID) && categoryMatches(c, q.Query) {
+			shown = append(shown, c)
+		}
+	}
+	// Newest first, the same order the unfiltered list uses.
+	sort.Slice(shown, func(i, j int) bool {
+		if !shown[i].CreatedAt.Equal(shown[j].CreatedAt) {
+			return shown[i].CreatedAt.After(shown[j].CreatedAt)
+		}
+		return shown[i].ID > shown[j].ID
+	})
+	return pageSlice(shown, q.Page, q.PerPage), len(shown), nil
+}
+
+// allCategories reads the whole category collection in the listing order, for a
+// caller whose global view is narrowed by explicit denies. The first call only
+// counts, so an empty collection is one query.
+func (s *Server) allCategories(ctx context.Context) ([]channelstore.Category, error) {
+	_, total, err := s.cfg.Categories.ListCategories(ctx, channelstore.ListQuery{Page: 1, PerPage: 1})
+	if err != nil {
+		return nil, err
+	}
+	if total == 0 {
+		return []channelstore.Category{}, nil
+	}
+	all, _, err := s.cfg.Categories.ListCategories(ctx, channelstore.ListQuery{Page: 1, PerPage: total})
+	return all, err
 }
 
 // categoryMatches applies the list's q filter.

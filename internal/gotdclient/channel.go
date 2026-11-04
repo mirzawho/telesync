@@ -287,12 +287,91 @@ func MediaMimeType(media tg.MessageMediaClass) string {
 }
 
 // MediaSize reports the byte size of an attachment, when the backend reports it.
+//
+// For a photo it is the byte size of the largest thumbnail the adapter
+// downloads, so the number describes the same bytes the media route serves.
 func MediaSize(media tg.MessageMediaClass) int64 {
 	switch m := media.(type) {
+	case *tg.MessageMediaPhoto:
+		photo, ok := m.Photo.(*tg.Photo)
+		if !ok {
+			return 0
+		}
+		_, bytes, ok := largestPhoto(photo.Sizes)
+		if !ok {
+			return 0
+		}
+		return bytes
 	case *tg.MessageMediaDocument:
 		if doc, ok := m.Document.(*tg.Document); ok {
 			return int64(doc.Size)
 		}
 	}
 	return 0
+}
+
+// largestPhoto returns the thumbnail type of the biggest PhotoSize that carries
+// dimensions, which is what InputPhotoFileLocation.ThumbSize wants, together
+// with that size's byte length.
+func largestPhoto(sizes []tg.PhotoSizeClass) (string, int64, bool) {
+	best := ""
+	bestArea := 0
+	var bytes int64
+	for _, s := range sizes {
+		var w, h int
+		var kind string
+		var size int64
+		switch v := s.(type) {
+		case *tg.PhotoSize:
+			w, h, kind, size = v.W, v.H, v.Type, int64(v.Size)
+		case *tg.PhotoSizeProgressive:
+			w, h, kind = v.W, v.H, v.Type
+			// The ladder's last entry is the complete JPEG; the earlier ones are
+			// only prefixes of it.
+			if n := len(v.Sizes); n > 0 {
+				size = int64(v.Sizes[n-1])
+			}
+		default:
+			continue
+		}
+		if kind == "" {
+			continue
+		}
+		if area := w * h; area > bestArea {
+			best, bestArea = kind, area
+			bytes = size
+		}
+	}
+	if best == "" {
+		return "", 0, false
+	}
+	return best, bytes, true
+}
+
+// MediaFileName reports the name the sender gave the attachment, or "" when
+// Telegram never reported one.
+//
+// The name comes from documentAttributeFilename and from nothing else: a MIME
+// type, a size or a title is not a filename, and inventing one would put a name
+// the sender never chose into Content-Disposition. The name is reported exactly
+// as Telegram sent it, so nothing silently renames the sender's file; a name
+// made only of blanks is not a name at all and is reported as none.
+func MediaFileName(media tg.MessageMediaClass) string {
+	doc, ok := media.(*tg.MessageMediaDocument)
+	if !ok {
+		return ""
+	}
+	document, ok := doc.Document.(*tg.Document)
+	if !ok {
+		return ""
+	}
+	for _, attr := range document.Attributes {
+		if name, ok := attr.(*tg.DocumentAttributeFilename); ok {
+			if strings.TrimSpace(name.FileName) == "" {
+				return ""
+			}
+			return name.FileName
+		}
+	}
+	return ""
 }

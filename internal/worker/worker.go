@@ -62,7 +62,7 @@ type Telegram interface {
 	Status(ctx context.Context) tgapi.Status
 	Dialogs(ctx context.Context) ([]tgapi.Channel, error)
 	History(ctx context.Context, channel tgapi.Channel, beforeID, limit int) (tgapi.HistoryPage, error)
-	DownloadMedia(ctx context.Context, channel tgapi.Channel, messageID int) (tgapi.MediaFile, error)
+	DownloadMedia(ctx context.Context, channel tgapi.Channel, messageID int, slice tgapi.MediaSlice) (tgapi.MediaStream, error)
 	Message(ctx context.Context, channel tgapi.Channel, messageID int) (tgapi.Message, error)
 
 	// FindChannels resolves a discovery query against Telegram.
@@ -435,6 +435,7 @@ func (s *Service) messageDTO(channelID int64, m tgapi.Message) rpc.Message {
 			ID:       fmt.Sprintf("%d:%d", channelID, m.ID),
 			Type:     m.Media.Type,
 			Label:    m.Media.Label,
+			Filename: m.Media.Filename,
 			MimeType: m.Media.MimeType,
 			Size:     m.Media.Size,
 		}
@@ -444,32 +445,38 @@ func (s *Service) messageDTO(channelID int64, m tgapi.Message) rpc.Message {
 
 // Media implements rpc.Backend.
 //
-// It fetches the attachment of one message. A message without one is a
-// not-found, not an internal error: the caller asked for something that does
-// not exist.
-func (s *Service) Media(ctx context.Context, channelID int64, messageID, _ int) (rpc.MediaFile, error) {
+// It streams the attachment of one message, or the slice of it the caller
+// named. A message without one is a not-found, not an internal error: the
+// caller asked for something that does not exist. The body is never collected
+// here — a 60 MB document passes through as it arrives.
+func (s *Service) Media(ctx context.Context, channelID int64, messageID, _ int, slice rpc.MediaSlice) (rpc.MediaStream, error) {
 	if err := s.requireAuthorized(ctx); err != nil {
-		return rpc.MediaFile{}, err
+		return rpc.MediaStream{}, err
 	}
 	if messageID <= 0 {
-		return rpc.MediaFile{}, rpc.NewError(rpc.CodeInvalidInput, "message_id must be positive", 0)
+		return rpc.MediaStream{}, rpc.NewError(rpc.CodeInvalidInput, "message_id must be positive", 0)
 	}
 	channel, ok := s.channelByID(ctx, channelID)
 	if !ok {
-		return rpc.MediaFile{}, rpc.ErrChannelNotFound
+		return rpc.MediaStream{}, rpc.ErrChannelNotFound
 	}
-	file, err := s.tg.DownloadMedia(ctx, channel, messageID)
+	stream, err := s.tg.DownloadMedia(ctx, channel, messageID, tgapi.MediaSlice{
+		Offset: slice.Offset, Limit: slice.Limit, Tail: slice.Tail,
+	})
 	if err != nil {
 		if errors.Is(err, tgapi.ErrMediaNotFound) {
-			return rpc.MediaFile{}, rpc.NewError(rpc.CodeNotFound,
+			return rpc.MediaStream{}, rpc.NewError(rpc.CodeNotFound,
 				"This message has no downloadable media.", 0)
 		}
-		return rpc.MediaFile{}, err
+		return rpc.MediaStream{}, err
 	}
-	return rpc.MediaFile{
-		MediaID:  fmt.Sprintf("%d:%d", channelID, messageID),
-		MimeType: file.MimeType,
-		Data:     file.Data,
+	return rpc.MediaStream{
+		MimeType: stream.MimeType,
+		Filename: stream.Filename,
+		Size:     stream.Size,
+		Offset:   stream.Offset,
+		Length:   stream.Length,
+		Body:     stream.Body,
 	}, nil
 }
 

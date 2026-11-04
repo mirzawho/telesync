@@ -1,3 +1,5 @@
+import type { ReactNode } from "react"
+
 import { Field as FieldPrimitive } from "@base-ui/react/field"
 
 import { cn } from "@workspace/ui/lib/utils"
@@ -12,13 +14,46 @@ function Field({ className, ...props }: FieldPrimitive.Root.Props & { className?
   )
 }
 
-function FieldLabel({ className, ...props }: FieldPrimitive.Label.Props & { className?: string }) {
+// endsWithStar catches a label text that already carries its own trailing "*", so we
+// never render a second one.
+function endsWithStar(children: ReactNode): boolean {
+  return typeof children === "string" && children.trimEnd().endsWith("*")
+}
+
+function FieldLabel({
+  className,
+  required,
+  children,
+  ...props
+}: FieldPrimitive.Label.Props & { className?: string; required?: boolean }) {
+  const showAsterisk = required === true && !endsWithStar(children)
+  if (!showAsterisk) {
+    return (
+      <FieldPrimitive.Label
+        data-slot="field-label"
+        className={cn("text-sm leading-none font-medium", className)}
+        {...props}
+      >
+        {children}
+      </FieldPrimitive.Label>
+    )
+  }
   return (
     <FieldPrimitive.Label
       data-slot="field-label"
       className={cn("text-sm leading-none font-medium", className)}
       {...props}
-    />
+    >
+      {/* inline-flex keeps text and star in RTL flow: text at the flow start (right
+          in RTL), star right after it in reading order. */}
+      <span className="inline-flex items-center gap-0.5">
+        <span>{children}</span>
+        <span aria-hidden="true" className="text-destructive">
+          *
+        </span>
+        <span className="sr-only">الزامی</span>
+      </span>
+    </FieldPrimitive.Label>
   )
 }
 
@@ -59,6 +94,12 @@ function FieldError({
   return (
     <FieldPrimitive.Error
       data-slot="field-error"
+      // Rendered whenever the caller renders it. The primitive shows an error
+      // only while the control itself is natively invalid, which hides exactly
+      // the messages a caller passes in for a refusal the control knows nothing
+      // about — a taken username, a URL the server refused. Every form here
+      // already decides for itself whether there is an error to show.
+      match
       className={cn("text-xs font-medium text-destructive", className)}
       {...props}
     >

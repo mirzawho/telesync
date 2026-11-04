@@ -54,7 +54,7 @@ func (m *Manager) DownloadCustomEmoji(ctx context.Context, documentID int64) (tg
 	}
 	var buf bytes.Buffer
 	if _, err := downloader.NewDownloader().Download(client.API(), loc).
-		Stream(ctx, &limitedWriter{w: &buf, limit: maxMediaBytes}); err != nil {
+		Stream(ctx, &limitedWriter{w: &buf, limit: maxSmallFileBytes}); err != nil {
 		return tgapi.EmojiFile{}, ClassifyError(err)
 	}
 	mime := doc.MimeType

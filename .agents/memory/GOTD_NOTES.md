@@ -161,3 +161,34 @@ invoke-with-updates path answer routing in tgtest. The worker-level
 `Service.Leave` is covered with a fake adapter (`internal/worker/worker_test.go`)
 and the gateway with a fake worker. Live verification must be done from an
 unrestricted shell against a real account, not claimed from unit tests.
+
+## Attachment download: `upload.getFile` offsets (2026-11-03)
+
+`downloader.NewDownloader().Download(api, loc).Stream(ctx, w)` (what
+`gotdclient` used before) has no offset: it only streams from byte 0, so it
+cannot serve an HTTP range and it buffers through `limitedWriter` with a 32 MiB
+cap. `internal/gotdclient/download.go` now calls `api.UploadGetFile` directly
+with `Offset`, `Limit` and `Precise(true)`, in 512 KiB parts, which is exactly
+what gotd's `telegram/downloader/master.go` does internally.
+
+- `req.SetCDNSupported(false)` matches gotd's `master{allowCDN: false}` default,
+  so no CDN redirect is ever taken — required by the MTProto isolation rule
+  (`never silently fall back … CDN`).
+- `req.SetPrecise(true)` is what lets an offset and a limit be any size, which
+  an arbitrary byte range needs. Without it both must be 4 KiB multiples.
+- `tg.PhotoSizeProgressive.Sizes` is a ladder of JPEG *prefix* sizes; the last
+  entry is the whole file. `tg.PhotoSize.Size` is the byte length of that
+  thumbnail. `MediaSize` now reports the byte size of the largest thumbnail, so
+  photos have a size like documents do and ranges on them can be answered.
+- `FILE_REFERENCE_EXPIRED` / `FILE_REFERENCE_INVALID` on `getFile` is recovered
+  by re-reading the message with `channels.getMessages` for a fresh
+  `file_reference` and retrying **once** (the second stale reference is a real
+  error). Verified in tgtest:
+  `TestDownloadMediaRefreshesAnExpiredFileReference`.
+- The empty result of a `getFile` past EOF is a zero-length `upload.file`, which
+  the streaming reader treats as EOF.
+
+Verified in tgtest against a fake MTProto server (`net.Pipe`, no network), not
+against live Telegram: whole-file download, byte ranges, a 1.2 MB file fetched in
+three parts, a suffix range, an empty slice past EOF, and the file-reference
+refresh.

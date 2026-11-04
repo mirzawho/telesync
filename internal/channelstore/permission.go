@@ -158,16 +158,24 @@ type Grant struct {
 // rules, in order:
 //
 //  1. an explicit resource assignment (allow or deny) decides;
-//  2. otherwise the matching global permission decides: it allows view or
-//     create on that kind, and nothing else;
+//  2. otherwise the matching global permission decides: the view admits the
+//     resource, and the manage right of the kind allows update and delete
+//     inside the caller's own selection;
 //  3. otherwise access is denied.
 //
-// A view is decided by rule 1-3 alone. Update and delete are resource-specific
-// (rule 2 never grants them) and also require the view: a record the caller may
-// not see may not be changed, so an explicit view:deny takes the writes with it.
+// A view is decided by rule 1-3 alone. Create is decided only by the global
+// permission: the resource does not exist yet, so it cannot have a
+// resource-specific assignment. Update and delete also require the view: a
+// record the caller may not see may not be changed, so an explicit view:deny
+// takes the writes with it.
 //
-// Create is decided only by the global permission: the resource does not exist
-// yet, so it cannot have a resource-specific assignment.
+// The manage right of a kind is its global "manage" permission —
+// `channels.create`, `categories.create`, `wordpress.create` — which is what
+// the administrators dialog's "manage" checkbox grants. It writes only inside
+// the caller's selection: with per-resource view grants the manager may write
+// exactly those resources, and with none it may write every resource of the
+// kind. That is the dialog's "all items, or the picked ones" rule, so a
+// manager scoped to one channel cannot delete another.
 type Authorizer struct {
 	userID     int64
 	service    bool
@@ -284,10 +292,13 @@ func (a *Authorizer) Allowed(kind ResourceKind, action Action, resourceID int64)
 	if action == ActionView || action == ActionCreate {
 		return a.allowedHere(kind, action, resourceID)
 	}
-	return a.allowedHere(kind, action, resourceID) && a.allowedHere(kind, ActionView, resourceID)
+	return a.allowedWrite(kind, action, resourceID) && a.allowedHere(kind, ActionView, resourceID)
 }
 
 // allowedHere is the assignment-then-global rule for one action, on its own.
+// It answers for the actions a global permission can grant on its own: view and
+// create. A write goes through allowedWrite, which also consults the manage
+// right and the caller's selection.
 func (a *Authorizer) allowedHere(kind ResourceKind, action Action, resourceID int64) bool {
 	if action == ActionCreate {
 		return a.global[globalOf(kind, action)]
@@ -301,6 +312,85 @@ func (a *Authorizer) allowedHere(kind ResourceKind, action Action, resourceID in
 		return a.global[globalOf(kind, ActionView)]
 	}
 	return false
+}
+
+// allowedWrite is the assignment-then-manage rule for update and delete.
+//
+// An explicit assignment of the action decides first, so a stored deny is never
+// overridden and a stored allow stands on its own. With no assignment the
+// manage right decides, and only inside the caller's selection: a manager whose
+// grants name resources may write those, and one with none may write every
+// resource of the kind.
+func (a *Authorizer) allowedWrite(kind ResourceKind, action Action, resourceID int64) bool {
+	if effects, ok := a.resourceSet(kind)[resourceID]; ok && resourceID > 0 {
+		if effect, ok := effects[action]; ok {
+			return effect == EffectAllow
+		}
+	}
+	return a.manages(kind) && a.inManageScope(kind, resourceID)
+}
+
+// manages reports whether the user holds the manage right of a kind: the
+// global permission the administrators dialog labels "manage", which is the
+// one that may write the kind's records. A kind with no such permission is
+// never managed, so a resource kind cannot inherit one by name.
+func (a *Authorizer) manages(kind ResourceKind) bool {
+	p := managePermission(kind)
+	return p != "" && a.Global(p)
+}
+
+// inManageScope reports whether a resource of kind is inside the caller's own
+// selection — the items the administrators dialog's picker names.
+//
+// A selection is stored as grants: a view allow on each picked item, and a
+// write deny on each item the picker left out. While one of those is stored
+// the manage right covers the picked items alone, and with none stored there
+// is no selection and every item of the kind is covered. A view deny on its
+// own is not a selection: it is an exclusion over the unselected whole, so a
+// manager denied one channel still manages the rest.
+func (a *Authorizer) inManageScope(kind ResourceKind, resourceID int64) bool {
+	if resourceID <= 0 {
+		return false
+	}
+	set := a.resourceSet(kind)
+	if effects, ok := set[resourceID]; ok && effects[ActionView] == EffectAllow {
+		return true
+	}
+	for _, effects := range set {
+		if marksASelection(effects) {
+			return false
+		}
+	}
+	return true
+}
+
+// marksASelection reports whether one resource's assignments say the caller was
+// given a selection rather than the unselected whole. A view allow names a
+// picked item, and a deny of both writes is how the dialog stores an item it
+// left out. One deny on its own is an exclusion over the whole, not a
+// selection: denying an action on one channel must not take the manage right
+// away from every other one.
+func marksASelection(effects map[Action]Effect) bool {
+	if effects[ActionView] == EffectAllow {
+		return true
+	}
+	return effects[ActionUpdate] == EffectDeny && effects[ActionDelete] == EffectDeny
+}
+
+// managePermission is the global permission that manages one kind, or "" for a
+// kind nothing manages. Only a kind with per-resource records is manageable;
+// users and servers are governed by their own globals alone.
+func managePermission(kind ResourceKind) GlobalPermission {
+	switch kind {
+	case KindChannel:
+		return PermissionChannelsCreate
+	case KindCategory:
+		return PermissionCategoriesCreate
+	case KindWordPress:
+		return PermissionWordPressManage
+	default:
+		return ""
+	}
 }
 
 // Service reports whether this is the fixed operator token rather than a user.

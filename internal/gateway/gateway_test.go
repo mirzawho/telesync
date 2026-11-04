@@ -1,6 +1,7 @@
 package gateway_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,10 +38,19 @@ type fakeWorker struct {
 	chanE        error
 	messages     rpc.MessagePage
 	msgE         error
-	media        rpc.MediaFile
-	mediaE       error
-	message      rpc.MessagePage
-	messageE     error
+	// mediaBytes is the attachment this worker serves, mediaName and mediaType
+	// the facts the real worker reports about it, and mediaSize the size it
+	// claims. mediaSize is reported verbatim: zero means "the length is
+	// unknown", exactly as the real backend can report no size.
+	mediaBytes []byte
+	mediaName  string
+	mediaType  string
+	mediaSize  int64
+	mediaE     error
+
+	lastMediaSlice rpc.MediaSlice
+	message        rpc.MessagePage
+	messageE       error
 
 	calls    int
 	lastPage int
@@ -49,6 +59,9 @@ type fakeWorker struct {
 
 	lastMediaChannel int64
 	lastMediaMessage int
+	// lastMediaIndex is the attachment position the gateway asked for, which is
+	// how a test sees that the chosen attachment was the one read.
+	lastMediaIndex int
 
 	lastMessageChannel int64
 	lastMessageID      int
@@ -120,12 +133,58 @@ func (f *fakeWorker) CustomEmoji(_ context.Context, documentID int64) (rpc.Media
 	return f.customEmoji, f.customEmojiE
 }
 
-func (f *fakeWorker) Media(_ context.Context, channelID int64, messageID, _ int) (rpc.MediaFile, error) {
+func (f *fakeWorker) Media(_ context.Context, channelID int64, messageID, photoIndex int, slice rpc.MediaSlice) (rpc.MediaStream, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	f.lastMediaChannel, f.lastMediaMessage = channelID, messageID
-	return f.media, f.mediaE
+	f.lastMediaIndex = photoIndex
+	f.lastMediaSlice = slice
+	if f.mediaE != nil {
+		return rpc.MediaStream{}, f.mediaE
+	}
+
+	// Answer the requested slice the way the worker does, so a test can see
+	// whether the gateway asked for what it should have. With no reported size
+	// there is nothing to slice against, so the whole attachment is sent.
+	body := f.mediaBytes
+	offset := int64(0)
+	switch {
+	case f.mediaSize <= 0:
+		// No size: the slice is ignored, exactly as the worker does.
+	case slice.Tail > 0:
+		tail := slice.Tail
+		if tail > f.mediaSize {
+			tail = f.mediaSize
+		}
+		offset = f.mediaSize - tail
+		if offset >= int64(len(body)) {
+			body = nil
+		} else {
+			body = body[offset:]
+		}
+	case slice.Offset > 0:
+		if slice.Offset >= int64(len(body)) {
+			// Past the end: nothing is fetched, and the offset the caller is
+			// told about is where the attachment stops.
+			offset = f.mediaSize
+			body = nil
+		} else {
+			offset = slice.Offset
+			body = body[offset:]
+		}
+	}
+	if slice.Limit > 0 && f.mediaSize > 0 && int64(len(body)) > slice.Limit {
+		body = body[:slice.Limit]
+	}
+	return rpc.MediaStream{
+		MimeType: f.mediaType,
+		Filename: f.mediaName,
+		Size:     f.mediaSize,
+		Offset:   offset,
+		Length:   int64(len(body)),
+		Body:     io.NopCloser(bytes.NewReader(body)),
+	}, nil
 }
 
 func (f *fakeWorker) SendMessage(_ context.Context, req rpc.SendRequest) (rpc.SendResult, error) {
@@ -750,9 +809,9 @@ func (b *blockingWorker) Message(ctx context.Context, _ int64, _ int) (rpc.Messa
 	return rpc.MessagePage{}, ctx.Err()
 }
 
-func (b *blockingWorker) Media(ctx context.Context, _ int64, _, _ int) (rpc.MediaFile, error) {
+func (b *blockingWorker) Media(ctx context.Context, _ int64, _, _ int, _ rpc.MediaSlice) (rpc.MediaStream, error) {
 	<-ctx.Done()
-	return rpc.MediaFile{}, ctx.Err()
+	return rpc.MediaStream{}, ctx.Err()
 }
 
 func (b *blockingWorker) Find(ctx context.Context, _ rpc.FindRequest) (rpc.FindResult, error) {
@@ -1057,9 +1116,63 @@ func TestMediaDescriptorCarriesAFetchableURL(t *testing.T) {
 	}
 }
 
+func TestMediaDescriptorCarriesTheOriginalFilename(t *testing.T) {
+	official := readyWorker()
+	official.messages = rpc.MessagePage{
+		Channel: rpc.Channel{ID: 6, Title: "cat"},
+		Messages: []rpc.Message{
+			{
+				ID: 36,
+				Media: &rpc.Media{
+					ID: "6:36", Type: "document", Label: "فایل",
+					Filename: "original-app-name.apk",
+					MimeType: "application/vnd.android.package-archive", Size: 59797754,
+				},
+			},
+			{
+				ID: 24,
+				Media: &rpc.Media{
+					ID: "6:24", Type: "audio", Label: "صدا",
+					MimeType: "audio/mpeg", Size: 3174901,
+				},
+			},
+		},
+	}
+	env := newEnv(t, registry{"cat": official})
+
+	resp := env.get(t, "/api/v1/telegram/cat/channels/6/messages?page=1&per_page=20")
+	rawBody := readAll(t, resp)
+	var body struct {
+		Data struct {
+			Messages []struct {
+				ID    int `json:"id"`
+				Media struct {
+					Filename *string `json:"filename"`
+				} `json:"media"`
+			} `json:"messages"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(strings.NewReader(rawBody)).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, audio := body.Data.Messages[0].Media, body.Data.Messages[1].Media
+	if doc.Filename == nil || *doc.Filename != "original-app-name.apk" {
+		t.Fatalf("document filename = %v, want %q (body %s)", doc.Filename, "original-app-name.apk", rawBody)
+	}
+	// Telegram never named this one, so the field is absent rather than a name
+	// this build made up. `filename: null` and a missing key are both "no name";
+	// the contract is only that it is never invented.
+	if audio.Filename != nil && *audio.Filename != "" {
+		t.Fatalf("audio filename = %v, want no name", audio.Filename)
+	}
+}
+
 func TestMediaEndpointStreamsTheBytes(t *testing.T) {
 	official := readyWorker()
-	official.media = rpc.MediaFile{MimeType: "image/jpeg", Data: []byte("jpeg-bytes")}
+	official.mediaBytes = []byte("jpeg-bytes")
+	official.mediaType = "image/jpeg"
+	official.mediaSize = int64(len(official.mediaBytes))
 	env := newEnv(t, registry{"official": official})
 
 	resp := env.get(t, "/api/v1/telegram/official/channels/1671633563/messages/179/media")
@@ -1123,7 +1236,9 @@ func TestMediaEndpointRejectsBadIDs(t *testing.T) {
 
 func TestMediaEndpointRequiresAuth(t *testing.T) {
 	official := readyWorker()
-	official.media = rpc.MediaFile{MimeType: "image/jpeg", Data: []byte("x")}
+	official.mediaBytes = []byte("x")
+	official.mediaType = "image/jpeg"
+	official.mediaSize = 1
 	env := newEnv(t, registry{"official": official}, func(c *gateway.Config) {
 		c.Operator = "tok"
 	})

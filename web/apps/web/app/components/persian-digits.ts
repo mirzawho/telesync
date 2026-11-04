@@ -18,6 +18,12 @@ const dateOnlyFormat = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
   dateStyle: "medium",
 })
 
+// A clock reading on its own, for a message footer that already sits under its
+// day's separator: "۲۲:۳۰".
+const timeFormat = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+  timeStyle: "short",
+})
+
 // faDateTime renders an API timestamp (RFC 3339) in the Jalali calendar, or an
 // em dash when the API sent none.
 export function faDateTime(
@@ -32,4 +38,17 @@ export function faDateTime(
     return "—"
   }
   return (withTime ? dateFormat : dateOnlyFormat).format(date)
+}
+
+// faTime renders only the clock reading of an API timestamp, or an em dash when
+// the API sent none.
+export function faTime(value: string | null | undefined): string {
+  if (!value) {
+    return "—"
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return "—"
+  }
+  return timeFormat.format(date)
 }

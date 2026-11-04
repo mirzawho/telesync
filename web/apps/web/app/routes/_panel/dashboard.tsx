@@ -3,18 +3,18 @@ import {
   ArrowLeftIcon,
   AtSignIcon,
   FolderTreeIcon,
+  GlobeIcon,
+  LayoutDashboardIcon,
   RefreshCwIcon,
   SendIcon,
   ServerCogIcon,
   ShieldOffIcon,
   UserCogIcon,
-  Users2Icon,
 } from "lucide-react"
 
 import { PageHeader } from "@/components/page-header"
 import { PageError, PageShell, pageMeta, section } from "@/lib/page"
-import { StatCardSkeleton } from "@/components/states"
-import { faDateTime, faDigits } from "@/components/persian-digits"
+import { faDigits } from "@/components/persian-digits"
 import { EmptyState } from "@/components/states"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
@@ -30,26 +30,10 @@ import {
 import { ApiError, apiRequest } from "@/lib/api"
 import { requireSession } from "@/lib/session"
 import { connectionLabels, connectionOf } from "@/lib/server-state"
-import type {
-  Category,
-  Channel,
-  ChannelAvailability,
-  TelegramServer,
-  TelegramUser,
-  User,
-} from "@/lib/types"
+import type { DashboardStats, TelegramServer, TelegramUser } from "@/lib/types"
 
 import type { Route } from "./+types/dashboard"
 
-interface CategoryList {
-  categories: Category[]
-}
-interface ChannelList {
-  channels: Channel[]
-}
-interface UserList {
-  users: User[]
-}
 interface ServerList {
   servers: TelegramServer[]
 }
@@ -59,37 +43,98 @@ interface ServerList {
 type Resource<T> =
   { ok: true; total: number | null; rows: T[] } | { ok: false; message: string }
 
-function toResource<T>(
-  result: PromiseSettledResult<{ data: unknown; meta: { total?: number } }>,
-  pick: (data: unknown) => T[]
-): Resource<T> {
-  if (result.status === "rejected") {
-    const error = result.reason
-    return {
-      ok: false,
-      message:
-        error instanceof ApiError
-          ? error.message
-          : "بارگذاری این بخش ناموفق بود.",
-    }
-  }
-  return {
-    ok: true,
-    total: result.value.meta.total ?? null,
-    rows: pick(result.value.data),
-  }
+// failure names why a call did not answer, in the API's own words when it had
+// some and in the panel's otherwise.
+function failure(reason: unknown, fallback: string): string {
+  return reason instanceof ApiError ? reason.message : fallback
 }
 
-async function list<T>(
-  token: string,
-  path: string,
-  pick: (data: unknown) => T[]
-): Promise<{ data: unknown; meta: { total?: number }; rows: T[] }> {
-  const result = await apiRequest<unknown>("GET", path, {
-    token,
-    query: { per_page: 100 },
-  })
-  return { ...result, rows: pick(result.data) }
+// The dashboard's four figures, or the failure to load them. The same
+// two-state shape every other card uses; on success each figure decides for
+// itself whether a card is drawn at all.
+type StatsResult =
+  { ok: true; stats: DashboardStats } | { ok: false; message: string }
+
+// Tailwind generates only the class names it finds written out, so the column
+// count is picked from a literal per case and never built as `grid-cols-${n}`.
+const GRID_COLUMNS = {
+  1: "grid-cols-1",
+  2: "grid-cols-2",
+  3: "grid-cols-3",
+  4: "grid-cols-4",
+} as const
+
+// columnsFor is how many columns the figure row takes: one per card that is
+// drawn, clamped into the cases above. A row with no cards draws no grid at all.
+function columnsFor(count: number): keyof typeof GRID_COLUMNS {
+  return Math.min(Math.max(count, 1), 4) as keyof typeof GRID_COLUMNS
+}
+
+// One card per figure. A figure the caller may not see is null, and then there
+// is no card at all — not a zero, not a "no access" notice. `access` names the
+// /auth/me flag the sidebar uses for the same link, so a card links exactly
+// where the navigation goes; the WordPress page has no such flag and is always
+// reachable, like its sidebar item.
+const STAT_CARDS = [
+  {
+    key: "categories",
+    icon: FolderTreeIcon,
+    title: "دسته‌بندی‌ها",
+    to: "/categories",
+    access: "categories",
+  },
+  {
+    key: "channels",
+    icon: SendIcon,
+    title: "کانال‌ها",
+    to: "/channels",
+    access: "channels",
+  },
+  {
+    key: "wordpress_sites",
+    icon: GlobeIcon,
+    title: "سایت‌های وردپرسی",
+    to: "/wordpress",
+    access: null,
+  },
+  {
+    key: "administrators",
+    icon: UserCogIcon,
+    title: "مدیرها",
+    to: "/administrators",
+    access: "users",
+  },
+] as const
+
+type StatCardData = {
+  key: string
+  icon: typeof FolderTreeIcon
+  title: string
+  to?: string
+  resource: Resource<unknown>
+}
+
+// statCards draws the cards whose figures are actually there. A key the API
+// left out is read like null: no card, never a zero.
+function statCards(
+  stats: DashboardStats | undefined,
+  access: { channels: boolean; categories: boolean; users: boolean }
+): StatCardData[] {
+  const cards: StatCardData[] = []
+  for (const card of STAT_CARDS) {
+    const value = stats?.[card.key]
+    if (typeof value !== "number") {
+      continue
+    }
+    cards.push({
+      key: card.key,
+      icon: card.icon,
+      title: card.title,
+      to: card.access === null || access[card.access] ? card.to : undefined,
+      resource: { ok: true, total: value, rows: [] },
+    })
+  }
+  return cards
 }
 
 // hydrate lets this screen render straight from the first payload, with no
@@ -97,76 +142,25 @@ async function list<T>(
 export async function clientLoader({ request }: Route.LoaderArgs) {
   const { token, me } = await requireSession(request)
 
-  // The three summaries load independently: a failing resource (the local
-  // channel store is often not configured) degrades its own card, not the page.
-  const [categoriesResult, channelsResult, usersResult, serversResult] =
-    await Promise.allSettled([
-      list<Category>(
-        token,
-        "/local/categories",
-        (data) => (data as CategoryList).categories ?? []
-      ),
-      list<Channel>(
-        token,
-        "/local/channels",
-        (data) => (data as ChannelList).channels ?? []
-      ),
-      me.access?.users
-        ? list<User>(
-            token,
-            "/local/users",
-            (data) => (data as UserList).users ?? []
-          )
-        : Promise.resolve(null),
-      // The server status card reads GET /api/v1/telegram, which the API holds
-      // behind "servers.view"; the card alone shows a failure, the page loads.
-      me.access?.servers
-        ? apiRequest<ServerList>("GET", "/telegram", { token })
-        : Promise.resolve(null),
-    ] as const)
+  // The four figures come from one call. The server status card reads
+  // GET /api/v1/telegram, which the API holds behind "servers.view"; a failing
+  // call degrades its own card, never the page.
+  const [statsResult, serversResult] = await Promise.allSettled([
+    apiRequest<{ stats: DashboardStats }>("GET", "/local/stats/dashboard", {
+      token,
+    }),
+    me.access?.servers
+      ? apiRequest<ServerList>("GET", "/telegram", { token })
+      : Promise.resolve(null),
+  ] as const)
 
-  const channelState: ChannelAvailability = (() => {
-    if (channelsResult.status === "rejected") {
-      const error = channelsResult.reason
-      if (
-        error instanceof ApiError &&
-        (error.status === 503 || error.status === 400 || error.status === 401)
-      ) {
-        return { state: "not_configured", message: error.message }
-      }
-      return {
-        state: "unavailable",
-        message:
-          error instanceof ApiError
-            ? error.message
-            : "بارگذاری کانال‌ها ناموفق بود.",
-        code: error instanceof ApiError ? error.code : "unknown",
-      }
-    }
-    const channels = channelsResult.value.rows
-    return {
-      state: "ready",
-      channels,
-      meta: { total: channelsResult.value.meta.total, has_more: undefined },
-    }
-  })()
-
-  const userResource: Resource<User> | null =
-    usersResult.status === "fulfilled" && usersResult.value !== null
-      ? {
-          ok: true,
-          total: usersResult.value.meta.total ?? null,
-          rows: usersResult.value.rows,
+  const stats: StatsResult =
+    statsResult.status === "fulfilled"
+      ? { ok: true, stats: statsResult.value.data.stats }
+      : {
+          ok: false,
+          message: failure(statsResult.reason, "بارگذاری آمار ناموفق بود."),
         }
-      : usersResult.status === "rejected"
-        ? {
-            ok: false,
-            message:
-              usersResult.reason instanceof ApiError
-                ? usersResult.reason.message
-                : "بارگذاری مدیرها ناموفق بود.",
-          }
-        : null
 
   const serverResource: Resource<TelegramServer> | null =
     serversResult.status === "fulfilled" && serversResult.value !== null
@@ -178,17 +172,12 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
       : serversResult.status === "rejected"
         ? {
             ok: false,
-            message:
-              serversResult.reason instanceof ApiError
-                ? serversResult.reason.message
-                : "بارگذاری وضعیت سرورها ناموفق بود.",
+            message: failure(
+              serversResult.reason,
+              "بارگذاری وضعیت سرورها ناموفق بود."
+            ),
           }
         : null
-
-  const categoryResource = toResource(
-    categoriesResult,
-    (data) => (data as CategoryList).categories ?? []
-  )
 
   return {
     access: me.access ?? {
@@ -197,12 +186,7 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
       users: false,
       servers: false,
     },
-    categories: categoryResource,
-    recentCategories: categoryResource.ok
-      ? categoryResource.rows.slice(0, 5)
-      : [],
-    channels: channelState,
-    users: userResource,
+    stats,
     servers: serverResource,
   }
 }
@@ -213,7 +197,12 @@ export const handle = section("پیشخان")
 
 // The account the layout's loader already read for this navigation.
 function useMe() {
-  return useRouteLoaderData("routes/_panel/layout")?.me ?? { fullname: "", username: "" }
+  return (
+    useRouteLoaderData("routes/_panel/layout")?.me ?? {
+      fullname: "",
+      username: "",
+    }
+  )
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
@@ -225,162 +214,74 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
 }
 
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
-  const { access, categories, recentCategories, channels, servers, users } =
-    loaderData
+  const { access, stats, servers } = loaderData
   const me = useMe()
 
+  // The figure row draws a card for each figure the caller may see: a null
+  // figure is a card that is not there, and the grid is sized from what is
+  // left. A call that failed is one card of its own — never four invented
+  // zeros.
+  const cards: StatCardData[] = stats.ok
+    ? statCards(stats.stats, access)
+    : [
+        {
+          key: "stats",
+          icon: LayoutDashboardIcon,
+          title: "آمار کلی",
+          resource: { ok: false, message: stats.message },
+        },
+      ]
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
         title="پیشخان"
         description={
           me.fullname
-            ? `${me.fullname}، خوش آمدید. یک نگاه به کانال‌های تحت پایش، دسته‌بندی‌ها و مدیرهای پنل.`
-            : "یک نگاه به کانال‌های تحت پایش، دسته‌بندی‌ها و مدیرهای پنل."
+            ? `${me.fullname}، خوش آمدید. یک نگاه به دسته‌بندی‌ها، کانال‌ها، سایت‌های وردپرسی، مدیرها و وضعیت سرورهای تلگرام.`
+            : "یک نگاه به دسته‌بندی‌ها، کانال‌ها، سایت‌های وردپرسی، مدیرها و وضعیت سرورهای تلگرام."
         }
       />
 
-      <section
-        aria-label="آمار کلی"
-        className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
-      >
-        <StatCard
-          icon={FolderTreeIcon}
-          title="دسته‌بندی‌ها"
-          resource={
-            access.categories
-              ? categories
-              : {
-                  ok: false,
-                  message: "شما دسترسی خواندن دسته‌بندی‌ها را ندارید.",
-                }
-          }
-          footnote="دسته‌هایی که کانال‌ها را گروه‌بندی می‌کنند"
-          to={access.categories ? "/categories" : undefined}
-        />
-        <StatCard
-          icon={SendIcon}
-          title="کانال‌ها"
-          resource={
-            !access.channels
-              ? { ok: false, message: "شما دسترسی خواندن کانال‌ها را ندارید." }
-              : channels.state === "ready"
-                ? {
-                    ok: true,
-                    total: channels.meta.total ?? null,
-                    rows: channels.channels,
-                  }
-                : { ok: false, message: channels.message }
-          }
-          footnote="کانال‌هایی که این سرویس دنبال می‌کند"
-          to={access.channels ? "/channels" : undefined}
-        />
-        <StatCard
-          icon={UserCogIcon}
-          title="مدیرها"
-          resource={
-            users === null
-              ? { ok: false, message: "شما دسترسی خواندن مدیرها را ندارید." }
-              : users
-          }
-          footnote="کاربرانی که به پنل دسترسی دارند"
-          to={access.users ? "/administrators" : undefined}
-        />
-      </section>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>تازه‌ترین دسته‌بندی‌ها</CardTitle>
-            <CardDescription>
-              پنج دسته‌ای که آخر از همه ساخته شده‌اند.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {!categories.ok ? (
-              <p
-                role="status"
-                className="text-muted-foreground py-6 text-center text-sm"
-              >
-                {categories.message}
-              </p>
-            ) : recentCategories.length === 0 ? (
-              <EmptyState
-                icon={FolderTreeIcon}
-                title="هنوز دسته‌بندی‌ای نساخته‌اید"
-                description="برای گروه‌بندی کانال‌ها، از صفحهٔ دسته‌بندی‌ها یکی بسازید."
-                className="py-8"
-              />
-            ) : (
-              <ul className="flex flex-col divide-y">
-                {recentCategories.map((category) => (
-                  <li
-                    key={category.id}
-                    className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0"
-                  >
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="truncate text-sm font-medium">
-                        {category.name}
-                      </span>
-                      <span className="text-muted-foreground shrink-0 text-xs">
-                        {faDateTime(category.created_at)}
-                      </span>
-                    </div>
-                    {category.description && (
-                      <p className="text-muted-foreground line-clamp-1 text-xs">
-                        {category.description}
-                      </p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-          {access.categories && categories.ok && (
-            <CardFooter className="justify-end pt-2">
-              <Button
-                variant="link"
-                size="sm"
-                render={<Link to="/categories" />}
-              >
-                همه دسته‌بندی‌ها
-                <ArrowLeftIcon data-icon="inline-end" />
-              </Button>
-            </CardFooter>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>کانال‌های تحت پایش</CardTitle>
-            <CardDescription>
-              کانال‌های تلگرامی که این سرویس دنبال می‌کند.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex-1">
-            <ChannelStatus availability={channels} access={access.channels} />
-          </CardContent>
-          {access.channels && (
-            <CardFooter className="justify-end pt-2">
-              <Button variant="link" size="sm" render={<Link to="/channels" />}>
-                صفحه کانال‌ها
-                <ArrowLeftIcon data-icon="inline-end" />
-              </Button>
-            </CardFooter>
-          )}
-        </Card>
-      </div>
+      {cards.length > 0 && <StatCardRow cards={cards} />}
 
       <ServerStatusCard
         resource={access.servers ? servers : null}
         description="هر سرور تلگرامی که این سرویس راه انداخته، و این‌که همین حالا به تلگرام وصل است یا نه."
       />
-
-      <p className="text-muted-foreground text-xs">
-        اگر یکی از کارت‌ها «در دسترس نیست» نشان می‌دهد، یعنی آن بخش الان خواندنی
-        نبود؛ عددی به‌جای آن حدس زده نمی‌شود.
-      </p>
     </div>
+  )
+}
+
+// Below lg the cards are one row that scrolls sideways, each at a fixed width
+// so none is squeezed; at lg they go back to the grid. Each wrapper stretches
+// its card to the row's height so the cards line up whichever of them wraps.
+export const STAT_ROW_CLASS =
+  "flex w-full min-w-0 snap-x snap-proximity gap-4 overflow-x-auto overscroll-x-contain pb-2 lg:grid lg:overflow-visible"
+export const STAT_CARD_WRAPPER_CLASS =
+  "flex w-[240px] shrink-0 snap-start lg:w-auto lg:min-w-0"
+
+export function StatCardRow({
+  cards,
+  link,
+}: {
+  cards: StatCardData[]
+  link?: (to: string) => React.ReactElement
+}) {
+  // The router's Link by default; the responsive test swaps in a plain <a>, so
+  // the row renders without a router around it.
+  const linkFor = link ?? ((to: string) => <Link to={to} />)
+  return (
+    <section
+      aria-label="آمار کلی"
+      className={`${STAT_ROW_CLASS} ${GRID_COLUMNS[columnsFor(cards.length)]}`}
+    >
+      {cards.map(({ key, ...card }) => (
+        <div key={key} className={STAT_CARD_WRAPPER_CLASS}>
+          <StatCard {...card} link={linkFor} />
+        </div>
+      ))}
+    </section>
   )
 }
 
@@ -388,20 +289,21 @@ function StatCard({
   icon: Icon,
   title,
   resource,
-  footnote,
   to,
+  link,
 }: {
   icon: typeof FolderTreeIcon
   title: string
   resource: Resource<unknown>
-  footnote: string
   to?: string
+  // The router's Link; the responsive test swaps in a plain <a>.
+  link: (to: string) => React.ReactElement
 }) {
   return (
-    <Card>
+    <Card className="h-full w-full">
       <CardHeader>
         <CardDescription className="flex items-center gap-2">
-          <span className="bg-muted text-foreground flex size-7 items-center justify-center rounded-lg">
+          <span className="flex size-7 items-center justify-center rounded-lg bg-muted text-foreground">
             <Icon className="size-4" aria-hidden="true" />
           </span>
           {title}
@@ -411,91 +313,29 @@ function StatCard({
             {faDigits(resource.total)}
           </CardTitle>
         ) : (
-          <CardTitle className="text-destructive text-sm font-normal">
+          <CardTitle className="text-sm font-normal text-destructive">
             در دسترس نیست
           </CardTitle>
         )}
       </CardHeader>
-      <CardContent className="flex flex-col gap-1">
-        {resource.ok ? (
-          <p className="text-muted-foreground text-xs">{footnote}</p>
-        ) : (
-          <p role="status" className="text-muted-foreground text-xs">
+      <CardContent>
+        {!resource.ok && (
+          <p role="status" className="text-xs text-muted-foreground">
             {resource.message}
           </p>
         )}
       </CardContent>
       {to && (
-        <CardFooter className="justify-end pt-1">
-          <Button variant="ghost" size="sm" render={<Link to={to} />}>
+        // Pinned to the bottom so a card that failed (its message takes room)
+        // still lines its link up with the others in the row.
+        <CardFooter className="mt-auto justify-end pt-1">
+          <Button variant="ghost" size="sm" render={link(to)}>
             مشاهده
             <ArrowLeftIcon data-icon="inline-end" />
           </Button>
         </CardFooter>
       )}
     </Card>
-  )
-}
-
-function ChannelStatus({
-  availability,
-  access,
-}: {
-  availability: ChannelAvailability
-  access: boolean
-}) {
-  if (!access) {
-    return (
-      <p className="text-muted-foreground py-6 text-center text-sm">
-        شما دسترسی خواندن کانال‌ها را ندارید.
-      </p>
-    )
-  }
-  if (availability.state === "not_configured") {
-    return (
-      <EmptyState
-        icon={SendIcon}
-        title="فهرست کانال‌ها در دسترس نیست"
-        description="این نسخه از سرویس هنوز کانال‌ها را در پنل نشان نمی‌دهد. مدیر سرویس باید آن را فعال کند."
-        className="py-8"
-      />
-    )
-  }
-  if (availability.state === "unavailable") {
-    return (
-      <EmptyState
-        icon={SendIcon}
-        title="وضعیت کانال‌ها معلوم نیست"
-        description="الان نتوانستیم فهرست کانال‌ها را بخوانیم. کمی بعد دوباره سر بزنید."
-        className="py-8"
-      />
-    )
-  }
-  if (availability.channels.length === 0) {
-    return (
-      <EmptyState
-        icon={SendIcon}
-        title="هنوز کانالی اضافه نشده است"
-        description="کانالی که در صفحهٔ کانال‌ها ثبت کنید، این‌جا هم دیده می‌شود."
-        className="py-8"
-      />
-    )
-  }
-  const joined = availability.channels.filter(
-    (channel) => channel.membership_status === "joined"
-  ).length
-  return (
-    <div className="flex flex-col items-center gap-1 py-8 text-center">
-      <span className="flex size-10 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
-        <Users2Icon className="size-5" aria-hidden="true" />
-      </span>
-      <p className="text-2xl font-semibold tabular-nums">
-        {faDigits(availability.channels.length)}
-      </p>
-      <p className="text-muted-foreground text-sm">
-        کانال تحت پایش؛ {faDigits(joined)} تا از آن‌ها با عضویت برقرار.
-      </p>
-    </div>
   )
 }
 
@@ -516,7 +356,7 @@ function ServerStateBadge({ server }: { server: TelegramServer }) {
 function ServerAccount({ user }: { user?: TelegramUser | null }) {
   if (!user) {
     return (
-      <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
         <ShieldOffIcon className="size-3.5" aria-hidden="true" />
         حساب معلوم نیست
       </span>
@@ -527,12 +367,12 @@ function ServerAccount({ user }: { user?: TelegramUser | null }) {
     <span className="inline-flex min-w-0 items-baseline gap-1.5">
       <span className="truncate text-sm">{name || "بدون نام"}</span>
       {user.username ? (
-        <span className="text-muted-foreground inline-flex shrink-0 items-center gap-0.5 text-xs">
+        <span className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground">
           <AtSignIcon className="size-3" aria-hidden="true" />
           {user.username}
         </span>
       ) : (
-        <span className="text-muted-foreground shrink-0 text-xs">
+        <span className="shrink-0 text-xs text-muted-foreground">
           شناسه {faDigits(user.id)}
         </span>
       )}
@@ -568,7 +408,9 @@ function ServerStatusCard({
             onClick={() => revalidator.revalidate()}
             disabled={refreshing || resource === null}
           >
-            <RefreshCwIcon className={refreshing ? "animate-spin" : undefined} />
+            <RefreshCwIcon
+              className={refreshing ? "animate-spin" : undefined}
+            />
             به‌روزرسانی
           </Button>
         </div>
@@ -577,14 +419,14 @@ function ServerStatusCard({
         {resource === null ? (
           <p
             role="status"
-            className="text-muted-foreground py-6 text-center text-sm"
+            className="py-6 text-center text-sm text-muted-foreground"
           >
             شما دسترسی خواندن وضعیت سرورها را ندارید.
           </p>
         ) : !resource.ok ? (
           <p
             role="status"
-            className="text-muted-foreground py-6 text-center text-sm"
+            className="py-6 text-center text-sm text-muted-foreground"
           >
             {resource.message}
           </p>
@@ -604,7 +446,7 @@ function ServerStatusCard({
               >
                 <div className="flex min-w-0 flex-col">
                   <span className="font-mono text-sm">{server.key}</span>
-                  <span className="text-muted-foreground text-xs">
+                  <span className="text-xs text-muted-foreground">
                     {server.type === "custom" ? "سرور اختصاصی" : "رسمی تلگرام"}
                     {server.last_error ? ` — ${server.last_error}` : ""}
                   </span>

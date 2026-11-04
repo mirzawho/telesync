@@ -7,9 +7,9 @@
 
 | Method | Path | Auth conditions | Success |
 | --- | --- | --- | --- |
-| DELETE | `/api/v1/local/wordpress/{id}` | 4 | `200` |
-| GET | `/api/v1/local/wordpress/{id}` | — | — |
-| PATCH | `/api/v1/local/wordpress/{id}` | 6 | — |
+| DELETE | `/api/v1/local/wordpress/{id}` | 3 | `200` |
+| GET | `/api/v1/local/wordpress/{id}` | 4 | `200` |
+| PATCH | `/api/v1/local/wordpress/{id}` | 5 | — |
 
 ## DELETE
 
@@ -22,7 +22,6 @@
 - `actorAuth(r).Global(channelstore.PermissionWordPressManage)  (wordpress.go:deleteWordPressSite)`
 - `authr.Allowed(kind, action, localID)  (access.go:visible)`
 - `authr.CanList(kind)  (access.go:visible)`
-- `authr.Global(channelstore.PermissionWordPressManage)  (wordpress.go:siteViewer)`
 
 What these mean for who may call the route is in the authentication paragraph; the conditions are checked, not interpreted.
 
@@ -87,8 +86,18 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 </details>
 ## GET
 
-- **Handler:** `Server.` ()
+- **Handler:** `Server.getWordPressSite` (wordpress.go)
+- **Success:** `writeJSON` with `envelope{ Data: map[string]any{"site": view}, Meta: metaFor(requestID, s.cfg.Now()), }`, status `StatusOK (200)`
 - **Documentation:** [wordpress](../../manual/components/wordpress.md)
+
+### Authorization conditions in the source
+
+- `actorAuth(r).Global(channelstore.PermissionCategoriesCreate)  (categories.go:categories)`
+- `authr.Allowed(kind, action, localID)  (access.go:visible)`
+- `authr.CanList(channelstore.KindCategory)  (categories.go:visibleCategories)`
+- `authr.CanList(kind)  (access.go:visible)`
+
+What these mean for who may call the route is in the authentication paragraph; the conditions are checked, not interpreted.
 
 ### Responses observed with an invalid probe value
 
@@ -160,9 +169,8 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 - `actorAuth(r).Global(channelstore.PermissionCategoriesCreate)  (categories.go:categories)`
 - `actorAuth(r).Global(channelstore.PermissionWordPressManage)  (wordpress.go:updateWordPressSite)`
 - `authr.Allowed(kind, action, localID)  (access.go:visible)`
-- `authr.CanList(channelstore.KindCategory)  (categories.go:listCategories)`
+- `authr.CanList(channelstore.KindCategory)  (categories.go:visibleCategories)`
 - `authr.CanList(kind)  (access.go:visible)`
-- `authr.Global(channelstore.PermissionWordPressManage)  (wordpress.go:siteViewer)`
 
 What these mean for who may call the route is in the authentication paragraph; the conditions are checked, not interpreted.
 

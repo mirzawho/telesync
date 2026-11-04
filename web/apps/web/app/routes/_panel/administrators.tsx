@@ -1,7 +1,6 @@
 import {
   Link,
   redirect,
-  useFetcher,
   useNavigation,
   useSearchParams,
   useSubmit,
@@ -9,7 +8,12 @@ import {
 import { MoreHorizontalIcon, PlusIcon, UserCogIcon } from "lucide-react"
 import * as React from "react"
 
-import { MultiPicker } from "@/components/multi-picker"
+import {
+  ChangeAdministratorPasswordDialog,
+  CreateAdministratorDialog,
+  EditAdministratorDialog,
+} from "@/components/administrators/administrator-dialogs"
+import { AdministratorPermissionsDialog } from "@/components/administrators/permissions-dialog"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { PageHeader } from "@/components/page-header"
 import { PageError, PageShell, pageMeta, section } from "@/lib/page"
@@ -19,14 +23,6 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/states"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@workspace/ui/components/dialog"
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -34,23 +30,37 @@ import {
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
 import {
-  Field,
-  FieldControl,
-  FieldDescription,
-  FieldError,
-  FieldLabel,
-} from "@workspace/ui/components/field"
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@workspace/ui/components/table"
+import { useToast } from "@workspace/ui/components/toast"
 
 import { ApiError, apiRequest } from "@/lib/api"
+import {
+  catalogFromForm,
+  draftFromForm,
+  resourceGrants,
+  type PermissionsPayload,
+} from "@/lib/admin-permissions"
+import {
+  createUserBody,
+  describeWriteFailure,
+  passwordBody,
+  updateUserBody,
+  type AdministratorFieldErrors,
+} from "@/lib/admin-users"
 import { LOGIN_REDIRECT_TO, listAll, requireSession } from "@/lib/session"
 import { strip, requestURL } from "@/path"
 import type {
   Category,
   Channel,
   GlobalPermission,
-  Permissions,
-  ResourcePermissions,
   User,
+  WordPressSite,
 } from "@/lib/types"
 
 import type { Route } from "./+types/administrators"
@@ -63,54 +73,6 @@ interface UserList {
 
 interface UserResponse {
   user: User
-}
-
-// The valid global permissions, with Persian labels.
-const globalPermissionOptions: {
-  value: GlobalPermission
-  label: string
-}[] = [
-  { value: "users.view", label: "مشاهده مدیرها" },
-  { value: "users.manage", label: "مدیریت مدیرها" },
-  { value: "channels.view", label: "مشاهده کانال‌ها" },
-  { value: "channels.create", label: "مدیریت کانال‌ها" },
-  { value: "categories.view", label: "مشاهده دسته‌بندی‌ها" },
-  { value: "categories.create", label: "مدیریت دسته‌بندی‌ها" },
-  { value: "wordpress.view", label: "مشاهده سایت‌های وردپرسی" },
-  { value: "wordpress.create", label: "مدیریت سایت‌های وردپرسی" },
-  { value: "servers.view", label: "مشاهده وضعیت سرورهای تلگرام" },
-  { value: "content.publish", label: "ارسال و انتشار محتوا" },
-]
-
-// A managing permission needs its viewing permission; the API refuses a set
-// that has one without the other.
-const manageNeedsView: Partial<Record<GlobalPermission, GlobalPermission>> = {
-  "users.manage": "users.view",
-  "channels.create": "channels.view",
-  "categories.create": "categories.view",
-  "wordpress.create": "wordpress.view",
-}
-
-// withViewDependencies adds the view permission a managing permission needs and
-// drops a managing permission whose view permission is gone.
-function withViewDependencies(selected: Iterable<GlobalPermission>) {
-  const out = new Set(selected)
-  for (;;) {
-    let changed = false
-    for (const [manage, view] of Object.entries(manageNeedsView)) {
-      if (out.has(manage as GlobalPermission) && !out.has(view)) {
-        out.add(view as GlobalPermission)
-        changed = true
-      }
-      if (
-        !out.has(view as GlobalPermission) &&
-        out.delete(manage as GlobalPermission)
-      ) {
-        changed = true
-      }
-    }
-    if (!changed) return out
-  }
 }
 
 // The permissions dialog's boxes are rendered from React state, not from the
@@ -202,12 +164,6 @@ export async function clientLoader({
   }
 }
 
-interface FieldErrors {
-  fullname?: string
-  username?: string
-  password?: string
-}
-
 interface AdminActionData {
   error?: string
   intent?: string
@@ -217,26 +173,25 @@ interface AdminActionData {
     username?: string
     is_active?: string
   }
-  fieldErrors?: FieldErrors
+  fieldErrors?: AdministratorFieldErrors
   // Successful permission load, served through the permissions fetcher.
-  permissions?: Permissions
+  permissions?: PermissionsPayload
   permissionsError?: string
   // The catalog the pickers choose from; null when it could not be loaded or
   // was not asked for.
   channels?: Channel[] | null
   categories?: Category[] | null
-}
-
-interface PermissionsPayload {
-  global: string[]
-  channels: ResourcePermissions[]
-  categories: ResourcePermissions[]
+  // The WordPress sites this administrator may see. Unlike the other two there
+  // is no /auth/me access flag for them, so the listing itself decides (it
+  // answers 403 when none is visible) and null means "not loaded".
+  sites?: WordPressSite[] | null
 }
 
 const intents = new Set([
   "create",
   "update",
   "delete",
+  "password",
   "permissions",
   "permissions-load",
 ])
@@ -245,75 +200,9 @@ function userPath(id: number) {
   return `/local/users/${id}`
 }
 
-// checkedGlobals reads the selected global permissions. The dialog renders its
-// checkboxes from React state, so on submit they are not the DOM's own form
-// controls and the page posts the whole selection as one JSON entry under the
-// form's own field name; an entry per box is read too. A permission posted
-// both ways counts once.
-function checkedGlobals(form: FormData): GlobalPermission[] {
-  const out = new Set<GlobalPermission>()
-  const known = (value: unknown): value is GlobalPermission =>
-    typeof value === "string" &&
-    globalPermissionOptions.some((option) => option.value === value)
-  for (const raw of form.getAll("global_permissions")) {
-    if (known(raw)) {
-      out.add(raw)
-      continue
-    }
-    let posted: unknown
-    try {
-      posted = JSON.parse(String(raw))
-    } catch {
-      continue
-    }
-    if (Array.isArray(posted)) {
-      for (const value of posted) if (known(value)) out.add(value)
-    }
-  }
-  return [...withViewDependencies(out)]
-}
-
-// pickerIDs reads a picker's JSON list of local ids.
-function pickerIDs(form: FormData, field: string): number[] {
-  let posted: unknown
-  try {
-    posted = JSON.parse(String(form.get(field) ?? "[]"))
-  } catch {
-    return []
-  }
-  if (!Array.isArray(posted)) return []
-  return posted.filter(
-    (value): value is number => Number.isInteger(value) && value > 0
-  )
-}
-
-// viewOnlyGrants turns picked ids into per-resource grant rows: the picked
-// items are the ones the manager may see; none picked means every item.
-function viewOnlyGrants(form: FormData, field: "channel_ids" | "category_ids") {
-  const idKey = field === "channel_ids" ? "channel_id" : "category_id"
-  return pickerIDs(form, field).map((id) => ({
-    [idKey]: id,
-    permissions: { view: "allow" },
-  }))
-}
-
 function parseId(raw: FormDataEntryValue | null): number | null {
   const value = Number(raw)
   return Number.isInteger(value) && value > 0 ? value : null
-}
-
-// The PUT replaces the whole permission set, so the loaded per-resource grants
-// are converted back into the PUT shape unchanged. `view` etc. are passed
-// through as the API sent them ("allow"/"deny"); only present keys are sent.
-function toPutShape(rows: ResourcePermissions[]): Record<string, string>[] {
-  return rows.map((row) => {
-    const permissions: Record<string, string> = {}
-    for (const key of ["view", "update", "delete"] as const) {
-      const value = row[key]
-      if (value) permissions[key] = value
-    }
-    return permissions
-  })
 }
 
 export async function clientAction({
@@ -345,39 +234,53 @@ export async function clientAction({
   try {
     switch (intent) {
       case "create": {
-        const fieldErrors: FieldErrors = {}
-        if (!fullname) fieldErrors.fullname = "نام کامل الزامی است."
+        const fieldErrors: AdministratorFieldErrors = {}
+        if (!fullname) fieldErrors.fullname = "نام مستعار الزامی است."
         if (!username) fieldErrors.username = "نام کاربری الزامی است."
         if (password.length < 8)
           fieldErrors.password = "رمز عبور باید دست‌کم ۸ نویسه باشد."
         if (Object.keys(fieldErrors).length > 0) {
           return { error: "فرم را کامل کنید.", intent, values, fieldErrors }
         }
+        // The body always carries is_active: a new account is created active
+        // and the dialog offers no other choice.
         await apiRequest<UserResponse>("POST", "/local/users", {
           token,
-          body: { fullname, username, password, is_active: isActive },
+          body: createUserBody({
+            fullname,
+            username,
+            password,
+          }),
         })
         return redirect(strip(requestURL(request).pathname))
       }
       case "update": {
-        const fieldErrors: FieldErrors = {}
-        if (!fullname) fieldErrors.fullname = "نام کامل الزامی است."
+        const fieldErrors: AdministratorFieldErrors = {}
+        if (!fullname) fieldErrors.fullname = "نام مستعار الزامی است."
         if (!username) fieldErrors.username = "نام کاربری الزامی است."
-        if (password && password.length < 8)
+        if (Object.keys(fieldErrors).length > 0) {
+          return { error: "فرم را کامل کنید.", intent, values, fieldErrors }
+        }
+        // No password here, ever: an empty password field in a profile body is
+        // not "leave it alone", and the password has its own intent below.
+        await apiRequest<UserResponse>("PUT", userPath(id as number), {
+          token,
+          body: updateUserBody({ fullname, username, is_active: isActive }),
+        })
+        return redirect(strip(requestURL(request).pathname))
+      }
+      case "password": {
+        const fieldErrors: AdministratorFieldErrors = {}
+        if (password.length < 8)
           fieldErrors.password = "رمز عبور باید دست‌کم ۸ نویسه باشد."
         if (Object.keys(fieldErrors).length > 0) {
           return { error: "فرم را کامل کنید.", intent, values, fieldErrors }
         }
-        // An empty password field means "leave the password unchanged".
-        const body: Record<string, unknown> = {
-          fullname,
-          username,
-          is_active: isActive,
-        }
-        if (password) body.password = password
+        // The API has no password route: PUT with the password and nothing else
+        // is the password change, and leaves every other field untouched.
         await apiRequest<UserResponse>("PUT", userPath(id as number), {
           token,
-          body,
+          body: passwordBody(password),
         })
         return redirect(strip(requestURL(request).pathname))
       }
@@ -395,10 +298,13 @@ export async function clientAction({
           userPath(id as number),
           { token }
         )
-        const permissions = data.user.permissions ?? {
-          global: [],
-          channels: [],
-          categories: [],
+        const permissions: PermissionsPayload = {
+          global: data.user.permissions?.global ?? [],
+          channels: data.user.permissions?.channels ?? [],
+          categories: data.user.permissions?.categories ?? [],
+          // Omitted when the shape carried no field, so a save that ran against
+          // such a shape posts no site list at all rather than revoking them.
+          wordpress: data.user.permissions?.wordpress,
         }
         // The pickers need the whole catalog, not just the rows the subject may
         // see. Loaded only when the dialog can show a picker at all.
@@ -406,7 +312,11 @@ export async function clientAction({
           me.access?.channels || permissions.channels.length > 0
         const canPickCategories =
           me.access?.categories || permissions.categories.length > 0
-        const [channels, categories] = await Promise.all([
+        // WordPress sits behind no /auth/me access flag: the listing itself is
+        // the only answer to "may this administrator see sites". A refusal
+        // (403, or an unconfigured store) becomes a null catalog and the save
+        // then keeps whatever is stored.
+        const [channels, categories, sites] = await Promise.all([
           canPickChannels
             ? pickOrNull(
                 listAll<Channel>(
@@ -425,11 +335,20 @@ export async function clientAction({
                 )
               )
             : null,
+          // The collection is not paginated: GET /local/wordpress answers every
+          // visible site and refuses page/per_page as unknown query parameters,
+          // so listAll must not be used here.
+          pickOrNull(
+            apiRequest<{ sites: WordPressSite[] }>("GET", "/local/wordpress", {
+              token,
+            }).then((result) => ({ rows: result.data.sites ?? [] }))
+          ),
         ])
         return {
           permissions,
           channels,
           categories,
+          sites,
         }
       }
       default: {
@@ -443,23 +362,36 @@ export async function clientAction({
         if (!me.access?.users) {
           return { error: "شما مجوز مدیریت دسترسی‌ها را ندارید.", intent }
         }
-        const globals = checkedGlobals(form)
-        const channelPermissions = globals.includes("channels.view")
-          ? viewOnlyGrants(form, "channel_ids")
-          : []
-        const categoryPermissions = globals.includes("categories.view")
-          ? viewOnlyGrants(form, "category_ids")
-          : []
+        const draft = draftFromForm(form)
+        const body: Record<string, unknown> = {
+          global_permissions: draft.globals,
+          channel_permissions: resourceGrants(
+            draft,
+            "channels",
+            catalogFromForm(form, "channels")
+          ),
+          category_permissions: resourceGrants(
+            draft,
+            "categories",
+            catalogFromForm(form, "categories")
+          ),
+        }
+        // WordPress is optional on the PUT: `wordpress_permissions` present
+        // replaces the stored per-site grants (even as []), absent keeps them.
+        // The form posts `site_ids` only when it has a per-site shape to edit.
+        if (draft.sitesEditable) {
+          body.wordpress_permissions = resourceGrants(
+            draft,
+            "wordpress",
+            catalogFromForm(form, "wordpress")
+          )
+        }
         await apiRequest<unknown>(
           "PUT",
           `${userPath(id as number)}/permissions`,
           {
             token,
-            body: {
-              global_permissions: globals,
-              channel_permissions: channelPermissions,
-              category_permissions: categoryPermissions,
-            },
+            body,
           }
         )
         return redirect(strip(requestURL(request).pathname))
@@ -474,8 +406,10 @@ export async function clientAction({
       if (error.isForbidden) {
         return { error: "شما مجوز انجام این عمل را ندارید.", intent, values }
       }
-      // 409: a duplicate username, or "the last active administrator".
-      return { error: error.message, intent, values }
+      // A refused write says why it refused. The two this page can cause are
+      // phrased for the field they belong to — a taken username goes on the
+      // username field, not into a box above the form.
+      return { ...describeWriteFailure(intent, error.message), intent, values }
     }
     if (error instanceof SyntaxError) {
       return { error: "داده دسترسی نامعتبر است.", intent }
@@ -494,6 +428,7 @@ export const handle = section("مدیرها")
 type DialogState =
   | { kind: "create" }
   | { kind: "edit"; user: User }
+  | { kind: "password"; user: User }
   | { kind: "permissions"; user: User }
   | null
 
@@ -510,10 +445,21 @@ export default function Administrators({
   actionData,
 }: Route.ComponentProps) {
   const navigation = useNavigation()
+  const { toast } = useToast()
   const submit = useSubmit()
   const [searchParams, setSearchParams] = useSearchParams()
   const submitting = navigation.state === "submitting"
   const loading = navigation.state === "loading"
+  // The intent of the page-level submit in flight, read back when it finishes
+  // to say what was saved. Successful actions answer with a redirect, so the
+  // result itself carries no success message.
+  const pendingIntent = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    const formData = navigation.formData
+    if (formData) {
+      pendingIntent.current = String(formData.get("intent") ?? "")
+    }
+  }, [navigation.formData])
 
   const [dialog, setDialog] = React.useState<DialogState>(null)
   const [deleting, setDeleting] = React.useState<User | null>(null)
@@ -532,14 +478,13 @@ export default function Administrators({
         : undefined
     if (actionData.intent === "create") {
       setDialog({ kind: "create" })
-    } else if (
-      known &&
-      (actionData.intent === "update" || actionData.intent === "permissions")
-    ) {
-      setDialog({
-        kind: actionData.intent === "update" ? "edit" : "permissions",
-        user: known,
-      })
+    } else if (known) {
+      if (actionData.intent === "update")
+        setDialog({ kind: "edit", user: known })
+      else if (actionData.intent === "password")
+        setDialog({ kind: "password", user: known })
+      else if (actionData.intent === "permissions")
+        setDialog({ kind: "permissions", user: known })
     }
   }, [actionData, loaderData])
 
@@ -550,9 +495,37 @@ export default function Administrators({
     if (wasSubmitting.current && !submitting && !actionData?.error) {
       setDialog(null)
       setDeleting(null)
+      // A redirect has no payload, so the finished intent names the result.
+      const intent = pendingIntent.current
+      if (intent === "create")
+        toast({ variant: "success", title: "مدیر جدید ساخته شد." })
+      else if (intent === "update")
+        toast({ variant: "success", title: "تغییرات مدیر ذخیره شد." })
+      else if (intent === "password")
+        toast({ variant: "success", title: "رمز عبور مدیر تغییر کرد." })
+      else if (intent === "delete")
+        toast({ variant: "success", title: "مدیر حذف شد." })
+      else if (intent === "permissions")
+        toast({ variant: "success", title: "دسترسی‌ها ذخیره شد." })
+      pendingIntent.current = null
     }
     wasSubmitting.current = submitting
-  }, [submitting, actionData])
+  }, [submitting, actionData, toast])
+
+  // Every refusal is also a toast, so it is read without hunting for the open
+  // dialog; the form keeps showing the message where the work was done.
+  const toastedError = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (!actionData?.error) return
+    const key = `${actionData.intent ?? ""}:${actionData.error}`
+    if (toastedError.current === key) return
+    toastedError.current = key
+    toast({
+      variant: "error",
+      title: "عملیات انجام نشد.",
+      description: actionData.error,
+    })
+  }, [actionData, toast])
 
   const onSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -563,12 +536,25 @@ export default function Administrators({
     setSearchParams(next)
   }
 
+  // The action names what was attempted and the dialog state names what is
+  // open, and the two are not spelled alike: the edit dialog's intent is
+  // "update". Matching them by string equality left that dialog showing a
+  // refused save as a bare toast with an empty form, so the intent is mapped.
+  const dialogKindFor: Record<string, string> = {
+    create: "create",
+    update: "edit",
+    password: "password",
+    permissions: "permissions",
+  }
   const dialogError =
-    dialog !== null && actionData?.error && actionData.intent === dialog.kind
+    dialog !== null &&
+    actionData?.error &&
+    dialogKindFor[actionData.intent ?? ""] === dialog.kind
       ? actionData.error
       : undefined
   const deleteError =
     deleting && actionData?.intent === "delete" ? actionData.error : null
+  const meId = loaderData.status === "ok" ? loaderData.meId : 0
 
   return (
     <div className="flex flex-col gap-6">
@@ -607,9 +593,6 @@ export default function Administrators({
               placeholder="جستجوی مدیر…"
               className="w-full sm:w-72"
             />
-            <Button type="submit" variant="outline" size="sm">
-              جستجو
-            </Button>
             {loaderData.q && (
               <Button
                 type="button"
@@ -641,82 +624,17 @@ export default function Administrators({
                 }
               />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-start text-xs text-muted-foreground">
-                      <th
-                        scope="col"
-                        className="h-10 px-3 text-start font-medium"
-                      >
-                        نام کامل
-                      </th>
-                      <th
-                        scope="col"
-                        className="h-10 px-3 text-start font-medium"
-                      >
-                        نام کاربری
-                      </th>
-                      <th
-                        scope="col"
-                        className="h-10 px-3 text-start font-medium"
-                      >
-                        وضعیت
-                      </th>
-                      <th
-                        scope="col"
-                        className="h-10 px-3 text-start font-medium"
-                      >
-                        تاریخ ایجاد
-                      </th>
-                      <th scope="col" className="h-10 w-12 px-3">
-                        <span className="sr-only">عملیات</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {loaderData.users.map((user) => (
-                      <tr
-                        key={user.id}
-                        className="border-b last:border-0 hover:bg-muted/50"
-                      >
-                        <td className="px-3 py-3 font-medium">
-                          {user.fullname}
-                        </td>
-                        <td
-                          className="px-3 py-3 text-muted-foreground"
-                          dir="ltr"
-                        >
-                          {user.username}
-                        </td>
-                        <td className="px-3 py-3">
-                          {user.is_active ? (
-                            <Badge variant="success">فعال</Badge>
-                          ) : (
-                            <Badge variant="muted">غیرفعال</Badge>
-                          )}
-                        </td>
-                        <td className="px-3 py-3 text-muted-foreground">
-                          {faDateTime(user.created_at)}
-                        </td>
-                        <td className="px-3 py-3 text-end">
-                          {loaderData.canManage && (
-                            <UserMenu
-                              user={user}
-                              self={user.id === loaderData.meId}
-                              onEdit={() => setDialog({ kind: "edit", user })}
-                              onPermissions={() =>
-                                setDialog({ kind: "permissions", user })
-                              }
-                              onDelete={() => setDeleting(user)}
-                            />
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <AdministratorsTable
+                users={loaderData.users}
+                canManage={loaderData.canManage}
+                meId={meId}
+                onEdit={(user) => setDialog({ kind: "edit", user })}
+                onPassword={(user) => setDialog({ kind: "password", user })}
+                onPermissions={(user) =>
+                  setDialog({ kind: "permissions", user })
+                }
+                onDelete={setDeleting}
+              />
             )}
           </div>
 
@@ -747,21 +665,67 @@ export default function Administrators({
         </>
       )}
 
-      {dialog?.kind === "create" || dialog?.kind === "edit" ? (
-        <UserDialog
-          key={dialog.kind === "edit" ? `edit-${dialog.user.id}` : "create"}
-          user={dialog.kind === "edit" ? dialog.user : null}
+      {dialog?.kind === "create" ? (
+        <CreateAdministratorDialog
+          key="create"
+          open
+          onOpenChange={(open) => !open && setDialog(null)}
           error={dialogError}
           fieldErrors={actionData?.error ? actionData.fieldErrors : undefined}
           pending={submitting}
-          defaultValues={actionData?.values}
+          defaultValues={
+            actionData?.intent === "create" ? actionData.values : undefined
+          }
           onClose={() => setDialog(null)}
-          onSubmit={(values) => submit(values, { method: "post" })}
+          onSubmit={(values) =>
+            submit({ intent: "create", ...values }, { method: "post" })
+          }
+        />
+      ) : null}
+
+      {dialog?.kind === "edit" ? (
+        <EditAdministratorDialog
+          key={`edit-${dialog.user.id}`}
+          open
+          onOpenChange={(open) => !open && setDialog(null)}
+          user={dialog.user}
+          self={dialog.user.id === meId}
+          error={dialogError}
+          fieldErrors={actionData?.error ? actionData.fieldErrors : undefined}
+          pending={submitting}
+          defaultValues={
+            actionData?.intent === "update" ? actionData.values : undefined
+          }
+          onClose={() => setDialog(null)}
+          onSubmit={(values) =>
+            submit(
+              { intent: "update", id: String(dialog.user.id), ...values },
+              { method: "post" }
+            )
+          }
+        />
+      ) : null}
+
+      {dialog?.kind === "password" ? (
+        <ChangeAdministratorPasswordDialog
+          key={`password-${dialog.user.id}`}
+          open
+          onOpenChange={(open) => !open && setDialog(null)}
+          user={dialog.user}
+          error={dialogError}
+          pending={submitting}
+          onClose={() => setDialog(null)}
+          onSubmit={(password) =>
+            submit(
+              { intent: "password", id: String(dialog.user.id), password },
+              { method: "post" }
+            )
+          }
         />
       ) : null}
 
       {dialog?.kind === "permissions" ? (
-        <PermissionsDialog
+        <AdministratorPermissionsDialog
           key={`permissions-${dialog.user.id}`}
           user={dialog.user}
           error={dialogError}
@@ -794,16 +758,91 @@ export default function Administrators({
   )
 }
 
+// Physical left, not RTL start: the actions column stays pinned while the
+// table scrolls under it, and bg-background keeps text from showing through.
+const ACTIONS_HEAD = "sticky left-0 z-20 w-12 bg-background text-end"
+const ACTIONS_CELL = "sticky left-0 z-10 bg-background text-end"
+
+// Single-line cells keep row heights even; the shared Table's container scrolls
+// instead of the page.
+export function AdministratorsTable({
+  users,
+  canManage,
+  meId,
+  onEdit,
+  onPassword,
+  onPermissions,
+  onDelete,
+}: {
+  users: User[]
+  canManage: boolean
+  meId: number
+  onEdit: (user: User) => void
+  onPassword: (user: User) => void
+  onPermissions: (user: User) => void
+  onDelete: (user: User) => void
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>نام مستعار</TableHead>
+          <TableHead>نام کاربری</TableHead>
+          <TableHead>وضعیت</TableHead>
+          <TableHead>تاریخ ایجاد</TableHead>
+          <TableHead className={ACTIONS_HEAD}>
+            <span className="sr-only">عملیات</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {users.map((user) => (
+          <TableRow key={user.id}>
+            <TableCell className="font-medium">{user.fullname}</TableCell>
+            <TableCell className="text-muted-foreground" dir="ltr">
+              {user.username}
+            </TableCell>
+            <TableCell>
+              {user.is_active ? (
+                <Badge variant="success">فعال</Badge>
+              ) : (
+                <Badge variant="muted">غیرفعال</Badge>
+              )}
+            </TableCell>
+            <TableCell className="text-muted-foreground">
+              {faDateTime(user.created_at)}
+            </TableCell>
+            <TableCell className={ACTIONS_CELL}>
+              {canManage && (
+                <UserMenu
+                  user={user}
+                  self={user.id === meId}
+                  onEdit={() => onEdit(user)}
+                  onPassword={() => onPassword(user)}
+                  onPermissions={() => onPermissions(user)}
+                  onDelete={() => onDelete(user)}
+                />
+              )}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
 function UserMenu({
   user,
   self,
   onEdit,
+  onPassword,
   onPermissions,
   onDelete,
 }: {
   user: User
   self: boolean
   onEdit: () => void
+  onPassword: () => void
   onPermissions: () => void
   onDelete: () => void
 }) {
@@ -822,6 +861,7 @@ function UserMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem onClick={onEdit}>ویرایش</DropdownMenuItem>
+        <DropdownMenuItem onClick={onPassword}>تغییر رمز عبور</DropdownMenuItem>
         <DropdownMenuItem
           disabled={self}
           title={
@@ -873,436 +913,6 @@ function PageLink({
   )
 }
 
-// ActiveSwitch is a role="switch" Button toggle: the only control the field
-// list allows for a boolean (no switch component is available here).
-function ActiveSwitch({
-  checked,
-  onChange,
-  id,
-}: {
-  checked: boolean
-  onChange: (next: boolean) => void
-  id: string
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        id={id}
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${
-          checked ? "border-primary bg-primary" : "border-input bg-muted"
-        }`}
-      >
-        <span
-          aria-hidden="true"
-          className={`block size-3.5 rounded-full bg-background shadow transition-transform ${
-            checked
-              ? "translate-x-4.5 rtl:-translate-x-4.5"
-              : "translate-x-0.5 rtl:-translate-x-0.5"
-          }`}
-        />
-      </button>
-      <span className="text-sm">{checked ? "فعال" : "غیرفعال"}</span>
-    </div>
-  )
-}
-
-function UserDialog({
-  user,
-  error,
-  fieldErrors,
-  pending,
-  defaultValues,
-  onClose,
-  onSubmit,
-}: {
-  user: User | null
-  error?: string
-  fieldErrors?: FieldErrors
-  pending: boolean
-  defaultValues?: AdminActionData["values"]
-  onClose: () => void
-  onSubmit: (values: Record<string, string>) => void
-}) {
-  const [fullname, setFullname] = React.useState(
-    user?.fullname ?? defaultValues?.fullname ?? ""
-  )
-  const [username, setUsername] = React.useState(
-    user?.username ?? defaultValues?.username ?? ""
-  )
-  const [password, setPassword] = React.useState("")
-  const [isActive, setIsActive] = React.useState(
-    user
-      ? user.is_active
-      : defaultValues?.is_active
-        ? defaultValues.is_active === "true"
-        : true
-  )
-  const [touched, setTouched] = React.useState(false)
-
-  const clientErrors: FieldErrors = {}
-  if (touched) {
-    if (!fullname.trim()) clientErrors.fullname = "نام کامل را وارد کنید."
-    if (!username.trim()) clientErrors.username = "نام کاربری را وارد کنید."
-    if (!user && password.length < 8)
-      clientErrors.password = "رمز عبور باید دست‌کم ۸ نویسه باشد."
-    if (user && password && password.length < 8)
-      clientErrors.password = "رمز عبور باید دست‌کم ۸ نویسه باشد."
-  }
-  const errors = { ...fieldErrors, ...clientErrors }
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{user ? "ویرایش مدیر" : "مدیر جدید"}</DialogTitle>
-          <DialogDescription>
-            {user
-              ? "برای نگه‌داشتن رمز فعلی، فیلد رمز را خالی بگذارید."
-              : "نام کاربری باید یکتا باشد و رمز عبور دست‌کم ۸ نویسه."}
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          className="flex flex-col gap-4"
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault()
-            setTouched(true)
-            if (
-              !fullname.trim() ||
-              !username.trim() ||
-              (!user && password.length < 8) ||
-              (password && password.length < 8)
-            ) {
-              return
-            }
-            onSubmit({
-              intent: user ? "update" : "create",
-              ...(user ? { id: String(user.id) } : {}),
-              fullname: fullname.trim(),
-              username: username.trim(),
-              password,
-              is_active: String(isActive),
-            })
-          }}
-        >
-          <Field>
-            <FieldLabel htmlFor="admin-fullname">نام کامل</FieldLabel>
-            <FieldControl
-              id="admin-fullname"
-              autoComplete="name"
-              value={fullname}
-              onChange={(event) => setFullname(event.target.value)}
-              onBlur={() => setTouched(true)}
-              required
-            />
-            {errors.fullname && <FieldError>{errors.fullname}</FieldError>}
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="admin-username">نام کاربری</FieldLabel>
-            <FieldControl
-              id="admin-username"
-              dir="ltr"
-              autoComplete="username"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              onBlur={() => setTouched(true)}
-              required
-            />
-            {errors.username && <FieldError>{errors.username}</FieldError>}
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="admin-password">
-              {user ? "رمز عبور جدید" : "رمز عبور"}
-            </FieldLabel>
-            <FieldControl
-              id="admin-password"
-              type="password"
-              dir="ltr"
-              autoComplete="new-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              onBlur={() => setTouched(true)}
-              required={!user}
-            />
-            {errors.password ? (
-              <FieldError>{errors.password}</FieldError>
-            ) : (
-              <FieldDescription>
-                {user ? "خالی بگذارید تا تغییر نکند." : "دست‌کم ۸ نویسه."}
-              </FieldDescription>
-            )}
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="admin-active">وضعیت حساب</FieldLabel>
-            <ActiveSwitch
-              id="admin-active"
-              checked={isActive}
-              onChange={setIsActive}
-            />
-            <FieldDescription>
-              مدیر غیرفعال نمی‌تواند وارد شود.
-            </FieldDescription>
-          </Field>
-          {error && (
-            <p
-              role="alert"
-              className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
-            >
-              {error}
-            </p>
-          )}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onClose}
-              disabled={pending}
-            >
-              انصراف
-            </Button>
-            <Button type="submit" disabled={pending}>
-              {pending ? "در حال ذخیره…" : "ذخیره"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function PermissionsDialog({
-  user,
-  error,
-  onClose,
-  onSave,
-}: {
-  user: User
-  error?: string
-  onClose: () => void
-  onSave: (form: Record<string, string>) => void
-}) {
-  const fetcher = useFetcher<AdminActionData>()
-  const navigation = useNavigation()
-  const pending = navigation.state === "submitting"
-  const [loaded, setLoaded] = React.useState<PermissionsPayload | null>(null)
-  const [globals, setGlobals] = React.useState<Set<GlobalPermission>>(new Set())
-  const [channelIDs, setChannelIDs] = React.useState<number[]>([])
-  const [categoryIDs, setCategoryIDs] = React.useState<number[]>([])
-
-  // Load the current permissions once when the dialog opens via the fetcher.
-  const requested = React.useRef(false)
-  const retry = () => loadPermissions(fetcher, user.id)
-  React.useEffect(() => {
-    if (!requested.current) {
-      requested.current = true
-      loadPermissions(fetcher, user.id)
-    }
-  }, [fetcher, user.id])
-
-  React.useEffect(() => {
-    if (fetcher.data?.permissions) {
-      const permissions = fetcher.data.permissions
-      setLoaded(permissions)
-      setGlobals(withViewDependencies(permissions.global as GlobalPermission[]))
-      // An allow row is a picked item when the manager also holds the global
-      // view permission; otherwise it is how a manager without it sees these.
-      setChannelIDs(pickedIDs(permissions.channels, "channel_id"))
-      setCategoryIDs(pickedIDs(permissions.categories, "category_id"))
-    }
-  }, [fetcher.data])
-
-  const toggle = (value: GlobalPermission) => {
-    setGlobals((previous) => {
-      const next = new Set(previous)
-      if (next.has(value)) next.delete(value)
-      else next.add(value)
-      return withViewDependencies(next)
-    })
-  }
-
-  const missingCatalog = fetcher.data && !fetcher.data.permissionsError
-  const channels = fetcher.data?.channels
-  const categories = fetcher.data?.categories
-  const loadError = fetcher.data?.permissionsError
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>دسترسی‌های {user.fullname}</DialogTitle>
-          <DialogDescription>
-            دسترسی‌های عمومی را انتخاب کنید. مدیریت هر بخش نیازمند دسترسی مشاهده
-            همان بخش است و خودکار افزوده می‌شود.
-          </DialogDescription>
-        </DialogHeader>
-
-        {!loaded ? (
-          loadError ? (
-            <div className="flex flex-col gap-3">
-              <p
-                role="alert"
-                className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
-              >
-                {loadError}
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={retry}
-                className="self-start"
-              >
-                تلاش دوباره
-              </Button>
-            </div>
-          ) : (
-            <LoadingState label="در حال بارگذاری دسترسی‌ها…" />
-          )
-        ) : (
-          <form
-            className="flex max-h-[65vh] flex-col gap-5 overflow-y-auto pe-1"
-            id={`permissions-form-${user.id}`}
-            onSubmit={(event) => {
-              event.preventDefault()
-              onSave({
-                intent: "permissions",
-                id: String(user.id),
-                global_permissions: JSON.stringify([...globals]),
-                channel_ids: JSON.stringify(channelIDs),
-                category_ids: JSON.stringify(categoryIDs),
-              })
-            }}
-          >
-            <fieldset className="flex flex-col gap-2">
-              <legend className="mb-1 text-sm font-medium">
-                دسترسی‌های عمومی
-              </legend>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {globalPermissionOptions.map((option) => {
-                  const inputId = `perm-${user.id}-${option.value.replace(".", "-")}`
-                  return (
-                    <label
-                      key={option.value}
-                      htmlFor={inputId}
-                      className="flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 hover:bg-muted/50"
-                    >
-                      <input
-                        id={inputId}
-                        type="checkbox"
-                        name="global_permissions"
-                        value={option.value}
-                        checked={globals.has(option.value)}
-                        disabled={
-                          manageNeedsView[option.value] !== undefined &&
-                          !globals.has(manageNeedsView[option.value]!)
-                        }
-                        onChange={() => toggle(option.value)}
-                        className="mt-0.5 size-4 accent-primary"
-                      />
-                      <span className="text-sm">{option.label}</span>
-                    </label>
-                  )
-                })}
-              </div>
-            </fieldset>
-
-            {globals.has("channels.view") && (
-              <PermissionPicker
-                title="کانال‌هایی که این مدیر می‌بیند"
-                emptyText={
-                  missingCatalog
-                    ? "فهرست کانال‌ها در دسترس نیست."
-                    : "کانالی یافت نشد."
-                }
-                placeholder="همه کانال‌ها"
-                items={channels ?? []}
-                value={channelIDs}
-                onValueChange={setChannelIDs}
-                labelOf={(channel) => channel.title || channel.client_key}
-              />
-            )}
-            {globals.has("categories.view") && (
-              <PermissionPicker
-                title="دسته‌بندی‌هایی که این مدیر می‌بیند"
-                emptyText={
-                  missingCatalog
-                    ? "فهرست دسته‌بندی‌ها در دسترس نیست."
-                    : "دسته‌بندی‌ای یافت نشد."
-                }
-                placeholder="همه دسته‌بندی‌ها"
-                items={categories ?? []}
-                value={categoryIDs}
-                onValueChange={setCategoryIDs}
-                labelOf={(category) => category.name}
-              />
-            )}
-
-            {error && (
-              <p
-                role="alert"
-                className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
-              >
-                {error}
-              </p>
-            )}
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onClose}
-                disabled={pending}
-              >
-                انصراف
-              </Button>
-              <Button type="submit" disabled={pending}>
-                {pending ? "در حال ذخیره…" : "ذخیره دسترسی‌ها"}
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// PermissionPicker is a multi-select of the items a manager may see. Nothing
-// picked means every item; the picks are the exception list. Typing in its
-function PermissionPicker<T extends { id: number }>({
-  title,
-  placeholder,
-  emptyText,
-  items,
-  value,
-  onValueChange,
-  labelOf,
-}: {
-  title: string
-  placeholder: string
-  emptyText: string
-  items: T[]
-  value: number[]
-  onValueChange: (ids: number[]) => void
-  labelOf: (item: T) => string
-}) {
-  return (
-    <MultiPicker
-      id={`permission-picker-${title}`}
-      title={title}
-      description="خالی بگذارید تا به همه دسترسی داشته باشد؛ هر مورد انتخاب‌شده یعنی دسترسی فقط به همان موارد."
-      placeholder={placeholder}
-      emptyText={emptyText}
-      items={items}
-      value={value}
-      onValueChange={onValueChange}
-      labelOf={labelOf}
-    />
-  )
-}
-
 // pickOrNull resolves a catalog listing to its rows, or null when it could not
 // be loaded: the dialog then shows its picker empty rather than failing to
 // open because a side list did not arrive.
@@ -1312,38 +922,4 @@ async function pickOrNull<T>(listing: Promise<{ rows: T[] }>) {
   } catch {
     return null
   }
-}
-
-// pickedIDs turns stored per-resource rows into picker ids: the rows that allow
-// view. Saving rewrites the picker's rows with view alone, which is what this
-// dialog edits.
-function pickedIDs(
-  rows: ResourcePermissions[],
-  idKey: "channel_id" | "category_id"
-) {
-  const out: number[] = []
-  for (const row of rows) {
-    const id = row[idKey]
-    if (id && row.view === "allow") out.push(id)
-  }
-  return out
-}
-
-// loadPermissions asks this route's action (through a fetcher, without leaving
-// the page) for the user's current permissions.
-function loadPermissions(
-  // The fetcher's submit signature is identical on the client and server
-  // variants; a narrow structural type avoids depending on either.
-  fetcher: {
-    submit: (
-      data: Record<string, string>,
-      options: { method: "post" }
-    ) => Promise<unknown>
-  },
-  id: number
-) {
-  void fetcher.submit(
-    { intent: "permissions-load", id: String(id) },
-    { method: "post" }
-  )
 }

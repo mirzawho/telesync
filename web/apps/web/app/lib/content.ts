@@ -4,15 +4,11 @@
 // UTF-16 already, so `text.length` and `text.slice` work in exactly those
 // units — which is why the editor runs here and not against rune offsets.
 
-export interface Entity {
-  type: string
-  offset: number
-  length: number
-  url?: string
-  language?: string
-  user_id?: number
-  document_id?: number
-}
+import type { Entity } from "@/lib/types"
+
+// Entity is the API's formatting span; it lives with the other response shapes
+// and is re-exported here because the composing code is what consumes it.
+export type { Entity }
 
 export interface ParsedContent {
   /** The whole source text, untouched. */
@@ -134,6 +130,45 @@ export function parse(text: string, entities: Entity[] = []): ParsedContent {
 
 function utf16Len(s: string): number {
   return s.length
+}
+
+/**
+ * lexEntities reads back the spans a message's text can carry on its own.
+ *
+ * It is the other half of `parse`: where `parse` takes the spans Telegram
+ * reported, `lexEntities` finds the ones the finished text plainly says. A
+ * publishing draft needs both — the source's formatting spans while the body is
+ * still the source's, and these once the user has rewritten it and the old
+ * offsets no longer describe anything.
+ *
+ * Only hashtags, mentions, links and emails are produced: those are unambiguous
+ * in running text. A bold or italic span cannot be recovered from plain text and
+ * is never invented.
+ */
+export function lexEntities(text: string): Entity[] {
+  const found: Entity[] = []
+  for (const m of text.matchAll(HASHTAG_RE)) {
+    const whole = m[0]
+    const token = m[1]
+    const start = m.index! + whole.length - token.length
+    if (isInsideURL(text, start)) continue
+    found.push({ type: "hashtag", offset: start, length: utf16Len(token) })
+  }
+  for (const m of text.matchAll(MENTION_RE)) {
+    const whole = m[0]
+    const token = m[1]
+    const start = m.index! + whole.length - token.length
+    if (isInsideURL(text, start) || isInsideEmail(text, start)) continue
+    found.push({ type: "mention", offset: start, length: utf16Len(token) })
+  }
+  for (const m of text.matchAll(/https?:\/\/[^\s>]+/gi)) {
+    found.push({ type: "url", offset: m.index!, length: utf16Len(m[0]) })
+  }
+  for (const m of text.matchAll(/[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}/gu)) {
+    found.push({ type: "email", offset: m.index!, length: utf16Len(m[0]) })
+  }
+  found.sort((a, b) => a.offset - b.offset || a.length - b.length)
+  return found
 }
 
 /**

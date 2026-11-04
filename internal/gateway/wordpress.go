@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/mirza/telesync/internal/channelstore"
@@ -30,6 +31,9 @@ type WordPressClient interface {
 	UploadMedia(ctx context.Context, baseURL, username, password, filename, mimeType string, data []byte) (wordpress.MediaRef, error)
 	FindTag(ctx context.Context, baseURL, username, password, name string) (wordpress.TagRef, bool, error)
 	CreateTag(ctx context.Context, baseURL, username, password, name string) (wordpress.TagRef, error)
+	// ListTerms reads one page of a site's categories or tags, so a publishing
+	// form can offer the destination's own terms rather than guessing at them.
+	ListTerms(ctx context.Context, baseURL, username, password, taxonomy, search string, page, perPage int) (wordpress.TermPage, error)
 }
 
 // SecretBox seals a credential for storage and opens a stored one.
@@ -247,23 +251,41 @@ func (s *Server) wordpress(w http.ResponseWriter, r *http.Request, requestID str
 
 	raw := rest[1:]
 	if strings.Contains(raw, "/") {
-		// The only nested route is the publishing one: /{id}/posts.
-		if !strings.HasSuffix(raw, "/posts") {
-			s.notFound(w, requestID)
+		// Under a site there is the publishing route and the two taxonomy
+		// listings a publishing form needs. Nothing else is nested.
+		for _, nested := range []struct {
+			suffix string
+			method string
+		}{
+			{"/posts", http.MethodPost},
+			{"/categories", http.MethodGet},
+			{"/tags", http.MethodGet},
+		} {
+			if !strings.HasSuffix(raw, nested.suffix) {
+				continue
+			}
+			if r.Method != nested.method {
+				w.Header().Set("Allow", nested.method)
+				s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+					fmt.Sprintf("Use %s for /wordpress/{id}%s.", nested.method, nested.suffix), requestID)
+				return
+			}
+			id, err := parseID(strings.TrimSuffix(raw, nested.suffix))
+			if err != nil {
+				s.fail(w, http.StatusBadRequest, CodeInvalidInput, "id must be a positive integer.", requestID)
+				return
+			}
+			switch nested.suffix {
+			case "/posts":
+				s.publishWordPress(w, r, id, requestID)
+			case "/categories":
+				s.wordPressTerms(w, r, id, "categories", requestID)
+			default:
+				s.wordPressTerms(w, r, id, "tags", requestID)
+			}
 			return
 		}
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", http.MethodPost)
-			s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
-				"Publishing changes state and must be sent as POST.", requestID)
-			return
-		}
-		id, err := parseID(strings.TrimSuffix(raw, "/posts"))
-		if err != nil {
-			s.fail(w, http.StatusBadRequest, CodeInvalidInput, "id must be a positive integer.", requestID)
-			return
-		}
-		s.publishWordPress(w, r, id, requestID)
+		s.notFound(w, requestID)
 		return
 	}
 	// The method decides first, so an unsupported one is a 405 whatever the id
@@ -312,31 +334,89 @@ func (s *Server) wordpress(w http.ResponseWriter, r *http.Request, requestID str
 	}
 }
 
-// siteViewer authorizes one action on one site.
+// wordPressTerms serves GET /api/v1/local/wordpress/{id}/categories and /tags.
 //
-// A view is the visible() rule every resource follows: an explicit per-site
-// deny overrides the global view, and without the global view only an explicit
-// per-site view:allow admits the site. Updating or deleting a site is the
-// global manage right, unless that right is taken away for this site by an
-// explicit deny of the same action. Every write also needs the view: an
-// account that may not see a site may not change it.
-func siteViewer(authr *channelstore.Authorizer, action channelstore.Action, id int64) bool {
-	if action == channelstore.ActionView {
-		return visible(authr, channelstore.KindWordPress, channelstore.ActionView, id)
+// It reads the destination site's own taxonomy through the backend's WordPress
+// connection, so the browser never holds a WordPress credential and no
+// registered site is called from the page directly. The terms are the site's
+// rows: their ids mean something only on that site, which is why the form drops
+// them when the site changes.
+func (s *Server) wordPressTerms(w http.ResponseWriter, r *http.Request, id int64, taxonomy, requestID string) {
+	ctx := r.Context()
+	a := actorOf(r)
+	site, password, err := s.credentialFor(ctx, a, id)
+	if err != nil {
+		s.publishFailure(w, err, requestID)
+		return
 	}
-	if authr == nil || !authr.Global(channelstore.PermissionWordPressManage) {
-		return false
+
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	perPage, _ := strconv.Atoi(q.Get("per_page"))
+	search := strings.TrimSpace(q.Get("search"))
+
+	result, err := s.cfg.WordPressClient.ListTerms(ctx, site.URL, site.Username, password, taxonomy, search, page, perPage)
+	if err != nil {
+		s.publishFailure(w, mapWordPressReadError(err), requestID)
+		return
 	}
-	return explicitDeny(authr, channelstore.KindWordPress, action, id) != channelstore.EffectDeny
+
+	terms := result.Terms
+	if terms == nil {
+		terms = []wordpress.TermRef{}
+	}
+	writeJSON(w, http.StatusOK, envelope{
+		Data: map[string]any{
+			"terms": terms,
+			"page": map[string]any{
+				"page":        result.Page,
+				"per_page":    result.PerPage,
+				"total":       result.Total,
+				"total_pages": result.TotalPages,
+				"has_more":    result.Page < result.TotalPages,
+			},
+		},
+		Meta: metaFor(requestID, s.cfg.Now()),
+	})
 }
 
-// explicitDeny is the per-site effect the caller stored for action, or "" when
-// there is none.
-func explicitDeny(authr *channelstore.Authorizer, kind channelstore.ResourceKind, action channelstore.Action, id int64) channelstore.Effect {
-	if authr == nil {
-		return ""
+// mapWordPressReadError turns a read failure into the route's answer. A read
+// that the site refused is reported as what it is: it never becomes a
+// publishing failure, and no credential is mentioned in the answer.
+func mapWordPressReadError(err error) *publishError {
+	switch {
+	case errors.Is(err, wordpress.ErrUnauthorized):
+		return &publishError{http.StatusUnauthorized, CodePublishWordPressAuth,
+			"The WordPress credentials were refused."}
+	case errors.Is(err, wordpress.ErrForbidden):
+		return &publishError{http.StatusForbidden, CodePublishWordPressForbidden,
+			"The WordPress user may not read this taxonomy."}
+	case errors.Is(err, wordpress.ErrTimeout):
+		return &publishError{http.StatusGatewayTimeout, CodePublishWordPressTimeout,
+			"The WordPress site did not answer in time."}
+	case errors.Is(err, wordpress.ErrUnreachable), errors.Is(err, wordpress.ErrBlockedAddress):
+		return &publishError{http.StatusBadGateway, CodePublishWordPressUnreachable,
+			"The WordPress site could not be reached."}
+	case errors.Is(err, wordpress.ErrIncompatible):
+		return &publishError{http.StatusBadGateway, CodePublishWordPressIncompatible,
+			"The WordPress site did not answer as a REST API."}
 	}
-	return authr.EffectOf(kind, action, id)
+	return &publishError{http.StatusBadGateway, CodePublishFailed,
+		"The WordPress taxonomy could not be read."}
+}
+
+// siteViewer authorizes one action on one site.
+//
+// It is the visible() rule every resource follows: an explicit per-site
+// assignment decides, then the global permission, and an explicit deny takes
+// the write away with the view. Updating or deleting a site is the global
+// manage right, narrowed to the sites the caller was granted, and it also
+// needs the view: an account that may not see a site may not change it.
+//
+// Writing a site is additionally the global manage right at the route, which
+// is where a per-site grant is kept from replacing a credential on its own.
+func siteViewer(authr *channelstore.Authorizer, action channelstore.Action, id int64) bool {
+	return visible(authr, channelstore.KindWordPress, action, id)
 }
 
 func (s *Server) getWordPressSite(w http.ResponseWriter, r *http.Request, id int64, requestID string) {
@@ -365,7 +445,99 @@ func (s *Server) getWordPressSite(w http.ResponseWriter, r *http.Request, id int
 	})
 }
 
+// parseWordPressListQuery validates the list's search text and category filter.
+//
+// Unlike the paginated listings this collection has no page, per_page or q
+// parameter set of its own: the site list is returned in full and filtered
+// before the permissions drop what the caller may not see.
+func parseWordPressListQuery(values map[string][]string) (string, []int64, error) {
+	query := ""
+	for key, raw := range values {
+		if key == "category_ids" {
+			continue
+		}
+		if key != "q" {
+			return "", nil, errors.New("unknown query parameter " + strconv.Quote(key) + ".")
+		}
+		if len(raw) != 1 {
+			return "", nil, errors.New("q must be given exactly once.")
+		}
+		query = raw[0]
+	}
+	if len([]rune(query)) > channelstore.MaxCategoryDescriptionLen {
+		return "", nil, errors.New("q must be at most " +
+			strconv.Itoa(channelstore.MaxCategoryDescriptionLen) + " characters.")
+	}
+	categories, err := parseCategoryFilterIDs(values)
+	if err != nil {
+		return "", nil, err
+	}
+	return query, categories, nil
+}
+
+// wordpressSiteMatches applies the list's search text to the fields a
+// management list shows: the title and the site's own URL, which is where the
+// domain comes from. It is matched literally, ignoring case.
+func wordpressSiteMatches(rec channelstore.WordPressSite, q string) bool {
+	if q == "" {
+		return true
+	}
+	q = strings.ToLower(q)
+	domain := rec.URL
+	if u, err := url.Parse(rec.URL); err == nil && u.Hostname() != "" {
+		domain = u.Hostname()
+	}
+	return strings.Contains(strings.ToLower(rec.Title), q) ||
+		strings.Contains(strings.ToLower(rec.URL), q) ||
+		strings.Contains(strings.ToLower(domain), q)
+}
+
+// siteCategoryFilter builds the set of site ids a category filter admits, or
+// nil when there is no filter. An empty set is no filter, not "nothing".
+func (s *Server) siteCategoryFilter(ctx context.Context, ids []int64) (map[int64]bool, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	bySite := map[int64]bool{}
+	for _, categoryID := range ids {
+		// The category's own membership list is the one query that reads the
+		// link table; a site filed under any of the selected categories
+		// (OR semantics) is admitted.
+		rows, err := s.wordPressSiteCategoryRows(ctx, categoryID)
+		if err != nil {
+			return nil, err
+		}
+		for _, siteID := range rows {
+			bySite[siteID] = true
+		}
+	}
+	return bySite, nil
+}
+
+// wordPressCategoryMembers is the store's category membership listing for
+// sites. The gateway only needs it while filtering a list; a store without it
+// answers a category filter with a 503 rather than silently dropping the
+// filter and inventing a broader answer.
+type wordPressCategoryMembers interface {
+	SiteCategoryMembers(ctx context.Context, categoryID int64) ([]int64, error)
+}
+
+// wordPressSiteCategoryRows reads one category's site membership, or reports
+// that the store cannot answer the filter at all.
+func (s *Server) wordPressSiteCategoryRows(ctx context.Context, categoryID int64) ([]int64, error) {
+	members, ok := s.cfg.Channels.(wordPressCategoryMembers)
+	if !ok {
+		return nil, errors.New("WordPress site categories are not configured.")
+	}
+	return members.SiteCategoryMembers(ctx, categoryID)
+}
+
 func (s *Server) listWordPressSites(w http.ResponseWriter, r *http.Request, requestID string) {
+	query, categoryIDs, err := parseWordPressListQuery(r.URL.Query())
+	if err != nil {
+		s.fail(w, http.StatusBadRequest, CodeInvalidInput, err.Error(), requestID)
+		return
+	}
 	sites, err := s.cfg.WordPress.ListWordPressSites(r.Context())
 	if err != nil {
 		s.storeError(w, "list_wordpress_sites", err, requestID)
@@ -374,10 +546,23 @@ func (s *Server) listWordPressSites(w http.ResponseWriter, r *http.Request, requ
 	// The global view admits every site except one with an explicit
 	// view:deny; without it only a site with an explicit view:allow is
 	// listed. Filtering the slice is enough because the collection is not
-	// paginated, so no total or page ever counts a hidden site.
+	// paginated, so no total or page ever counts a hidden site. The search
+	// text and the category filter narrow the same slice first, so the
+	// answer is still the caller's own visibility and never a wider one.
+	filtered, err := s.siteCategoryFilter(r.Context(), categoryIDs)
+	if err != nil {
+		s.categoryError(w, err, requestID)
+		return
+	}
 	authr := actorAuth(r)
 	siteVisible := sites[:0]
 	for _, rec := range sites {
+		if !wordpressSiteMatches(rec, query) {
+			continue
+		}
+		if filtered != nil && !filtered[rec.ID] {
+			continue
+		}
 		if visible(authr, channelstore.KindWordPress, channelstore.ActionView, rec.ID) {
 			siteVisible = append(siteVisible, rec)
 		}
@@ -399,9 +584,13 @@ func (s *Server) listWordPressSites(w http.ResponseWriter, r *http.Request, requ
 	for _, rec := range sites {
 		views = append(views, wordpressSiteViewWith(rec, bySite[rec.ID]))
 	}
+	// The collection is not paginated, so total is simply the number of sites
+	// the caller may see — the same number the dashboard's count reports.
+	meta := metaFor(requestID, s.cfg.Now())
+	meta["total"] = len(sites)
 	writeJSON(w, http.StatusOK, envelope{
 		Data: map[string]any{"sites": views},
-		Meta: metaFor(requestID, s.cfg.Now()),
+		Meta: meta,
 	})
 }
 

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mirza/telesync/internal/channelstore"
@@ -63,8 +65,15 @@ func documentedMessage() rpc.Message {
 	}
 }
 
-func (documentedWorker) Media(context.Context, int64, int, int) (rpc.MediaFile, error) {
-	return rpc.MediaFile{MimeType: "text/plain", Data: []byte("bytes")}, nil
+func (documentedWorker) Media(_ context.Context, channelID int64, messageID, _ int, slice rpc.MediaSlice) (rpc.MediaStream, error) {
+	return rpc.MediaStream{
+		MimeType: "text/plain",
+		Filename: "documented.txt",
+		Size:     5,
+		Offset:   slice.Offset,
+		Length:   5,
+		Body:     io.NopCloser(strings.NewReader("bytes")),
+	}, nil
 }
 
 func (documentedWorker) Find(context.Context, rpc.FindRequest) (rpc.FindResult, error) {

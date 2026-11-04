@@ -11,6 +11,7 @@
 | --- | --- | --- | --- | --- | --- |
 | POST | `/api/v1/auth/login` | `Server.login` | `200` | 6 | [api-v1-auth-login](identity/api-v1-auth-login.md) |
 | GET | `/api/v1/auth/me` | `Server.me` | `200` | 6 | [api-v1-auth-me](identity/api-v1-auth-me.md) |
+| POST | `/api/v1/auth/password` | `Server.` | — | 5 | [api-v1-auth-password](identity/api-v1-auth-password.md) |
 | GET | `/api/v1/telegram` | `Server.servers` | `200` | 5 | [api-v1-telegram](identity/api-v1-telegram.md) |
 | GET | `/docs` | `Server.docs` | — | 8 | [docs](identity/docs.md) |
 | GET | `/docs/{path}` | `Server.docs` | — | 4 | [docs-path](identity/docs-path.md) |

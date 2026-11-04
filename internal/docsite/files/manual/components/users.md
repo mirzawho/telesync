@@ -38,8 +38,11 @@ accepted as a field.
   changes nothing. A managing permission needs its viewing permission:
   `users.manage` needs `users.view`, `channels.create` needs `channels.view`,
   `categories.create` needs `categories.view` (`400` naming the missing one).
-  With `<kind>.view` and no per-item rows the caller sees every resource of
-  that kind; per-item `allow` rows restrict them to those items.
+  With `<kind>.view` the caller sees every resource of that kind except one
+  carrying a `view: deny`; without it, only the resources carrying `view:
+  allow`. A managing permission writes every resource of its kind, or — while
+  any per-item row is stored — only the ones carrying `view: allow`, which is
+  the dialog's "all items, or the picked ones" choice.
 - `servers.view` is a global permission of its own: it allows `GET
   /api/v1/telegram`, the server listing behind the dashboard's card
   (described in the Telegram routes paragraph), and nothing else. No other

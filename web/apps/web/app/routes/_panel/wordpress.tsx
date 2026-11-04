@@ -1,27 +1,30 @@
 import {
   redirect,
+  useSearchParams,
   useNavigation,
   useRevalidator,
   useSubmit,
 } from "react-router"
 import {
-  CheckIcon,
   EyeIcon,
   EyeOffIcon,
   GlobeIcon,
   MoreHorizontalIcon,
   PencilIcon,
   PlusIcon,
+  SearchXIcon,
   Trash2Icon,
 } from "lucide-react"
 import * as React from "react"
 
+import { CategoryMultiSelect } from "@/components/category-multi-select"
 import { ConfirmDialog } from "@/components/confirm-dialog"
-import { MultiPicker } from "@/components/multi-picker"
 import { PageHeader } from "@/components/page-header"
 import { PageError, PageShell, pageMeta, section } from "@/lib/page"
 import { faDateTime } from "@/components/persian-digits"
+import { SearchInput } from "@/components/search-input"
 import { EmptyState, ErrorState, LoadingState } from "@/components/states"
+import { SubmitButton } from "@/components/submit-button"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import {
@@ -54,6 +57,7 @@ import {
   TableHeader,
   TableRow,
 } from "@workspace/ui/components/table"
+import { useToast } from "@workspace/ui/components/toast"
 
 import { API_BASE, ApiError, apiRequest } from "@/lib/api"
 import { LOGIN_REDIRECT_TO, requireSession } from "@/lib/session"
@@ -88,11 +92,24 @@ interface CategoryList {
   categories: Category[]
 }
 
+// parseCatFilterReads the URL's comma-separated local category ids. An empty
+// selection means "no category filter".
+function parseCategoryFilter(raw: string | null): number[] {
+  if (!raw) return []
+  return raw
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((id) => Number.isInteger(id) && id > 0)
+}
+
 type LoaderData =
   | {
       status: "ok"
       sites: WordPressSite[]
       categories: Category[]
+      q: string
+      categoryIDs: number[]
+      filtersActive: boolean
       page: PageTitle
     }
   | { status: "forbidden"; message: string; page: PageTitle }
@@ -110,12 +127,24 @@ export async function clientLoader({
 }: Route.LoaderArgs): Promise<LoaderData> {
   const { token } = await requireSession(request)
   const page: PageTitle = { title: "سایت‌های وردپرسی" }
+  const url = requestURL(request)
+  const q = (url.searchParams.get("q") ?? "").trim()
+  const categoryIDs = parseCategoryFilter(url.searchParams.get("category_ids"))
 
   try {
     // The collection is not paginated: the API answers every visible site.
-    // The categories are listed beside it, for the dialog's picker only.
+    // The filters are the API's own query, so the panel asks for a search and
+    // a category set rather than narrowing a page it already fetched. The
+    // categories are listed beside it, for the dialog's picker and the filter.
     const [{ data }, categories] = await Promise.all([
-      apiRequest<SiteList>("GET", "/local/wordpress", { token }),
+      apiRequest<SiteList>("GET", "/local/wordpress", {
+        token,
+        query: {
+          q: q || undefined,
+          category_ids:
+            categoryIDs.length > 0 ? categoryIDs.join(",") : undefined,
+        },
+      }),
       apiRequest<CategoryList>("GET", "/local/categories", {
         token,
         query: { page: 1, per_page: 100 },
@@ -125,6 +154,9 @@ export async function clientLoader({
       status: "ok",
       sites: data.sites ?? [],
       categories: categories.data.categories ?? [],
+      q,
+      categoryIDs,
+      filtersActive: q !== "" || categoryIDs.length > 0,
       page,
     }
   } catch (error) {
@@ -391,20 +423,57 @@ export default function WordPressSites({
   const navigation = useNavigation()
   const submit = useSubmit()
   const revalidator = useRevalidator()
+  const { toast } = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
   const loading =
     navigation.state === "loading" || revalidator.state === "loading"
   const submitting = navigation.state === "submitting"
 
+  // The filters live in the URL, so a reload and a shared link keep them. The
+  // search box is local until Enter submits the form.
+  const [search, setSearch] = React.useState(
+    loaderData.status === "ok" ? loaderData.q : ""
+  )
+  React.useEffect(() => {
+    if (loaderData.status === "ok") setSearch(loaderData.q)
+  }, [loaderData])
+
+  const categoryFilterIDs =
+    loaderData.status === "ok" ? loaderData.categoryIDs : []
+  const filtersActive = loaderData.status === "ok" && loaderData.filtersActive
+
+  const onSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const next = new URLSearchParams(searchParams)
+    if (search.trim()) next.set("q", search.trim())
+    else next.delete("q")
+    setSearchParams(next)
+  }
+
+  const setCategoryFilter = (ids: number[]) => {
+    const next = new URLSearchParams(searchParams)
+    if (ids.length > 0) next.set("category_ids", ids.join(","))
+    else next.delete("category_ids")
+    setSearchParams(next)
+  }
+
+  const clearFilters = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete("q")
+    next.delete("category_ids")
+    setSearchParams(next)
+    setSearch("")
+  }
+
   // null = dialog closed. A site edits it; "new" creates one.
   const [form, setForm] = React.useState<WordPressSite | "new" | null>(null)
   const [deleting, setDeleting] = React.useState<WordPressSite | null>(null)
-  // notice is the one line that says a write happened; the API answers a
-  // write with a document rather than a redirect, so the page itself says it.
-  const [notice, setNotice] = React.useState<string | null>(null)
 
   // A successful write: close whatever is open, say so, reload the list from
   // the API. The action has already finished here; the reload runs when the
-  // completed action renders.
+  // completed action renders. The API answers a write with a document rather
+  // than a redirect, so the page itself says what happened — as a toast, the
+  // same surface the rest of the panel uses for write results.
   const lastSaved = React.useRef<SiteActionData["saved"]>(undefined)
   React.useEffect(() => {
     const saved = actionData?.saved
@@ -412,15 +481,34 @@ export default function WordPressSites({
     lastSaved.current = saved
     setForm(null)
     setDeleting(null)
-    setNotice(
-      saved.deleted
-        ? "سایت وردپرسی حذف شد."
-        : actionData?.intent === "update"
-          ? "تغییرات سایت ذخیره شد."
-          : "سایت وردپرسی ثبت شد."
-    )
+    if (saved.deleted) {
+      toast({ variant: "success", title: "سایت وردپرسی حذف شد." })
+    } else if (actionData?.intent === "update") {
+      toast({
+        variant: "success",
+        title: "تغییرات سایت ذخیره شد.",
+        description: "عنوان و آیکون دوباره از خود سایت خوانده شد.",
+      })
+    } else {
+      toast({ variant: "success", title: "سایت وردپرسی ثبت شد." })
+    }
     revalidator.revalidate()
-  }, [actionData, revalidator])
+  }, [actionData, revalidator, toast])
+
+  // Every refusal is also a toast, so it is read without hunting for the open
+  // dialog; the dialog keeps showing the message where the work was done.
+  const toastedError = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (!actionData?.error) return
+    const key = `${actionData.intent ?? ""}:${actionData.error}`
+    if (toastedError.current === key) return
+    toastedError.current = key
+    toast({
+      variant: "error",
+      title: "عملیات انجام نشد.",
+      description: actionData.error,
+    })
+  }, [actionData, toast])
 
   // A returned error reopens the dialog it belongs to, with the values typed.
   React.useEffect(() => {
@@ -473,16 +561,6 @@ export default function WordPressSites({
         }
       />
 
-      {notice && (
-        <p
-          role="status"
-          className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary"
-        >
-          <CheckIcon className="size-4" />
-          {notice}
-        </p>
-      )}
-
       {loaderData.status !== "ok" ? (
         <ErrorState
           title={
@@ -492,35 +570,61 @@ export default function WordPressSites({
           onRetry={() => window.location.reload()}
         />
       ) : (
-        <div className="rounded-xl border bg-card">
-          {loading ? (
-            <LoadingState label="در حال بارگذاری سایت‌های وردپرسی…" />
-          ) : loaderData.sites.length === 0 ? (
-            <EmptyState
-              icon={GlobeIcon}
-              title="هنوز سایت وردپرسی ثبت نشده است"
-              description="اولین سایت را ثبت کنید تا بتوانید بعداً محتوای کانال‌ها را در آن منتشر کنید."
-              action={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setForm("new")}
-                >
-                  <PlusIcon data-icon="inline-start" />
-                  افزودن سایت
-                </Button>
-              }
-            />
-          ) : (
-            <SitesTable
-              sites={loaderData.sites}
-              categories={loaderData.categories}
-              pending={submitting && deleting !== null}
-              onEdit={(site) => setForm(site)}
-              onDelete={(site) => setDeleting(site)}
-            />
-          )}
-        </div>
+        <>
+          <SitesToolbar
+            search={search}
+            onSearch={onSearch}
+            onSearchChange={setSearch}
+            categories={loaderData.categories}
+            categoryFilterIDs={categoryFilterIDs}
+            onCategoryFilterChange={setCategoryFilter}
+            filtersActive={filtersActive}
+            onClear={clearFilters}
+          />
+
+          <div className="rounded-xl border bg-card">
+            {loading ? (
+              <LoadingState label="در حال بارگذاری سایت‌های وردپرسی…" />
+            ) : loaderData.sites.length === 0 ? (
+              filtersActive ? (
+                <EmptyState
+                  icon={SearchXIcon}
+                  title="سایتی با این جستجو یا دسته‌بندی پیدا نشد"
+                  description="عبارت جستجو یا دسته‌بندی‌های انتخاب‌شده را تغییر دهید، یا فیلترها را پاک کنید."
+                  action={
+                    <Button variant="outline" size="sm" onClick={clearFilters}>
+                      پاک کردن فیلترها
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  icon={GlobeIcon}
+                  title="هنوز سایت وردپرسی ثبت نشده است"
+                  description="اولین سایت را ثبت کنید تا بتوانید بعداً محتوای کانال‌ها را در آن منتشر کنید."
+                  action={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setForm("new")}
+                    >
+                      <PlusIcon data-icon="inline-start" />
+                      افزودن سایت
+                    </Button>
+                  }
+                />
+              )
+            ) : (
+              <SitesTable
+                sites={loaderData.sites}
+                categories={loaderData.categories}
+                pending={submitting && deleting !== null}
+                onEdit={(site) => setForm(site)}
+                onDelete={(site) => setDeleting(site)}
+              />
+            )}
+          </div>
+        </>
       )}
 
       {form !== null && (
@@ -578,11 +682,69 @@ export default function WordPressSites({
   )
 }
 
-// SitesTable lists the registered sites.
-//
-// Below the `md` breakpoint the same rows are laid out as cards: every table
-// column keeps its label, so nothing depends on a horizontal scrollbar.
-function SitesTable({
+// SitesToolbar holds the search and category filter. It stacks full-width
+// below `lg` and sits in one row above it.
+export function SitesToolbar({
+  search,
+  onSearch,
+  onSearchChange,
+  categories,
+  categoryFilterIDs,
+  onCategoryFilterChange,
+  filtersActive,
+  onClear,
+}: {
+  search: string
+  onSearch: (event: React.FormEvent<HTMLFormElement>) => void
+  onSearchChange: (value: string) => void
+  categories: Category[]
+  categoryFilterIDs: number[]
+  onCategoryFilterChange: (ids: number[]) => void
+  filtersActive: boolean
+  onClear: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+      <form
+        onSubmit={onSearch}
+        className="w-full min-w-0 lg:max-w-sm"
+        role="search"
+      >
+        <SearchInput
+          name="q"
+          value={search}
+          onChange={onSearchChange}
+          placeholder="جستجو در سایت‌ها…"
+          className="w-full min-w-0"
+        />
+      </form>
+      <div className="w-full min-w-0 lg:max-w-sm">
+        <CategoryMultiSelect
+          id="wordpress-category-filter"
+          categories={categories}
+          value={categoryFilterIDs}
+          onChange={onCategoryFilterChange}
+          placeholder="جستجوی دسته‌بندی…"
+          emptyText="دسته‌بندی‌ای یافت نشد."
+        />
+      </div>
+      {filtersActive && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onClear}
+          className="self-start"
+        >
+          پاک کردن فیلترها
+        </Button>
+      )}
+    </div>
+  )
+}
+
+// SitesTable lists the registered sites. One table at every viewport: it
+// scrolls horizontally with the actions column pinned.
+export function SitesTable({
   sites,
   categories,
   pending,
@@ -605,119 +767,68 @@ function SitesTable({
       .map((id) => categoryNames.get(id))
       .filter((name): name is string => name !== undefined)
   return (
-    <>
-      <Table className="hidden md:table">
-        <TableHeader>
-          <TableRow>
-            <TableHead>سایت</TableHead>
-            <TableHead>آدرس</TableHead>
-            <TableHead>نام کاربری</TableHead>
-            <TableHead>دسته‌بندی‌ها</TableHead>
-            <TableHead>تاریخ ثبت</TableHead>
-            <TableHead className="w-12 text-end">
-              <span className="sr-only">عملیات</span>
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {sites.map((site) => (
-            <TableRow key={site.id}>
-              <TableCell>
-                <div className="flex items-center gap-3">
-                  <SiteIcon site={site} className="size-9" />
-                  <div className="flex min-w-0 flex-col">
-                    <span className="truncate font-medium" dir="auto">
-                      {site.title || "بدون عنوان"}
-                    </span>
-                    {!site.title && (
-                      <span className="text-xs text-muted-foreground">
-                        عنوان از سایت خوانده نشد
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </TableCell>
-              <TableCell className="text-muted-foreground" dir="ltr">
-                {site.domain}
-              </TableCell>
-              <TableCell dir="ltr">{site.username}</TableCell>
-              <TableCell>
-                <CategoryChips names={categoriesOf(site)} />
-              </TableCell>
-              <TableCell className="text-muted-foreground">
-                {faDateTime(site.created_at, false)}
-              </TableCell>
-              <TableCell className="text-end">
-                <RowMenu
-                  site={site}
-                  disabled={pending}
-                  onEdit={onEdit}
-                  onDelete={onDelete}
-                />
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-
-      <ul className="flex flex-col divide-y md:hidden">
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>سایت</TableHead>
+          <TableHead>آدرس</TableHead>
+          <TableHead>نام کاربری</TableHead>
+          <TableHead>دسته‌بندی‌ها</TableHead>
+          <TableHead>تاریخ ثبت</TableHead>
+          <TableHead className="sticky left-0 z-20 w-12 bg-background text-end">
+            <span className="sr-only">عملیات</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {sites.map((site) => (
-          <li key={site.id} className="flex flex-col gap-3 p-4">
-            <div className="flex items-start gap-3">
-              <SiteIcon site={site} className="size-10" />
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate font-medium" dir="auto">
-                  {site.title || "بدون عنوان"}
-                </span>
-                <span
-                  className="truncate text-sm text-muted-foreground"
-                  dir="ltr"
-                >
-                  {site.domain}
-                </span>
+          <TableRow key={site.id}>
+            <TableCell>
+              <div className="flex items-center gap-3">
+                <SiteIcon site={site} className="size-9" />
+                <div className="flex min-w-0 flex-col">
+                  <span className="truncate font-medium" dir="auto">
+                    {site.title || "بدون عنوان"}
+                  </span>
+                  {!site.title && (
+                    <span className="text-xs text-muted-foreground">
+                      عنوان از سایت خوانده نشد
+                    </span>
+                  )}
+                </div>
               </div>
+            </TableCell>
+            <TableCell className="text-muted-foreground" dir="ltr">
+              {site.domain}
+            </TableCell>
+            <TableCell dir="ltr">{site.username}</TableCell>
+            <TableCell>
+              <CategoryChips names={categoriesOf(site)} />
+            </TableCell>
+            <TableCell className="text-muted-foreground">
+              {faDateTime(site.created_at, false)}
+            </TableCell>
+            <TableCell className="sticky left-0 z-10 bg-background text-end">
               <RowMenu
                 site={site}
                 disabled={pending}
                 onEdit={onEdit}
                 onDelete={onDelete}
               />
-            </div>
-            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <dt>نام کاربری</dt>
-              <dd dir="ltr">{site.username}</dd>
-              <dt>دسته‌بندی‌ها</dt>
-              <dd>
-                <CategoryChips names={categoriesOf(site)} inCard />
-              </dd>
-              <dt>تاریخ ثبت</dt>
-              <dd>{faDateTime(site.created_at, false)}</dd>
-            </dl>
-          </li>
+            </TableCell>
+          </TableRow>
         ))}
-      </ul>
-    </>
+      </TableBody>
+    </Table>
   )
 }
 
 // CategoryChips shows a site's categories as small badges, or an em dash when
 // it has none.
-function CategoryChips({
-  names,
-  inCard = false,
-}: {
-  names: string[]
-  inCard?: boolean
-}) {
+function CategoryChips({ names }: { names: string[] }) {
   if (names.length === 0) return <>—</>
   return (
-    <span
-      className={
-        inCard
-          ? "flex flex-wrap justify-end gap-1"
-          : "flex max-w-56 flex-wrap gap-1"
-      }
-    >
+    <span className="flex max-w-56 flex-wrap gap-1">
       {names.map((name) => (
         <Badge key={name} variant="secondary" className="text-xs">
           {name}
@@ -898,7 +1009,9 @@ function SiteDialog({
           }}
         >
           <Field data-invalid={urlError ? "" : undefined}>
-            <FieldLabel htmlFor="wp-url">دامنه سایت</FieldLabel>
+            <FieldLabel htmlFor="wp-url" required>
+              دامنه سایت
+            </FieldLabel>
             <FieldControl
               id="wp-url"
               name="url"
@@ -925,7 +1038,9 @@ function SiteDialog({
           </Field>
 
           <Field data-invalid={usernameError ? "" : undefined}>
-            <FieldLabel htmlFor="wp-username">نام کاربری</FieldLabel>
+            <FieldLabel htmlFor="wp-username" required>
+              نام کاربری
+            </FieldLabel>
             <FieldControl
               id="wp-username"
               name="username"
@@ -950,7 +1065,7 @@ function SiteDialog({
           </Field>
 
           <Field data-invalid={passwordError ? "" : undefined}>
-            <FieldLabel htmlFor="wp-password">
+            <FieldLabel htmlFor="wp-password" required={!site}>
               {site
                 ? "Application Password جدید"
                 : "رمز عبور / Application Password"}
@@ -997,7 +1112,7 @@ function SiteDialog({
             )}
           </Field>
 
-          <MultiPicker
+          <CategoryMultiSelect
             id="wp-categories"
             title="دسته‌بندی‌ها"
             description={
@@ -1007,10 +1122,9 @@ function SiteDialog({
             }
             placeholder="انتخاب دسته‌بندی"
             emptyText="دسته‌بندی‌ای یافت نشد."
-            items={categories}
+            categories={categories}
             value={categoryIDs}
-            onValueChange={setCategoryIDs}
-            labelOf={(category) => category.name}
+            onChange={setCategoryIDs}
           />
 
           {error && (
@@ -1030,9 +1144,12 @@ function SiteDialog({
             >
               انصراف
             </Button>
-            <Button type="submit" disabled={pending}>
-              {pending ? "در حال بررسی سایت…" : site ? "ذخیره" : "افزودن سایت"}
-            </Button>
+            <SubmitButton
+              pending={pending}
+              submittingLabel={site ? "در حال ذخیره…" : "در حال افزودن…"}
+            >
+              {site ? "ذخیره" : "افزودن سایت"}
+            </SubmitButton>
           </DialogFooter>
         </form>
       </DialogContent>

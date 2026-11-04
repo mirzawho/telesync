@@ -1,6 +1,6 @@
 {
   "name": "web",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "private": true,
   "scripts": {
@@ -9,7 +9,7 @@
     "start": "react-router-serve ./build/server/index.js",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "react-router typegen && tsc",
-    "test": "node scripts/test-content.mjs"
+    "test": "node scripts/test-content.mjs && node scripts/test-media.mjs && node scripts/test-panel.mjs && node scripts/test-publish.mjs && node scripts/test-administrators.mjs"
   },
   "dependencies": {
     "@react-router/node": "8.5.0",

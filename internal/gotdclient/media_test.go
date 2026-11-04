@@ -29,8 +29,8 @@ func photoServer(t *testing.T, photoBytes []byte, wantThumb string) func(*tgtest
 						FileReference: []byte{1, 2, 3},
 						DCID:          2,
 						Sizes: []tg.PhotoSizeClass{
-							&tg.PhotoSize{Type: "m", W: 320, H: 240, Size: 2},
-							&tg.PhotoSize{Type: "y", W: 1280, H: 960, Size: 4},
+							&tg.PhotoSize{Type: "m", W: 320, H: 240, Size: len(photoBytes) / 2},
+							&tg.PhotoSize{Type: "y", W: 1280, H: 960, Size: len(photoBytes)},
 						},
 					}},
 				},
@@ -83,12 +83,12 @@ func TestDownloadMediaReturnsPhotoBytes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	got, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500, AccessHash: 900}, 179)
+	got, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500, AccessHash: 900}, 179, tgapi.MediaSlice{})
 	if err != nil {
 		t.Fatalf("DownloadMedia: %v", err)
 	}
-	if string(got.Data) != string(photoBytes) {
-		t.Fatalf("bytes = %q, want %q", got.Data, photoBytes)
+	if body := readStream(t, got); body != string(photoBytes) {
+		t.Fatalf("bytes = %q, want %q", body, photoBytes)
 	}
 	if got.MimeType != "image/jpeg" {
 		t.Fatalf("mime = %q", got.MimeType)
@@ -114,7 +114,7 @@ func TestDownloadMediaReportsAMessageWithoutMedia(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if _, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500, AccessHash: 900}, 100); err == nil {
+	if _, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500, AccessHash: 900}, 100, tgapi.MediaSlice{}); err == nil {
 		t.Fatal("expected an error for a message without media")
 	}
 }
@@ -127,7 +127,7 @@ func TestDownloadMediaRejectsANonPositiveMessageID(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500}, 0); err == nil {
+	if _, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500}, 0, tgapi.MediaSlice{}); err == nil {
 		t.Fatal("message id 0 must be rejected")
 	}
 }
@@ -177,14 +177,14 @@ func TestDownloadMediaUsesTheChannelScopedLookup(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	got, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500, AccessHash: 900}, 179)
+	got, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500, AccessHash: 900}, 179, tgapi.MediaSlice{})
 	if err != nil {
 		t.Fatalf("DownloadMedia: %v", err)
 	}
 	if !usedChannelScoped {
 		t.Fatal("the adapter did not use channels.getMessages")
 	}
-	if string(got.Data) != string(photoBytes) {
-		t.Fatalf("bytes = %q", got.Data)
+	if body := readStream(t, got); body != string(photoBytes) {
+		t.Fatalf("bytes = %q", body)
 	}
 }

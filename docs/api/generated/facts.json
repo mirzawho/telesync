@@ -331,6 +331,101 @@
    ]
   },
   {
+   "pattern": "/api/v1/auth/password",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/auth/password",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/auth/password",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/auth/password",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/auth/password",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/auth/password",
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
    "pattern": "/api/v1/local/categories",
    "method": "GET",
    "handler": "listCategories",
@@ -341,7 +436,7 @@
    "status": 200,
    "credentials": [
     "authr.Allowed(kind, action, localID)  (access.go:visible)",
-    "authr.CanList(channelstore.KindCategory)  (categories.go:listCategories)",
+    "authr.CanList(channelstore.KindCategory)  (categories.go:visibleCategories)",
     "authr.CanList(kind)  (access.go:visible)"
    ],
    "credential_count": 3,
@@ -1755,6 +1850,140 @@
    ]
   },
   {
+   "pattern": "/api/v1/local/stats/dashboard",
+   "method": "GET",
+   "handler": "dashboardStats",
+   "file": "stats.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"stats\": stats}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(channelstore.KindCategory)  (stats.go:dashboardStats)",
+    "authr.CanList(channelstore.KindChannel)  (stats.go:dashboardStats)",
+    "authr.CanList(channelstore.KindWordPress)  (stats.go:dashboardStats)",
+    "authr.CanList(kind)  (access.go:visible)",
+    "authr.Global(channelstore.PermissionUsersManage)  (stats.go:dashboardStats)",
+    "authr.Global(channelstore.PermissionUsersView)  (stats.go:dashboardStats)",
+    "authr.HasAny(channelstore.KindCategory)  (stats.go:dashboardStats)",
+    "authr.HasAny(channelstore.KindChannel)  (stats.go:dashboardStats)",
+    "authr.HasAny(channelstore.KindWordPress)  (stats.go:dashboardStats)"
+   ],
+   "credential_count": 10,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/stats/dashboard",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/stats/dashboard",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "stats": {
+        "categories": 1,
+        "channels": 1,
+        "wordpress_sites": 0,
+        "administrators": 3
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/stats/dashboard",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "stats": {
+        "categories": 1,
+        "channels": null,
+        "wordpress_sites": null,
+        "administrators": null
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/stats/dashboard",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "stats": {
+        "categories": 1,
+        "channels": 1,
+        "wordpress_sites": 0,
+        "administrators": 3
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/stats/dashboard",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "stats": {
+        "categories": 1,
+        "channels": 1,
+        "wordpress_sites": 0,
+        "administrators": 3
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
    "pattern": "/api/v1/local/users",
    "method": "GET",
    "handler": "listUsers",
@@ -2711,7 +2940,7 @@
    "handler": "listWordPressSites",
    "file": "wordpress.go",
    "line": 0,
-   "response": "envelope{ Data: map[string]any{\"sites\": views}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "response": "envelope{ Data: map[string]any{\"sites\": views}, Meta: meta, }",
    "status_name": "StatusOK",
    "status": 200,
    "credentials": [
@@ -2752,7 +2981,8 @@
       },
       "meta": {
        "generated_at": "2026-10-25T10:00:00Z",
-       "request_id": "docsgen"
+       "request_id": "docsgen",
+       "total": 0
       }
      }
     },
@@ -2787,7 +3017,8 @@
       },
       "meta": {
        "generated_at": "2026-10-25T10:00:00Z",
-       "request_id": "docsgen"
+       "request_id": "docsgen",
+       "total": 0
       }
      }
     }
@@ -2804,7 +3035,8 @@
       },
       "meta": {
        "generated_at": "2026-10-25T10:00:00Z",
-       "request_id": "docsgen"
+       "request_id": "docsgen",
+       "total": 0
       }
      }
     }
@@ -2940,10 +3172,9 @@
    "credentials": [
     "actorAuth(r).Global(channelstore.PermissionWordPressManage)  (wordpress.go:deleteWordPressSite)",
     "authr.Allowed(kind, action, localID)  (access.go:visible)",
-    "authr.CanList(kind)  (access.go:visible)",
-    "authr.Global(channelstore.PermissionWordPressManage)  (wordpress.go:siteViewer)"
+    "authr.CanList(kind)  (access.go:visible)"
    ],
-   "credential_count": 4,
+   "credential_count": 3,
    "probe": [
     {
      "caller": "anonymous",
@@ -3038,10 +3269,19 @@
   {
    "pattern": "/api/v1/local/wordpress/{id}",
    "method": "GET",
-   "handler": "",
-   "file": "",
+   "handler": "getWordPressSite",
+   "file": "wordpress.go",
    "line": 0,
-   "credential_count": 0,
+   "response": "envelope{ Data: map[string]any{\"site\": view}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionCategoriesCreate)  (categories.go:categories)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(channelstore.KindCategory)  (categories.go:visibleCategories)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 4,
    "probe": [
     {
      "caller": "anonymous",
@@ -3155,11 +3395,10 @@
     "actorAuth(r).Global(channelstore.PermissionCategoriesCreate)  (categories.go:categories)",
     "actorAuth(r).Global(channelstore.PermissionWordPressManage)  (wordpress.go:updateWordPressSite)",
     "authr.Allowed(kind, action, localID)  (access.go:visible)",
-    "authr.CanList(channelstore.KindCategory)  (categories.go:listCategories)",
-    "authr.CanList(kind)  (access.go:visible)",
-    "authr.Global(channelstore.PermissionWordPressManage)  (wordpress.go:siteViewer)"
+    "authr.CanList(channelstore.KindCategory)  (categories.go:visibleCategories)",
+    "authr.CanList(kind)  (access.go:visible)"
    ],
-   "credential_count": 6,
+   "credential_count": 5,
    "probe": [
     {
      "caller": "anonymous",
@@ -3267,6 +3506,92 @@
    ]
   },
   {
+   "pattern": "/api/v1/local/wordpress/{id}/categories",
+   "method": "GET",
+   "handler": "wordPressTerms",
+   "file": "wordpress.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{ \"terms\": terms, \"page\": map[string]any{ \"page\": result.Page, \"per_page\": result.PerPage, \"total\": result.Total, \"total_pages\": result.TotalPages, \"has_more\": result.Page \u003c result.TotalPages, }, }, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/wordpress/not-an-id/categories",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/wordpress/not-an-id/categories",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/wordpress/not-an-id/categories",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/wordpress/not-an-id/categories",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
    "pattern": "/api/v1/local/wordpress/{id}/posts",
    "method": "POST",
    "handler": "publishWordPress",
@@ -3339,6 +3664,92 @@
     {
      "caller": "administrator",
      "request": "POST /api/v1/local/wordpress/not-an-id/posts",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/wordpress/{id}/tags",
+   "method": "GET",
+   "handler": "wordPressTerms",
+   "file": "wordpress.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{ \"terms\": terms, \"page\": map[string]any{ \"page\": result.Page, \"per_page\": result.PerPage, \"total\": result.Total, \"total_pages\": result.TotalPages, \"has_more\": result.Page \u003c result.TotalPages, }, }, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/wordpress/not-an-id/tags",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/wordpress/not-an-id/tags",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/wordpress/not-an-id/tags",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/wordpress/not-an-id/tags",
      "status": 400,
      "code": "invalid_input",
      "headers": {
@@ -5261,11 +5672,12 @@
    "line": 0,
    "credentials": [
     "s.authenticate(r)  (gateway.go:serveTelegram)",
+    "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.changePassword(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.me(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.serveLocal(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(s.servers)  (gateway.go:serveAPI)"
    ],
-   "credential_count": 4,
+   "credential_count": 5,
    "probe": [
     {
      "caller": "anonymous",
@@ -5381,11 +5793,12 @@
    "line": 0,
    "credentials": [
     "s.authenticate(r)  (gateway.go:serveTelegram)",
+    "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.changePassword(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.me(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.serveLocal(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(s.servers)  (gateway.go:serveAPI)"
    ],
-   "credential_count": 4,
+   "credential_count": 5,
    "probe": [
     {
      "caller": "anonymous",
@@ -5670,7 +6083,7 @@
      "go_type": "struct { Text string `json:\"text\"` Entities []rpc.Entity `json:\"entities\"` }"
     },
     "media": {
-     "go_type": "struct { Mode string `json:\"mode\"` }"
+     "go_type": "struct { Mode string `json:\"mode\"` AttachmentID string `json:\"attachment_id,omitempty\"` }"
     },
     "options": {
      "go_type": "struct { Silent bool `json:\"silent\"` DisableWebPagePreview bool `json:\"disable_web_page_preview\"` }"
@@ -5785,10 +6198,10 @@
      "go_type": "struct { LocalChannelID int64 `json:\"local_channel_id\"` MessageID int `json:\"message_id\"` }"
     },
     "post": {
-     "go_type": "struct { Title string `json:\"title\"` Content string `json:\"content\"` Status string `json:\"status\"` Tags []string `json:\"tags\"` }"
+     "go_type": "struct { Title string `json:\"title\"` Slug string `json:\"slug\"` Content string `json:\"content\"` Status string `json:\"status\"` Tags []string `json:\"tags\"` TagIDs []int `json:\"tag_ids\"` CategoryIDs []int `json:\"categories\"` }"
     },
     "media": {
-     "go_type": "struct { Mode string `json:\"mode\"` }"
+     "go_type": "struct { Mode string `json:\"mode\"` AttachmentID string `json:\"attachment_id,omitempty\"` }"
     },
     "options": {
      "go_type": "struct { CommentStatus string `json:\"comment_status\"` }"

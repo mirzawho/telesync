@@ -227,13 +227,7 @@ func (c *Client) postMultipart(ctx context.Context, path string, body SendReques
 func (c *Client) do(req *http.Request, dst any) error {
 	resp, err := c.http.Do(req)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("%w: %w", ErrTimeout, err)
-		}
-		if ctxErr := req.Context().Err(); ctxErr != nil {
-			return fmt.Errorf("%w: %w", ErrTimeout, ctxErr)
-		}
-		return fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return requestError(req.Context(), err)
 	}
 	defer resp.Body.Close()
 
@@ -242,11 +236,7 @@ func (c *Client) do(req *http.Request, dst any) error {
 		return fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		var envelope ErrorBody
-		if jsonErr := json.Unmarshal(body, &envelope); jsonErr == nil && envelope.Error != nil {
-			return envelope.Error.wire()
-		}
-		return NewError(CodeInternal, "the worker answered with an unreadable error", 0)
+		return decodeErrorBody(resp.StatusCode, body)
 	}
 	if dst == nil {
 		return nil
@@ -255,4 +245,26 @@ func (c *Client) do(req *http.Request, dst any) error {
 		return fmt.Errorf("decode worker response: %w", err)
 	}
 	return nil
+}
+
+// requestError maps a failed HTTP round trip onto the worker's error contract.
+func requestError(ctx context.Context, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", ErrTimeout, err)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("%w: %w", ErrTimeout, ctxErr)
+	}
+	return fmt.Errorf("%w: %w", ErrUnavailable, err)
+}
+
+// decodeErrorBody turns a non-OK worker answer into the error the contract
+// names, without ever echoing the body to a caller that must not see it.
+func decodeErrorBody(status int, body []byte) error {
+	var envelope ErrorBody
+	if jsonErr := json.Unmarshal(body, &envelope); jsonErr == nil && envelope.Error != nil {
+		return envelope.Error.wire()
+	}
+	return NewError(CodeInternal,
+		fmt.Sprintf("the worker answered with an unreadable error (status %d)", status), 0)
 }

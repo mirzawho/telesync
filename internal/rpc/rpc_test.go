@@ -1,6 +1,7 @@
 package rpc_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,17 +18,22 @@ import (
 
 // fakeBackend records calls and returns scripted answers.
 type fakeBackend struct {
-	health   rpc.Health
-	profile  rpc.Profile
-	profileE error
-	channels rpc.ChannelPage
-	chanErr  error
-	messages rpc.MessagePage
-	msgErr   error
-	media    rpc.MediaFile
-	mediaE   error
-	message  rpc.MessagePage
-	messageE error
+	health    rpc.Health
+	profile   rpc.Profile
+	profileE  error
+	channels  rpc.ChannelPage
+	chanErr   error
+	messages  rpc.MessagePage
+	msgErr    error
+	media     []byte
+	mediaName string
+	mediaType string
+	mediaSize int64
+	mediaBody io.ReadCloser
+	mediaE    error
+	gotSlice  rpc.MediaSlice
+	message   rpc.MessagePage
+	messageE  error
 
 	gotPage, gotPerPage int
 	gotChannel          int64
@@ -83,9 +90,53 @@ func (f *fakeBackend) Message(_ context.Context, channelID int64, messageID int)
 	return f.message, f.messageE
 }
 
-func (f *fakeBackend) Media(_ context.Context, channelID int64, messageID, photoIndex int) (rpc.MediaFile, error) {
+func (f *fakeBackend) Media(_ context.Context, channelID int64, messageID, _ int, slice rpc.MediaSlice) (rpc.MediaStream, error) {
 	f.gotMediaChannel, f.gotMediaMessage = channelID, messageID
-	return f.media, f.mediaE
+	f.gotSlice = slice
+	if f.mediaE != nil {
+		return rpc.MediaStream{}, f.mediaE
+	}
+	body := f.mediaBody
+	length := int64(len(f.media))
+	if body == nil {
+		// Honour the requested slice the way the worker does.
+		payload := f.media
+		offset := int64(0)
+		switch {
+		case f.mediaSize <= 0:
+			length = 0
+		case slice.Tail > 0:
+			tail := slice.Tail
+			if tail > f.mediaSize {
+				tail = f.mediaSize
+			}
+			offset = f.mediaSize - tail
+			if offset >= int64(len(payload)) {
+				payload = nil
+			} else {
+				payload = payload[offset:]
+			}
+		case slice.Offset > 0:
+			if slice.Offset >= int64(len(payload)) {
+				offset, payload = f.mediaSize, nil
+			} else {
+				offset, payload = slice.Offset, payload[slice.Offset:]
+			}
+		}
+		if slice.Limit > 0 && f.mediaSize > 0 && int64(len(payload)) > slice.Limit {
+			payload = payload[:slice.Limit]
+		}
+		body = io.NopCloser(bytes.NewReader(payload))
+		length = int64(len(payload))
+	}
+	return rpc.MediaStream{
+		MimeType: f.mediaType,
+		Filename: f.mediaName,
+		Size:     f.mediaSize,
+		Offset:   slice.Offset,
+		Length:   length,
+		Body:     body,
+	}, nil
 }
 
 func (f *fakeBackend) CustomEmoji(_ context.Context, documentID int64) (rpc.MediaFile, error) {
@@ -662,21 +713,160 @@ func TestMediaRoundTrip(t *testing.T) {
 
 func TestMediaDownloadRoundTrip(t *testing.T) {
 	payload := []byte("jpeg-bytes")
-	backend := &fakeBackend{media: rpc.MediaFile{
-		MediaID: "500:9", MimeType: "image/jpeg", Data: payload,
-	}}
+	backend := &fakeBackend{
+		media: payload, mediaType: "image/jpeg", mediaName: "photo.jpg", mediaSize: int64(len(payload)),
+	}
 	client := rpcClient(t, backend, 0)
 
-	got, err := client.Media(context.Background(), 500, 179, 0)
+	got, err := client.Media(context.Background(), 500, 179, 0, rpc.MediaSlice{})
 	if err != nil {
 		t.Fatalf("Media: %v", err)
 	}
-	if string(got.Data) != string(payload) || got.MimeType != "image/jpeg" {
-		t.Fatalf("media file = %+v", got)
+	if body := readMedia(t, got); body != string(payload) {
+		t.Fatalf("body = %q, want %q", body, payload)
+	}
+	if got.MimeType != "image/jpeg" {
+		t.Fatalf("mime = %q", got.MimeType)
+	}
+	if got.Filename != "photo.jpg" {
+		t.Fatalf("filename = %q, want %q", got.Filename, "photo.jpg")
+	}
+	if got.Size != int64(len(payload)) || got.Length != int64(len(payload)) {
+		t.Fatalf("size = %d length = %d", got.Size, got.Length)
 	}
 	if backend.gotMediaChannel != 500 || backend.gotMediaMessage != 179 {
 		t.Fatalf("server saw channel=%d message=%d", backend.gotMediaChannel, backend.gotMediaMessage)
 	}
+}
+
+func TestMediaDownloadCarriesTheSliceThrough(t *testing.T) {
+	payload := []byte("0123456789")
+	backend := &fakeBackend{
+		media: payload, mediaType: "audio/mpeg", mediaSize: int64(len(payload)),
+	}
+	client := rpcClient(t, backend, 0)
+
+	got, err := client.Media(context.Background(), 500, 179, 0, rpc.MediaSlice{Offset: 3, Limit: 4})
+	if err != nil {
+		t.Fatalf("Media: %v", err)
+	}
+	if body := readMedia(t, got); body != "3456" {
+		t.Fatalf("body = %q, want %q", body, "3456")
+	}
+	if backend.gotSlice != (rpc.MediaSlice{Offset: 3, Limit: 4}) {
+		t.Fatalf("backend saw slice %+v, want offset 3 limit 4", backend.gotSlice)
+	}
+	if got.Size != 10 || got.Length != 4 {
+		t.Fatalf("size = %d length = %d, want 10/4", got.Size, got.Length)
+	}
+}
+
+func TestMediaDownloadHasNoFilenameWhenThereIsNone(t *testing.T) {
+	backend := &fakeBackend{media: []byte("jpeg"), mediaType: "image/jpeg", mediaSize: 4}
+	client := rpcClient(t, backend, 0)
+
+	got, err := client.Media(context.Background(), 500, 179, 0, rpc.MediaSlice{})
+	if err != nil {
+		t.Fatalf("Media: %v", err)
+	}
+	if got.Filename != "" {
+		t.Fatalf("filename = %q, want none: nothing may invent one", got.Filename)
+	}
+	readMedia(t, got)
+}
+
+// streamChunkSize forces the server's response buffer to flush: net/http holds
+// small writes back, and a real attachment chunk is far larger than that.
+const streamChunkSize = 8 << 10
+
+// blockingBody hands out its first chunk and then blocks. It stands for a large
+// document that is still arriving from Telegram when the caller starts reading.
+type blockingBody struct {
+	first   []byte
+	given   bool
+	release chan struct{}
+}
+
+func (b *blockingBody) Read(p []byte) (int, error) {
+	if !b.given {
+		b.given = true
+		return copy(p, b.first), nil
+	}
+	<-b.release
+	return 0, io.EOF
+}
+
+func (b *blockingBody) Close() error { return nil }
+
+// firstChunk is one chunk of a document: a marker at the front and enough
+// padding to reach the wire rather than sitting in a buffer.
+func firstChunk() []byte {
+	chunk := make([]byte, streamChunkSize)
+	copy(chunk, "first")
+	return chunk
+}
+
+// TestMediaReturnsBeforeTheAttachmentIsComplete is what makes a 60 MB document
+// possible: the caller gets control of the answer while the bytes are still
+// arriving, instead of waiting for the whole file to be collected first.
+func TestMediaReturnsBeforeTheAttachmentIsComplete(t *testing.T) {
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	// Whatever happens below, the worker is never left waiting on this test.
+	defer unblock()
+
+	backend := &fakeBackend{
+		mediaType: "audio/mpeg",
+		mediaSize: 1 << 20,
+		mediaBody: &blockingBody{first: firstChunk(), release: release},
+	}
+	client := rpcClient(t, backend, 0)
+
+	type answer struct {
+		stream rpc.MediaStream
+		err    error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		stream, err := client.Media(context.Background(), 500, 179, 0, rpc.MediaSlice{})
+		done <- answer{stream, err}
+	}()
+
+	var stream rpc.MediaStream
+	select {
+	case a := <-done:
+		if a.err != nil {
+			t.Fatalf("Media: %v", a.err)
+		}
+		stream = a.stream
+	case <-time.After(5 * time.Second):
+		t.Fatal("Media waited for the whole attachment to arrive; nothing can be streamed")
+	}
+
+	buf := make([]byte, 5)
+	_, readErr := io.ReadFull(stream.Body, buf)
+	// The writer is released before the body is closed: closing a half-read
+	// HTTP body waits for the writer to finish.
+	unblock()
+	_ = stream.Body.Close()
+
+	if readErr != nil {
+		t.Fatalf("read: %v", readErr)
+	}
+	if string(buf) != "first" {
+		t.Fatalf("first bytes = %q, want %q", buf, "first")
+	}
+}
+
+func readMedia(t *testing.T, stream rpc.MediaStream) string {
+	t.Helper()
+	defer stream.Body.Close()
+	data, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatalf("read media: %v", err)
+	}
+	return string(data)
 }
 
 func TestMediaRouteRejectsBadInput(t *testing.T) {

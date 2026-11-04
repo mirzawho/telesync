@@ -205,23 +205,27 @@ func (s *Store) LocalIDsByChannelID(ctx context.Context, clientKey string, chann
 // the catalog minus those records is one query, and the caller pages over the
 // result exactly as the unfiltered listing would.
 func (s *Store) ListChannelsExcept(ctx context.Context, q ChannelListQuery, excluded []int64) ([]Channel, error) {
-	where, args := "", []any{}
+	var conds []string
+	var args []any
 	if q.Query != "" {
-		where = ` WHERE (instr(lower(title), lower(?)) > 0
+		conds = append(conds, `(instr(lower(title), lower(?)) > 0
 			OR instr(lower(username), lower(?)) > 0
-			OR instr(lower(client_key), lower(?)) > 0)`
+			OR instr(lower(client_key), lower(?)) > 0)`)
 		args = append(args, q.Query, q.Query, q.Query)
 	}
+	if cond, condArgs := q.categoryCond(); cond != "" {
+		conds = append(conds, cond)
+		args = append(args, condArgs...)
+	}
 	if len(excluded) > 0 {
-		if where == "" {
-			where = " WHERE "
-		} else {
-			where += " AND "
-		}
-		where += `id NOT IN (` + placeholders(len(excluded)) + `)`
+		conds = append(conds, `id NOT IN (`+placeholders(len(excluded))+`)`)
 		for _, id := range excluded {
 			args = append(args, id)
 		}
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
 	}
 	rows, err := s.db.QueryContext(ctx, selectColumns+where+` ORDER BY channel_id DESC, id DESC`, args...)
 	if err != nil {
@@ -286,6 +290,10 @@ func (s *Store) listChannelsWhere(ctx context.Context, q ChannelListQuery, condi
 		conds = append(conds,
 			`(instr(lower(m.title), lower(?)) > 0 OR instr(lower(m.username), lower(?)) > 0 OR instr(lower(m.client_key), lower(?)) > 0)`)
 		args = append(args, q.Query, q.Query, q.Query)
+	}
+	if cond, condArgs := q.categoryCond("m"); cond != "" {
+		conds = append(conds, cond)
+		args = append(args, condArgs...)
 	}
 	where := ""
 	if len(conds) > 0 {
@@ -383,6 +391,9 @@ type ChannelListQuery struct {
 	// Query, when non-empty, matches the title, username or client key,
 	// ignoring case. It is matched literally: % and _ are data, not wildcards.
 	Query string
+	// CategoryIDs filters to channels filed under at least one of these
+	// categories (OR semantics). Nil or empty disables the filter.
+	CategoryIDs []int64
 }
 
 // ListChannels returns one page of managed channels across every client, and
@@ -401,15 +412,21 @@ func (s *Store) ListChannels(ctx context.Context, q ChannelListQuery) ([]Channel
 		perPage = 20
 	}
 
-	where, args := "", []any{}
+	var conds []string
+	var args []any
 	if q.Query != "" {
-		// instr() is a literal substring test, so a query containing % or _ is
-		// data, not a wildcard; lower() matches without like()'s ASCII-only
-		// case folding.
-		where = ` WHERE instr(lower(title), lower(?)) > 0
+		conds = append(conds, `(instr(lower(title), lower(?)) > 0
 			OR instr(lower(username), lower(?)) > 0
-			OR instr(lower(client_key), lower(?)) > 0`
+			OR instr(lower(client_key), lower(?)) > 0)`)
 		args = append(args, q.Query, q.Query, q.Query)
+	}
+	if cond, condArgs := q.categoryCond(); cond != "" {
+		conds = append(conds, cond)
+		args = append(args, condArgs...)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
 	}
 
 	var total int
@@ -568,6 +585,39 @@ WHERE client_key = ? AND channel_id = ?`,
 		return Channel{}, fmt.Errorf("channelstore: write channel %d: %w", ch.ChannelID, err)
 	}
 	return saved, nil
+}
+
+// categoryCond returns the WHERE fragment selecting channels filed under at
+// least one of q.CategoryIDs (OR semantics), or "" when no filter applies.
+//
+// The assignment table keys on (client_key, channel_id) — the Telegram ids
+// (rule 8: local row ids and Telegram peer ids are distinct namespaces), so
+// the condition matches those two columns of the row being listed. alias
+// qualifies them. The outer columns are always qualified: without a qualifier
+// they'd resolve to the subquery's own same-named columns and match every
+// row.
+func (q ChannelListQuery) categoryCond(alias ...string) (string, []any) {
+	if len(q.CategoryIDs) == 0 {
+		return "", nil
+	}
+	m := "managed_channels"
+	if len(alias) > 0 && alias[0] != "" {
+		m = alias[0]
+	}
+	return `EXISTS (SELECT 1 FROM channel_categories cc
+		WHERE cc.category_id IN (` + placeholders(len(q.CategoryIDs)) + `)
+		AND cc.client_key = ` + m + `.client_key
+		AND cc.channel_id = ` + m + `.channel_id)`,
+		toAny(q.CategoryIDs)
+}
+
+// toAny converts a slice of ids to the driver's parameter form.
+func toAny(ids []int64) []any {
+	out := make([]any, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id)
+	}
+	return out
 }
 
 const selectColumns = `SELECT id, client_key, channel_id, peer_type, title, username,

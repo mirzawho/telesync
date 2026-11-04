@@ -366,3 +366,64 @@ func TestChannelsRejectsAnUnknownCapability(t *testing.T) {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 }
+
+// The media id is opaque — this build writes "channel:message" into it — so a
+// publish compares it against the source's own id and never reads a position
+// out of it. photoIndex in the worker's Media call is a photo *size*, and every
+// reader of an attachment uses 0 for the largest.
+func TestPublishReadsTheSourceAttachmentAtTheLargestSize(t *testing.T) {
+	env, worker, row := publishEnv(t)
+	grantPublish(t, env, env.defaults)
+	worker.message.Messages = []rpc.Message{{
+		ID: 9, Text: "hello",
+		Media: &rpc.Media{ID: "555:9", Type: "photo", Label: "تصویر", MimeType: "image/jpeg", Size: 3},
+	}}
+	worker.mediaBytes = []byte{0xff, 0xd8, 0xff}
+	worker.mediaType = "image/jpeg"
+
+	body := fmt.Sprintf(`{
+		"source": {"local_channel_id": %d, "message_id": 9},
+		"destination": {"channel_id": "555"},
+		"content": {"text": "hello", "entities": []},
+		"media": {"mode": "preserve_source", "attachment_id": "555:9"},
+		"options": {"silent": false, "disable_web_page_preview": false}
+	}`, row.ID)
+
+	resp := env.send(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages", body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, readBody(t, resp))
+	}
+	if worker.lastMediaIndex != 0 {
+		t.Fatalf("photo size = %d, want 0 (the largest)", worker.lastMediaIndex)
+	}
+	if worker.sentReq.Media == nil {
+		t.Fatal("the attached source media must go out with the message")
+	}
+}
+
+// A request naming another message's attachment is refused rather than
+// answered with whatever this message happens to carry.
+func TestPublishRefusesAnAttachmentOfAnotherMessage(t *testing.T) {
+	env, worker, row := publishEnv(t)
+	grantPublish(t, env, env.defaults)
+	worker.message.Messages = []rpc.Message{{
+		ID: 9, Text: "hello",
+		Media: &rpc.Media{ID: "555:9", Type: "photo", Label: "تصویر", MimeType: "image/jpeg", Size: 3},
+	}}
+
+	body := fmt.Sprintf(`{
+		"source": {"local_channel_id": %d, "message_id": 9},
+		"destination": {"channel_id": "555"},
+		"content": {"text": "hello", "entities": []},
+		"media": {"mode": "preserve_source", "attachment_id": "555:77"},
+		"options": {"silent": false, "disable_web_page_preview": false}
+	}`, row.ID)
+
+	resp := env.send(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages", body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, readBody(t, resp))
+	}
+	if worker.sendCalls != 0 {
+		t.Fatal("nothing may be sent when the named attachment is not this message's")
+	}
+}

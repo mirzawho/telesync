@@ -311,3 +311,562 @@ this one supersedes it).
   table instead of "does not push"; `Makefile` `docker`/`verify` comments no
   longer claim CI never pushes; STATE.md records the inversion of the earlier
   build-only note (with both claims kept, dated).
+
+## 2026-11-01 — Agent startup context reduction
+
+- Audited Claude Code 2.1.289 with `/context`: `AGENTS.md` was the project
+  instruction source; auto-memory loaded only its compact `MEMORY.md`; the
+  repository `.agents/skills` were on-demand, while global built-in/plugin
+  skill metadata was always present.
+- Reduced `AGENTS.md` to project invariants and an on-demand index. Moved the
+  dated 675-line state history to `STATE-history-2026.md` and replaced `STATE.md`
+  with a compact current snapshot. Added path-scoped `.claude/rules/` for API,
+  MTProto, frontend and WordPress details.
+- Shortened all four repository skills and moved detailed dial, gotd and test
+  seam material into skill references. Removed the stale auto-memory release
+  snapshot; preserved the owner workflow preference.
+- Follow-up review restored omitted authz, routing, gotd-diagnostic and API
+  route-maintenance details in on-demand references, corrected stale publishing
+  and migration facts in `ARCHITECTURE.md`, and labeled the retained state file
+  as historical.
+- Verified after edits: Claude root `/context` reported 767 project tokens,
+  75 auto-memory tokens and 2k built-in skill metadata tokens (8.6k total),
+  versus 2.8k, 72 and 4.4k (13k total) before. `git diff --check` passed.
+
+## 2026-11-02 — The manage right deletes channels, and only the picked ones
+
+- The owner reported that deleting a channel answered "شما مجوز حذف این کانال را
+  ندارید" although the account held channel management. Traced it to the model:
+  `POST /local/channels/{id}/leave` needs a per-channel `delete` assignment,
+  which the administrators dialog never writes (it stores `view: allow` only),
+  while the identical label "مدیریت" on `wordpress.create` already covered every
+  write. The documented per-resource `update`/`delete` was unreachable from the
+  product.
+- The owner set the rule: a manage permission may delete channel, category and
+  WordPress items, checking that the account has that item; in the panel a
+  manager has either every item or the picked ones, and a limited manager may
+  edit and delete only the picked ones.
+- Implemented in `channelstore.Authorizer`: an explicit assignment of the
+  action still decides first, and otherwise the kind's manage permission allows
+  `update`/`delete` inside the caller's selection (D62). `siteViewer` now
+  delegates to `visible()`, so WordPress is the same rule; the WordPress route
+  still requires the global manage right, so a per-site grant alone never
+  replaces a credential.
+- The route-level test caught a real hole before it shipped: assignment rows
+  cascade with their resource (D34), so a selection stored only as `view: allow`
+  on the picked items evaporated when the last one was deleted — a scoped
+  manager could delete their own channel and then every other one. Closed by
+  having the dialog store an `update: deny` with a `delete: deny` on each item
+  left out, which outlives the picked records. Documented residue: a manager
+  scoped to every item in the inventory can manage replacements once those are
+  all deleted.
+- Also corrected the users paragraph that said per-item `allow` rows restrict a
+  holder of the global view (they do not), and the leave route's test comment
+  that gave the operator's lack of an assignment as the reason for its refusal
+  (it has no account).
+- Verified here: `gofmt`, `go vet`, `go test ./...`, `go build ./...`,
+  `go run ./cmd/docsgen` and `--check`, `go test ./internal/apidocs`,
+  `npm run typecheck`, `npm run build`, `make panel`. Not verified against a
+  running daemon or a browser; the sandbox blocks the listener and the network.
+
+## 2026-11-02 — dashboard counts endpoint + پیشخان row landed in this checkout
+
+Both halves of the dashboard's four count cards are in `main`'s working tree now
+(the backend had been done on a side branch and the panel in `web/` was still
+counting off four list calls):
+
+- `internal/gateway/stats.go` (new): `GET /api/v1/local/stats/dashboard` —
+  one figure per collection, `null` when the caller may not see it at all and
+  otherwise exactly the rows its list route would show. Wired through
+  `serveAPI`'s local case and `serveLocal`; a missing local store answers
+  `503 worker_unavailable` before the credential is read (without the account
+  store none can be resolved).
+- `internal/gateway/categories.go`: `visibleCategories` is now the one place the
+  category visibility rule lives — the list **and** the count use it. This also
+  fixes `GET /api/v1/local/categories`, which did not subtract an explicit
+  `view:deny` from a global view.
+- `internal/gateway/wordpress.go`: the site list reports `meta.total`, the number
+  of sites the caller may see, so the dashboard's figure is checkable against it.
+- `web/apps/web/app/routes/_panel/dashboard.tsx`: the row is drawn from that one
+  call (`/local/stats/dashboard`); a null figure draws no card and the row takes
+  as many columns as cards, or no row at all when there are none. A failed call
+  is one card, never four invented zeros.
+- Docs moved with the route (table.go, docsgen's handler table, the `dashboard`
+  component, the example + index row, generated pages). `go run ./cmd/docsgen
+  --check` clean, `go test ./internal/apidocs` green.
+
+VERIFIED here: `gofmt -l .` empty, `go vet ./...` clean, `go test ./...` all
+packages pass (2 worker socket tests skip — the sandbox denies binding),
+`go build ./...` ok, `make build` produced `bin/telesync`, and a throwaway test
+(since deleted) confirmed the route answers 200 at
+`/admin/api/v1/local/stats/dashboard` while `/admin/api/v1/stats/dashboard`
+stays 404. NOT verified: against a running daemon — binding a port is denied in
+this sandbox, so the panel was never opened in a browser.
+
+## 2026-11-03 — Handoff workflows: prepare/implement split
+
+- Infrastructure only, no production code touched. Added
+  `.agents/workflows/prepare-change.md` (Graphify-first discover → plan → Red →
+  write handoff → stop, never edits production code) and
+  `.agents/workflows/implement-handoff.md` (explicit approval gate → Green →
+  Refactor → validate → record), plus `.agents/handoffs/_TEMPLATE.md` with the
+  A–J sections and the status lifecycle
+  (`DISCOVERING … AWAITING_APPROVAL/…/DONE/BLOCKED`). Task handoffs live in
+  `.agents/handoffs/<task-id>.md` only when a real task exists.
+- `AGENTS.md`: added two sections (Development lifecycle; token-efficient
+  navigation); the pre-existing in-progress edits to it were left as found.
+  `CLAUDE.md` already imports via `@AGENTS.md`; unchanged.
+- VERIFIED here: graphify `graph_stats` at HEAD (5364 nodes, matches 4a23673),
+  template contains sections A–J, `git status` shows these additions as only
+  new files plus my AGENTS.md insert (the tree carries ~171 pre-existing
+  modified paths from earlier work), no Go files written. NOT verified: an
+  actual end-to-end prepare→approve→implement run — no real task went through
+  the lifecycle yet.
+
+## 2026-11-03/04 — Telegram media: original filenames, streaming delivery, player and download
+
+Implemented the media-handling task in one pass (the user asked for the code
+change to be completed and verified directly, so the prepare→handoff→implement
+gate was not used for this task; behaviour-first tests still came first where
+the seam allowed).
+
+**Backend.** `gotdclient.MediaFileName` reads `documentAttributeFilename` and
+nothing else; `tgapi.Media`, `rpc.Media`, `gateway.mediaView` carry `filename`
+(`omitempty`, so a message Telegram never named reports no name rather than a
+guessed one). `MediaSize` now also reports a photo's byte size. `DownloadMedia`
+was rewritten as a streaming reader over 512 KiB `upload.getFile` parts with
+`Precise(true)` and `CDNSupported(false)`, honouring `MediaSlice{Offset, Limit,
+Tail}` and re-reading the message once on `FILE_REFERENCE_EXPIRED`. The worker
+RPC returns `rpc.MediaStream` as raw bytes with `X-Telesync-Size/-Offset/
+-Filename` headers instead of base64 JSON (decision D63); `gateway.media`
+parses `Range`, answers `206`/`416` with `Content-Range`, sets
+`Content-Disposition: attachment` with an RFC 5987 name, `X-Content-Type-Options:
+nosniff` and `Accept-Ranges` that is only `bytes` when the size is known. The
+32 MiB `maxMediaBytes` cap is gone for reads; it survives as
+`maxSmallFileBytes` for custom emoji and avatars.
+
+**Frontend.** `lib/media-view.ts` holds every presentational decision (kind,
+title, download name, extension, size) as pure functions; `MediaAttachmentCard`
+renders a real `<audio controls>` for audio and voice and a document card
+(filename, label, extension, size, download) for documents, leaving photos,
+videos and everything else as they were. Downloads fetch with the existing
+bearer-token approach (`downloadMedia`) and save under the sender's filename —
+no token ever appears in a URL. `types.ts` gained `filename`.
+
+**Tests.** Go: `internal/gotdclient/media_filename_test.go`,
+`media_stream_test.go`, `internal/gateway/media_delivery_test.go`, and new
+cases in `rpc_test.go` and `worker_test.go`; existing fakes moved to the
+streaming shapes. Frontend: `app/lib/media-view.test.ts` and
+`app/components/message-media.test.tsx`, run by a new
+`scripts/test-media.mjs` (esbuild bundle + `node --test`, since the workspace
+has no test runner and none can be added offline) and wired into `npm test`.
+
+VERIFIED here: `gofmt`, `go vet ./...`, `go test ./...` (21 packages, green),
+`go build ./...`, `go run ./cmd/docsgen` and `--check` ("documentation is up to
+date"), `go test ./internal/apidocs ./internal/docsite ./internal/docsgen`,
+`npm run typecheck`, `npm run build`, `npm test` (40 frontend tests green).
+Telegram-side behaviour is verified against tgtest's fake MTProto server over
+`net.Pipe`, and the HTTP contract against the real gateway handler with a
+scripted worker.
+
+NOT verified: live Telegram (real `upload.getFile` offsets, real file-reference
+expiry, real sizes for very large documents), a running daemon, and the panel in
+a browser — this sandbox denies binding a port, so audio playback and the
+download click were never exercised in a real browser. Also unverified: that the
+reported `PhotoSize.Size` always equals the byte count the thumbnail download
+returns (the fixtures model it that way).
+
+Unrelated note while working: the disk was full (149 MiB free) and builds were
+failing. Stale Go build caches under `/tmp/claude-501` (`gocache`, `go-build`,
+`gocache2`, `go-build-cache`, `telesync-gocache`, ~6.8 GB) were deleted to
+unblock this; they are pure caches and were rebuilt as needed.
+
+## 2026-11-04 — Channel explorer and message timeline redesign (frontend only)
+
+Replaced the table-based channel page with a Telegram-style two-pane workspace
+in `web/apps/web`. `routes/_panel/channels.tsx` is now the workspace and
+`routes/_panel/channel-messages.tsx` a child route at `channels/:id/messages`
+(`routes.ts` nests them), so the channel list stays mounted across selection and
+`/channels/{id}/messages` deep links, back and forward keep working. The old
+standalone page chrome and the channels table are gone.
+
+New: `components/channel-explorer/` (`channel-list.tsx`, `channel-list`'s
+`ChannelCategoryChips`, `channel-delete-dialog.tsx`,
+`channel-messages-pane.tsx`, `message-item.tsx`, `message-media.tsx`,
+`message-text.tsx`), `lib/message-entities.ts`, `lib/channel-filter.ts`,
+`lib/channel-actions.ts`, and thin Base UI compositions in
+`packages/ui/src/components/` (`message`, `bubble`, `attachment`,
+`alert-dialog`, `checkbox`, `scroll-area`, `empty`).
+
+Behaviour changes worth recording:
+- `use-infinite-messages.ts` now returns a **chronological** list (oldest first)
+  and **prepends** older pages instead of appending; each API page is reversed
+  on arrival. `MessagesStatus` carries `scope: "initial" | "older"` so the top
+  of the timeline can show a loading line without blanking the list.
+- Message text renders from the API's `entities` (`lib/message-entities.ts`,
+  UTF-16 spans, nesting-aware, plain text kept intact) instead of the old
+  regex-only `Linkified`. Bare URLs are still auto-linked, but only where no
+  entity covers them. `Entity` moved from `lib/content.ts` to `lib/types.ts`
+  (re-exported from `content.ts`, so `publish-dialog.tsx` is unaffected).
+- Media renders inside the bubble: images are bare `<img>` with no attachment
+  card, no `photo` label and no size badge; audio/voice get a real `<audio>`
+  player; video gets `<video controls>`; only a true file uses the new
+  `Attachment` with its filename and a download. `message-card.tsx` and its
+  `MediaAttachmentCard` are left in place untouched — the publish workspace
+  (`components/publish/`, another session's work) imports them.
+- Deletion is one `AlertDialog` with an unchecked-by-default "همچنین از کانال
+  در تلگرام خارج شوم" checkbox; the standalone Telegram-leave menu item is gone.
+  `lib/channel-actions.ts` builds the payload, so unticked is `telegram:"false"`.
+- `channels.tsx` exports `shouldRevalidate` returning true only for a form
+  submission: switching channels or changing filters never refetches the list.
+  The list is read whole through `listAll` (5 × 100 cap) and search + category
+  chips filter client-side.
+- `routes/_panel/layout.tsx`'s `<main>` and its inner wrapper became flex
+  columns so a full-height workspace fits without page scrolling; ordinary
+  pages are unaffected.
+- Tests: `scripts/test-panel.mjs` (esbuild + `node --test`, its own output
+  directory) runs `lib/message-entities.test.ts`, `lib/channel-filter.test.ts`
+  and `components/channel-explorer.test.tsx`, and is wired into `npm test`.
+
+Scope notes: no backend code changed — `filename` and `entities` were already
+in the message response. The shadcn registry is unreachable from this sandbox,
+so the published `Message`/`Bubble`/`MessageScroller`/`Attachment`/`Empty`
+primitives could not be installed; the local compositions are the documented
+fallback and no design-system upgrade was done.
+
+VERIFIED here: `tsc --noEmit` clean; `node scripts/test-content.mjs` (21),
+`test-media.mjs` (19) and `test-panel.mjs` (57) all green; `npm run build` in
+`web/apps/web` passed earlier in the session.
+
+NOT verified: the UI in a browser. RTL pane placement (list physically right,
+messages physically left), bubble left-alignment, the publish action's physical
+right, reaction placement, media rendering and the responsive breakpoints are
+asserted from `renderToStaticMarkup` output and class names only — never seen
+rendered. This sandbox cannot bind a local port (`EPERM`), so no dev server,
+daemon or static preview could be started; the preview tool also refuses the
+`panel` entry in `.claude/launch.json` because its `url` carries a path. Also
+not verified: the delete flow against the live `POST /local/channels/{id}/leave`.
+The user will build and test.
+
+Collaboration: a second session is redesigning the publishing dialog in the same
+tree. Ownership was agreed over cross-session messages — this session does not
+touch `publish-dialog.tsx` or `components/publish/**`, and the publish call site
+is stable at `components/channel-explorer/channel-messages-pane.tsx` with the
+props shape `open` / `onOpenChange` / `localChannelId` / `message` / `onSuccess`.
+
+2026-11-04 — publishing dialog redesign (three-column workspace + mobile wizard).
+The desktop stepper is gone: `publish-dialog.tsx` is now a shell around
+`components/publish/*`, still exporting `PublishDialog` with the same props
+(`open` / `onOpenChange` / `localChannelId` / `message` / `onSuccess`) so the
+call site in `channel-explorer/channel-messages-pane.tsx` needed no change.
+One draft, two presentations; `lib/publish-draft.ts` holds every rule and is
+proved by `publish-draft.test.ts`, the markup by `publish-workspace.test.tsx`,
+both run by the new `scripts/test-publish.mjs`.
+
+Backend: `POST /local/wordpress/{id}/posts` gained `slug`, `categories`,
+`tag_ids` and `media.attachment_id`; `GET /local/wordpress/{id}/categories` and
+`/tags` were added so the form reads the destination site's own terms through
+this backend. `wordpress.Client.ListTerms` pages the taxonomy. Telegram
+`media.attachment_id` now names which source attachment is sent or uploaded.
+
+VERIFIED: gofmt/vet/build/test all green; docsgen and --check up to date;
+apidocs tests green; frontend 156 tests green; typecheck clean; frontend build
+passed. NOT verified: anything rendered in a browser — RTL column order, wizard
+steps and both previews are asserted from rendered markup only, because the
+preview tool refuses the `panel` launch entry and this sandbox cannot bind a
+port. The user will build and test.
+
+Collaboration: a parallel session redesigned the channel explorer in the same
+tree. Ownership was agreed over cross-session messages — it does not touch
+`publish-dialog.tsx` or `components/publish/**`, and its refactor is finished.
+One of its forks also claimed the WordPress terms work; that work was already
+done here and the fork is now archived, so nothing was overwritten.
+
+## 2026-11-04 — Channel workspace: full-bleed, no page header
+
+Layout-only change to the already-approved channel explorer. Three edits:
+
+- `lib/page.tsx` — `SectionHandle` gains `fullBleed?: boolean` and
+  `fullBleedSection(name)`, so a route can ask the layout for the whole content
+  area instead of the centered page column.
+- `routes/_panel/layout.tsx` — `PanelLayout` reads the flag from
+  `useMatches().some(...)` and renders `<Outlet />` either in the existing
+  `mx-auto w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8` column
+  (unchanged for every other page) or in a bare
+  `flex min-h-0 w-full flex-1 flex-col`. Global header, breadcrumbs and sidebar
+  are untouched.
+- `routes/_panel/channels.tsx` — `handle` is now `fullBleedSection("کانال‌ها")`;
+  the `PageHeader` ("کانال‌ها" + "کانال‌هایی که برای پایش و خواندن محتوا…") and its
+  `gap-4` are removed; the workspace's `bg-card rounded-xl border` wrapper is
+  removed so it is not a floating card. The "کانال جدید" action moved into the
+  channel-list toolbar.
+- `components/channel-explorer/channel-list.tsx` — the toolbar's add control is
+  now a compact labelled "کانال جدید" button (`size="sm"`) beside the search
+  field, replacing the icon-only "افزودن کانال".
+
+Nothing else changed: channel list, search, category chips, selection, actions,
+bubbles, media, reactions, footer, "ارسال این پیام", the publishing dialog,
+pagination and the API are all as they were. The only `max-w`/`mx-auto` left in
+the workspace is the message column inside the messages pane
+(`max-w-3xl mx-auto` in `channel-messages-pane.tsx`), which caps bubble width
+for readability the way Telegram Desktop does; the workspace and both panes have
+no width cap and no centering.
+
+VERIFIED: `react-router typegen` + `tsc --noEmit` clean;
+`node scripts/test-content.mjs` 21/21, `test-media.mjs` 19/19, `test-panel.mjs`
+57/57, `test-publish.mjs` 59/59; `npm run build` in `web/apps/web` succeeds.
+
+NOT verified in a browser: the workspace meeting the breadcrumb bar with no gap,
+independent pane scrolling, and the mobile single-pane switch. No local port can
+be bound in this sandbox (`EPERM`) and there is no authenticated backend here to
+log into, so no route was rendered — these are code-level conclusions only.
+
+Follow-up: the local `Checkbox`/`Textarea` in `components/publish/publish-primitives.tsx`
+were swapped onto `@workspace/ui`. The checkbox is now Base UI's, so its change
+API is `onCheckedChange` rather than `onChange`; `packages/ui` had no textarea,
+so `packages/ui/src/components/textarea.tsx` was added beside `input.tsx` and is
+the shared multiline control from now on. Verified after the swap with
+`npm run typecheck` and `node scripts/test-publish.mjs` (59 green). The heavier
+`npm run build` and the Go suite were deliberately not re-run — the user runs
+those.
+
+## 2026-11-04 — "ارسال این پیام" becomes a pill attached to its bubble
+
+Single-purpose visual polish in `components/channel-explorer/message-item.tsx`
+plus three tests. The action moves out of the message row (where it was an
+outlined `Button` with a paper-plane icon in its own column) and onto the
+bubble's own wrapper.
+
+New shape: `data-slot="message-bubble"` wrapper (`relative flex flex-col
+pb-4`) → `Bubble` → a `flex justify-start` row holding the pill with
+`relative z-10 -mt-3.5`. The pill is shadcn `Button variant="secondary"` styled
+as `h-7 rounded-full px-3 text-xs shadow-none ring-2 ring-background`, icon
+removed. Under RTL `justify-start` is the physical right; `-mt-3.5` straddles
+the bubble's bottom edge (14px in, 14px out), matching the shadcn "Yes, run it"
+reference without its destructive colours.
+
+Two robustness decisions worth keeping:
+- The pill is **in flow** rather than absolutely positioned. A bubble narrower
+  than the action grows to hold it, so the action can never overflow the
+  message pane or be clipped, and it always sits inside its bubble's footprint.
+- `actionBand = "pb-2"` goes on whichever of `BubbleContent` /
+  `BubbleReactions` is last, and only when `onPublish` is set. It is the clear
+  band the straddling control may cover, so text, images, attachments and the
+  reaction chips are never obscured. It is on the last child rather than on
+  `Bubble` because `cn` (a tailwind-merge engine) does not resolve `py-2.5`
+  against `pb-5`, so overriding the bubble's padding would have been
+  cascade-order dependent.
+
+`SendIcon` is no longer imported. Reactions (physical bottom-left, `justify-end`),
+the footer, the bubble's own look, the channel list, the media renderer and the
+publishing dialog are untouched.
+
+Tests: three added to `components/channel-explorer.test.tsx` — the pill is
+inside the bubble wrapper and `rounded-full`, it straddles the bottom edge on
+the physical right with a `ring-2` separation and no coloured border or icon,
+and the reserved band appears on the right child for both text-only and
+reacted messages. The old "publish before bubble in the DOM" assertion is gone:
+DOM order no longer decides the side.
+
+VERIFIED: `tsc --noEmit` clean; `test-content` 21/21, `test-media` 19/19,
+`test-panel` 60/60, `test-publish` 59/59. The rendered markup was inspected via
+a throwaway SSR render to confirm the class/DOM contract. NOT verified in a
+browser: the visual comparison against the reference and responsive behaviour —
+this sandbox cannot bind a port and has no authenticated backend.
+
+## 2026-11-04 — Bidirectional message scrolling and scroll anchoring
+
+Scroll/pagination work on the already-approved channel timeline; no interface
+redesign. Started by verifying the API rather than assuming it, which changed
+the design: `GET /local/channels/{id}/messages` is **not** offset paging.
+`internal/worker/worker.go` keeps a per-channel message-id cursor
+(`cursorFor`/`setCursor`) and `internal/gotdclient/dialogs.go` calls
+`messages.getHistory` with `OffsetID`, so page 1 is the newest edge, page N
+continues below the cursor, each page is newest-first, and `has_more` is
+`len >= limit`. That means `page + 1` cannot skip or duplicate when new
+Telegram messages arrive — but it does mean the frontend must never mix an
+upward walk with a downward one on the same cursor.
+
+New: `lib/message-timeline.ts` (pure state machine), `lib/scroll-anchor.ts`
+(pure anchor maths), `hooks/use-message-timeline.ts` (fetching, generation
+guard, single flight). Rewritten: `components/channel-explorer/channel-messages-pane.tsx`.
+Removed: `hooks/use-infinite-messages.ts` (only the pane used it).
+
+Behaviour: opening a channel renders the newest page chronologically and puts
+the reader at the bottom once; scrolling up loads the next older page and keeps
+their place by naming the message they are on; scrolling down reveals what is
+loaded and fetches only when something above is genuinely missing; the jump
+control fills that range and returns to the newest message; auto-follow turns
+off the moment the reader scrolls away and back on at the bottom. Per-direction
+loading and error state, inline retry, end-of-history stops, and a known hole is
+said out loud rather than drawn as continuous history.
+
+Two focused fixes worth naming: anchoring is by message id and re-measured
+offset rather than a `scrollHeight` delta, so late media cannot drag the
+reader's message; and the first render shows a skeleton rather than the empty
+state, so a channel is not briefly claimed to have no messages.
+
+Tests: 40 added (`lib/message-timeline.test.ts`, `lib/scroll-anchor.test.ts`)
+covering initial load, ordering, prepending, dedupe, chain break, newer walks,
+single-flight, error preservation, follow rules, jump visibility and channel
+reset.
+
+VERIFIED: `tsc --noEmit` clean; `test-content` 21/21, `test-media` 19/19,
+`test-panel` 97/97, `test-publish` 59/59; `npm run build` succeeds. NOT
+verified in a browser (no port binding here, no authenticated backend):
+wheel/touch/keyboard scrolling and long-history smoothness.
+
+Backend deliberately untouched: `before_id`/`after_id` would make traversal
+cleaner, but the existing cursor is already id-based and stable against message
+arrival, and the brief asked for minimal backend change. The one real cost is
+that filling a large newer gap re-walks from the newest edge over several page
+requests.
+
+## 2026-11-04 — Fix: selecting a channel fetched nothing
+
+Regression from the scrolling rework: opening a channel made no `/messages`
+request at all. Cause — `lib/message-timeline.ts`'s `nextRequest(state,
+"older")` gated on `state.hasOlder`, and `emptyTimeline` has `hasOlder: false`
+because nothing is known about history before the first answer. The initial
+load was routed through that same gate, so it was refused before it could
+start. The old `useInfiniteMessages` called `load(1)` directly; the rewrite
+sent it through the "may I ask for more?" gate by mistake.
+
+Three fixes in `lib/message-timeline.ts` and `hooks/use-message-timeline.ts`:
+- `nextRequest(..., "older")` now allows page 1 whenever nothing is loaded yet
+  (`page === 0`), because that answer is what says how much history exists;
+  only later pages are gated on `hasOlder`.
+- The hook asks for the first page in its own effect on channel change instead
+  of waiting for the top sentinel to be on screen. Opening a channel must
+  fetch regardless of layout.
+- The channel-reset effect writes `stateRef` synchronously, so a request made
+  in the same commit cannot read the previous channel's state; and the
+  single-flight lock is released before the `aborted` early-return, so an
+  aborted request cannot leave the timeline unable to ask again.
+
+Test: `the first page is asked for before anything is known about history` —
+`nextRequest(resetTimeline(7), "older")` is page 1. The channel-reset test's
+last assertion changed to match: a fresh timeline asks for its own page 1 and
+nothing else.
+
+VERIFIED: `tsc --noEmit` clean; `test-content` 21/21, `test-media` 19/19,
+`test-panel` 98/98, `test-publish` 59/59; `npm run build` succeeds. NOT
+verified: the request actually leaving the browser — no port binding and no
+authenticated backend in this sandbox, so the user confirms that.
+
+2026-11-04 — BUG FIX (mine, from the user's report: "The source attachment could
+not be read; publish without media or retry."). The publish routes decoded the
+media id into `photoIndex`. Two mistakes in one: the media id is **opaque** —
+`internal/worker/worker.go` writes `"%d:%d" % (channelID, messageID)` into it,
+and the API documents it as something to hand back, not to read — and
+`photoIndex` is not an attachment selector at all, it picks which of a *photo's
+sizes* is wanted (`rpc.Backend.Media`: 0 = largest). So an id like `7:42` asked
+the worker for photo size 42, which does not exist, and every publish carrying
+media failed with the source-attachment error.
+
+Fix: `mediaIndexOf` is gone. Both `buildSend` and `runWordPressPublish` read at
+`largestPhotoSize = 0`, exactly as the gateway's own `media()` route does, and
+`attachment_id` is now an identity check (`namedAttachment`) that compares the
+opaque id against `source.message.Media.ID` and refuses a mismatch instead of
+quietly sending the wrong file. The frontend no longer invents `"media-0"`:
+`SourceAttachment` now separates `id` (draft identity) from `mediaId` (the API's
+opaque string), and `media.attachment_id` is only sent when the API actually
+reported one.
+
+Lesson worth keeping: `TestWordPressPublishUploadsTheNamedAttachment` asserted
+`lastMediaIndex == 2` and **passed while the behaviour was wrong**, because the
+fake worker accepts any index. A test over a stub proves the plumbing, not the
+contract. The corrected tests assert `lastMediaIndex == 0` against the real
+meaning of the parameter, and add two refusal cases.
+
+VERIFIED: `go test ./internal/gateway/` green (incl. 4 new/changed attachment
+tests), `gofmt -l` clean on the touched packages, `npm run typecheck` clean and
+`scripts/test-publish.mjs` 59 green. NOT re-run: the full `go test ./...`,
+`npm run build` — the user runs those.
+
+## 2026-11-04 — Administrators management UX redesign (create / edit / password / six-tab permissions)
+
+The administrator dialogs were rebuilt against a three-page product brief: create
+loses its paragraph and its status switch, edit loses its password field and
+gets the status on one compact row, password changing moves to its own dialog,
+and the flat permissions list becomes six tabs over one shared draft with a
+read-only report first.
+
+The interesting part was the resource scope. The old dialog stored a selection
+as `view: allow` on the picks plus `update: deny, delete: deny` on the rest, and
+only when the kind's global viewing permission was checked. Read against
+`channelstore.Authorizer`, that means the *view* was never scoped at all: an
+unpicked row has no `view` assignment, so it fell through to `channels.view` and
+the account saw every channel it had just been narrowed away from — while the
+picker told the reader "دسترسی فقط به همان موارد". The redesigned report tab has
+to say what access actually results, and under that shape the honest sentence
+was "all of them". The rows now carry `view: deny` on the items left out
+(D64), which is the only stored form that outranks the global grant.
+
+Nothing about D62's write rule moved: the write denies are still there, so
+`marksASelection` still marks a selection and the manage right is still narrowed
+to the picks. Dropping the write denies to shorten the rows would have been the
+real regression — a lone `view: deny` is an exclusion over the whole, not a
+selection, and would have let a scoped manager write anything.
+
+Second finding: `withViewDependencies` in the old route could never drop a
+manage right, because it added the missing view back in the same pass. Turning
+"مشاهده دسته‌بندی‌ها" off while "مدیریت دسته‌بندی‌ها" was on therefore did
+nothing. It is now `toggleGlobal` that reconciles: taking a viewing permission
+away takes its managing permission with it. Loaded data is still reconciled the
+other way (a manage without its view gets the view added), which is what
+`requireViewForManage` demands of the API.
+
+Tests: 49 new ones in `app/lib/admin-permissions.test.ts`,
+`app/lib/admin-users.test.ts` and
+`app/components/administrators/administrators.test.tsx`, run by
+`scripts/test-administrators.mjs` over the existing esbuild + node:test harness.
+They are SSR and pure-logic only — there is no DOM runner in this workspace and
+none can be added offline — so "the eye toggle flips the input type" and "the
+status text follows the switch" are pinned as rendering and reducer rules rather
+than as clicks. One focused Go test,
+`TestAPickedScopeNarrowsWhatMayBeSeenUnderAGlobalPermission`, proves the body the
+dialog now writes really does narrow what the API serves.
+
+The third finding is older than this change and only surfaced because the tests
+render the forms: `@workspace/ui`'s `FieldError` shows its message only while the
+control is *natively* invalid, so a refusal the control knows nothing about —
+the 409 "That username is already in use." above all — was computed, passed to
+`FieldError`, and dropped on the floor. `login`, `categories`, `channels` and
+`wordpress` all gate `FieldError` on their own error and were affected the same
+way. The wrapper now passes `match`, which tells the primitive to render what
+its caller rendered; nothing about who decides there is an error moved.
+
+VERIFIED: `make check` green (gofmt, vet, `go test ./...`, panel version tests,
+web typecheck, five web test suites 246 in total, docsgen --check, build),
+panel re-embedded, `bin/telesync` built. NOT verified in a browser: the sandbox
+denies local port binding, so nothing was clicked through.
+
+One open product question left deliberately unresolved: `content.publish` has no
+editor under the six-tab layout the brief specifies (the عمومی tab is to hold the
+server-status permission alone). It is preserved in the draft and round-trips
+unchanged so a save never deletes a permission it was not asked about, and the
+report tab shows it read-only. If the owner wants it editable, the عمومی tab is
+where it belongs.
+
+## 2026-11-04 — responsive panel: bottom navigation and scrollable tables
+
+- Shell: `SidebarProvider`'s mobile gate moved from `<md` to `<lg` (1024px) and
+  the desktop `<aside>` from `md:block` to `lg:block`; the panel layout no longer
+  renders `SidebarTrigger`, its header is `hidden … lg:flex`, and the floating
+  `BottomNav` holds the five destinations with icons only. It is a sibling of
+  the content column, so it is viewport-fixed and not relative to the
+  breadcrumb bar. Below `lg` the header is gone, so the breadcrumb now exists
+  only on desktop — flagged for the owner.
+- Tables: the shared `Table` table is `min-w-max` inside its single
+  `overflow-x-auto` container, so narrow viewports scroll the table and never
+  the document. Actions cells are `sticky left-0` (physical left in RTL); the
+  inset edge shadow the primitives first carried was removed because the
+  saw it as an extra border the other tables do not have.
+- WordPress: card list removed, one table at every width, toolbar stacks below
+  `lg`, search full width.
+- Tests: `apps/web/scripts/test-responsive.mjs` bundles `*.responsive.test.tsx`
+  (esbuild + node:test) and runs them; it is not yet wired into `npm test`.
+  `scripts/woff2-cmap.mjs` (a WOFF2 cmap reader) was started to check the
+  bundled Vazirmatn glyphs and is not used by any test yet.
+- Not verified: no browser (Chromium cannot start in this sandbox).

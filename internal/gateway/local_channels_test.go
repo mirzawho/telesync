@@ -488,6 +488,61 @@ func TestLocalChannelRoutesRequireAuthAndPerChannelAccess(t *testing.T) {
 	}
 }
 
+func TestManageChannelsRemovesARecordAndStaysInsideItsSelection(t *testing.T) {
+	env, _ := channelsEnv(t, "official")
+	everything := env.localRow(t, "official", 500, "every", "")
+	picked := env.localRow(t, "official", 501, "picked", "")
+	unpicked := env.localRow(t, "official", 502, "unpicked", "")
+	leave := func(who identity, row channelstore.Channel) *http.Response {
+		return env.send(t, who.token, http.MethodPost,
+			fmt.Sprintf("%s/%d/leave", localChannelsPath, row.ID), `{"telegram": false}`)
+	}
+
+	// The panel's "manage channels" is the global channels.create with
+	// channels.view and no channel picked: it removes any record.
+	manager := env.account(t, "manager", channelstore.PermissionChannelsView, channelstore.PermissionChannelsCreate)
+	if resp := leave(manager, everything); resp.StatusCode != http.StatusOK {
+		t.Fatalf("a manage channels account leaving a channel = %d, want 200", resp.StatusCode)
+	}
+	if _, found, _ := env.store.GetByID(context.Background(), everything.ID); found {
+		t.Fatal("the record should be gone")
+	}
+
+	// The same permission, scoped to one channel, reaches only that channel.
+	// The dialog stores a selection as the picked channel's view grant plus an
+	// explicit write deny on the rest, so it is a real restriction: it survives
+	// the records it names and no channel added later slips past it.
+	scoped := env.account(t, "scoped", channelstore.PermissionChannelsView, channelstore.PermissionChannelsCreate)
+	env.grantChannels(t, scoped,
+		channelstore.ResourcePermissions{ResourceID: picked.ID, Permissions: []channelstore.ResourcePermission{
+			{Action: channelstore.ActionView, Effect: channelstore.EffectAllow},
+		}},
+		channelstore.ResourcePermissions{ResourceID: unpicked.ID, Permissions: []channelstore.ResourcePermission{
+			{Action: channelstore.ActionUpdate, Effect: channelstore.EffectDeny},
+			{Action: channelstore.ActionDelete, Effect: channelstore.EffectDeny},
+		}},
+	)
+	if resp := leave(scoped, picked); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the scoped manager leaving its own channel = %d, want 200", resp.StatusCode)
+	}
+	if resp := leave(scoped, unpicked); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("the scoped manager leaving another channel = %d, want 403", resp.StatusCode)
+	}
+	if _, found, _ := env.store.GetByID(context.Background(), unpicked.ID); !found {
+		t.Fatal("a refused leave must not delete the row")
+	}
+
+	// A channel recorded after the selection is outside it, so the scoped
+	// manager cannot take that one either.
+	late := env.localRow(t, "official", 503, "late", "")
+	if resp := leave(scoped, late); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("the scoped manager leaving a later channel = %d, want 403", resp.StatusCode)
+	}
+	if _, found, _ := env.store.GetByID(context.Background(), late.ID); !found {
+		t.Fatal("a refused leave must not delete the row")
+	}
+}
+
 func TestLocalChannelLeaveReadsNoCredentialFromTheBody(t *testing.T) {
 	env, _ := channelsEnv(t, "official")
 	row := env.localRow(t, "official", 500, "first", "")
@@ -518,8 +573,8 @@ func TestLocalChannelLeaveRefusesTheOperatorToken(t *testing.T) {
 	env, _ := channelsEnv(t, "official")
 	row := env.localRow(t, "official", 500, "first", "")
 
-	// The operator token authenticates no account, so it holds no per-channel
-	// delete assignment and the removal is refused; the record stays.
+	// The operator token authenticates no account, and only an account may
+	// remove a record; the removal is refused and the record stays.
 	resp := env.send(t, operatorToken, http.MethodPost, fmt.Sprintf("%s/%d/leave", localChannelsPath, row.ID), `{"telegram": false}`)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("leave as the operator = %d, want 403", resp.StatusCode)
@@ -581,6 +636,7 @@ func TestLocalChannelLeaveReportsAPartialFailure(t *testing.T) {
 	env, workers := channelsEnv(t, "official")
 	row := env.localRow(t, "official", 500, "first", "")
 	env.grantDeleteOn(t, row.ID)
+	base := env.handlerConfig()
 	env.useConfig(failingDeleteConfig(env, &failingDeleteStore{Store: env.store}))
 
 	resp := env.send(t, defaultCaller, http.MethodPost, fmt.Sprintf("%s/%d/leave", localChannelsPath, row.ID),
@@ -609,7 +665,7 @@ func TestLocalChannelLeaveReportsAPartialFailure(t *testing.T) {
 	}
 
 	// Retrying with telegram false removes the record and never asks Telegram.
-	env.useConfig(env.handlerConfig())
+	env.useConfig(base)
 	if resp := env.send(t, defaultCaller, http.MethodPost, fmt.Sprintf("%s/%d/leave", localChannelsPath, row.ID), `{}`); resp.StatusCode != http.StatusOK {
 		t.Fatalf("retry = %d", resp.StatusCode)
 	}

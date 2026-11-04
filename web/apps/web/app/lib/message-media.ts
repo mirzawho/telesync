@@ -67,3 +67,57 @@ export function releaseMedia(url: string) {
     URL.revokeObjectURL(url)
   }
 }
+
+// DOWNLOAD_TIMEOUT_MS bounds one download. A large document legitimately takes
+// a while, so it is far longer than a page's own calls.
+const DOWNLOAD_TIMEOUT_MS = 300_000
+
+/**
+ * downloadMedia fetches one attachment with the panel's bearer credential and
+ * asks the browser to save it under the given name.
+ *
+ * A plain <a href> cannot carry the Authorization header, and putting the token
+ * in the URL would leak it into history, logs and referrers. The bytes are
+ * therefore fetched the same way the player fetches them, and only then does
+ * the save happen — under the name the sender gave the file, passed in by the
+ * caller rather than guessed at here.
+ */
+export async function downloadMedia(
+  path: string,
+  filename: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const isBrowser = typeof window !== "undefined"
+  if (!isBrowser) return
+  const token = getToken()
+  if (!token) throw new Error("unauthorized")
+
+  await acquire(isBrowser)
+  let objectUrl = ""
+  try {
+    const response = await fetch(
+      new URL(API_BASE + path, window.location.origin),
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS)])
+          : AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      }
+    )
+    if (!response.ok) throw new Error(`media_error_${response.status}`)
+    objectUrl = URL.createObjectURL(await response.blob())
+    const anchor = document.createElement("a")
+    anchor.href = objectUrl
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    // The blob is only released after the save has been handed to the browser;
+    // letting it go on the same tick has been known to lose the file.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
+    objectUrl = ""
+  } finally {
+    release(isBrowser)
+    if (objectUrl) URL.revokeObjectURL(objectUrl)
+  }
+}

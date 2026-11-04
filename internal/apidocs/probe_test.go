@@ -348,8 +348,11 @@ func fakeMessage() rpc.Message {
 	}
 }
 
-func (fakeWorker) Media(context.Context, int64, int, int) (rpc.MediaFile, error) {
-	return rpc.MediaFile{MimeType: "text/plain", Data: []byte("bytes")}, nil
+func (fakeWorker) Media(context.Context, int64, int, int, rpc.MediaSlice) (rpc.MediaStream, error) {
+	return rpc.MediaStream{
+		MimeType: "text/plain", Filename: "documented.txt", Size: 5, Length: 5,
+		Body: io.NopCloser(strings.NewReader("bytes")),
+	}, nil
 }
 
 func (fakeWorker) Find(context.Context, rpc.FindRequest) (rpc.FindResult, error) {

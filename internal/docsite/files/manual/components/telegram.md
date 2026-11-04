@@ -116,12 +116,85 @@ listing and messages use numbers.
 
 History is newest first, paged by message id with the caveats in the pagination
 paragraph. The list body has no channel object: the channel is in the path.
+
+### The `media` descriptor
+
 `media` on a message is a descriptor; `media.url` is the path that streams the
 bytes — relative to the API root, so a client joins it to the root it talks to
 (`/api/v1/telegram/{key}/...`; behind the panel's mount,
-`/admin/api/v1` + the same remainder) — capped at 32 MiB per download. The URL is present only for media that
-has bytes (photo, video, document, audio, voice, sticker, gif). Media responses are bytes, not JSON,
-with `Cache-Control: private, max-age=86400`.
+`/admin/api/v1` + the same remainder). The URL is present only for media that
+has bytes (photo, video, document, audio, voice, sticker, gif).
+
+```json
+{
+  "id": 36,
+  "text": "",
+  "media": {
+    "id": "6:36",
+    "type": "document",
+    "label": "فایل",
+    "filename": "original-app-name.apk",
+    "mime_type": "application/vnd.android.package-archive",
+    "size": 59797754,
+    "url": "/telegram/cat/channels/6/messages/36/media"
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | `{channel_id}:{message_id}` of the attachment's message; opaque, and stable across pages. |
+| `type` | `photo`, `video`, `document`, `audio`, `voice`, `sticker`, `gif`, `poll`, `geo`, `webpage` or `other`. |
+| `label` | the localised description of that kind ("فایل", "صدا"). It describes the media, and is **not** the name of a file. |
+| `filename` | the name the sender gave the file, exactly as Telegram reported it (`documentAttributeFilename`). **Omitted when Telegram never named it** — never filled in from the label, the MIME type or anything else. Only document-based media can carry one, so audio, video and other documents report it and a photo never does. |
+| `mime_type` | the content type the backend reported; omitted when it reported none. |
+| `size` | the attachment's size in bytes; omitted when the backend reported none. It is the size of the whole attachment, and is what makes a range satisfiable or not. |
+| `url` | where the bytes are; omitted for media that has none to fetch (a poll, a location, a link preview). |
+
+`filename` is a separate fact from `label` and never replaces it: a message may
+carry both "فایل" and "original-app-name.apk", and both are reported.
+
+### Fetching the bytes
+
+`GET .../channels/{channel_id}/messages/{message_id}/media` answers with the
+attachment's bytes, never JSON. They are streamed as they arrive from Telegram,
+so a large document is transferred without being held in memory at any point,
+and there is no size limit beyond what Telegram itself will store.
+
+| Header | Meaning |
+| --- | --- |
+| `Content-Type` | the attachment's own type, or `application/octet-stream` when the backend named none. |
+| `Content-Disposition` | always `attachment`, with the sender's filename when there is one. The name is sent both as a plain `filename` parameter (only when it is ASCII) and as an RFC 5987 `filename*=UTF-8''…` parameter, so a Persian name survives the header byte for byte. Without a name there is no filename parameter at all. |
+| `Content-Length` | the length of the answer, when it is known. |
+| `Accept-Ranges` | `bytes` when the attachment's size is known, `none` when it is not. |
+| `X-Content-Type-Options` | `nosniff`: the bytes are a file the sender named, and a browser must not render them as something else. |
+| `Cache-Control` | `private, max-age=86400`: the same message id always yields the same bytes. |
+
+The route is behind the same authentication and channel permission checks as
+every other Telegram route, and nothing about the worker — its socket, its
+credentials, the Telegram account behind it — appears in any header or body.
+
+### Byte ranges
+
+A `Range` request is honoured when the backend reported a size, so a player can
+seek in a long attachment and a download can resume.
+
+- `Range: bytes=2-5` and `Range: bytes=6-` answer `206 Partial Content` with
+  `Content-Range: bytes 2-5/10` and `Content-Range: bytes 6-9/10`.
+- `Range: bytes=-3` is a suffix: the last three bytes.
+- A range that reaches past the end is clamped to it; one that starts past the
+  end answers `416 Range Not Satisfiable` with `Content-Range: bytes */10`, the
+  real length, so a client can recover.
+- A header that is not one valid byte range — an unknown unit, a reversed
+  range, several ranges at once, anything unparseable — is **ignored** and the
+  whole attachment is sent with `200`, exactly as RFC 9110 allows.
+- When the backend reported no size there is nothing to slice against:
+  `Accept-Ranges` is `none`, a `Range` header is ignored, and the whole
+  attachment is sent. Ranges are never advertised for an attachment the route
+  cannot serve them for.
+
+Only one range is served per request; a request for several is answered with
+the whole attachment.
 
 ### Views and reactions
 

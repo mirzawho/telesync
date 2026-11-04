@@ -281,7 +281,7 @@ func (s *Server) localChannels(w http.ResponseWriter, r *http.Request, requestID
 }
 
 func (s *Server) listLocalChannels(w http.ResponseWriter, r *http.Request, requestID string) {
-	page, perPage, q, err := parseLocalChannelQuery(r.URL.Query())
+	page, perPage, q, categoryIDs, err := parseLocalChannelQuery(r.URL.Query())
 	if err != nil {
 		s.fail(w, http.StatusBadRequest, CodeInvalidInput, err.Error(), requestID)
 		return
@@ -299,6 +299,10 @@ func (s *Server) listLocalChannels(w http.ResponseWriter, r *http.Request, reque
 	// without the global view the list is the per-record allows alone. The
 	// denied records are dropped first, so the page, the order and the total
 	// describe only what the caller may see.
+	//
+	// The category filter is passed to the store both ways, so it is applied
+	// before pagination and before the total — alongside the search text, and
+	// inside the caller's own visibility.
 	authr := actorAuth(r)
 	global := authr.CanList(channelstore.KindChannel)
 	denies := authr.HasDenies(channelstore.KindChannel, channelstore.ActionView)
@@ -306,11 +310,11 @@ func (s *Server) listLocalChannels(w http.ResponseWriter, r *http.Request, reque
 	ids := authr.ResourceIDs(channelstore.KindChannel, channelstore.ActionView)
 	if !restricted {
 		rows, total, err = store.ListChannels(r.Context(), channelstore.ChannelListQuery{
-			Page: page, PerPage: perPage, Query: q,
+			Page: page, PerPage: perPage, Query: q, CategoryIDs: categoryIDs,
 		})
 	} else {
 		var all []channelstore.Channel
-		all, err = s.channelsVisibleTo(r.Context(), store, authr, q, global, ids)
+		all, err = s.channelsVisibleTo(r.Context(), store, authr, q, categoryIDs, global, ids)
 		if err == nil {
 			visible := make([]channelstore.Channel, 0, len(all))
 			for _, ch := range all {
@@ -700,17 +704,27 @@ func (s *Server) authMessage(err error) string {
 	return "A valid access token is required; log in at " + s.fullPath(loginPath) + " first."
 }
 
-// parseLocalChannelQuery validates page, per_page and q.
-func parseLocalChannelQuery(q map[string][]string) (int, int, string, error) {
-	page, perPage, query, err := parseCategoryQuery(q)
+// parseLocalChannelQuery validates page, per_page, q and the category filter
+// the channels catalogue takes. The shared page/Q parser is strict about
+// unknown parameters, so `category_ids` is taken out first and read on its own
+// — the category and user listings keep rejecting it.
+func parseLocalChannelQuery(q map[string][]string) (int, int, string, []int64, error) {
+	categories, err := parseCategoryFilterIDs(q)
 	if err != nil {
-		return 0, 0, "", err
+		return 0, 0, "", nil, err
 	}
-	if len([]rune(query)) > channelstore.MaxCategoryDescriptionLen {
-		return 0, 0, "", errors.New("q must be at most " +
-			strconv.Itoa(channelstore.MaxCategoryDescriptionLen) + " characters.")
+	pageQ := make(map[string][]string, len(q))
+	for key, values := range q {
+		if key == "category_ids" {
+			continue
+		}
+		pageQ[key] = values
 	}
-	return page, perPage, query, nil
+	page, perPage, query, err := parsePageQuery(pageQ, channelstore.MaxCategoryDescriptionLen)
+	if err != nil {
+		return 0, 0, "", nil, err
+	}
+	return page, perPage, query, categories, nil
 }
 
 // channelsVisibleTo reads the records the listing may contain when the caller
@@ -721,10 +735,13 @@ func parseLocalChannelQuery(q map[string][]string) (int, int, string, error) {
 // view under no deny and a deny for the global view with denies. A record with
 // no assignment is therefore never selected for a caller who may not see all of
 // them. A store that cannot run the query lists the per-record grants instead.
+//
+// categoryIDs is the list's category filter: it narrows the same rows, and an
+// empty set is no filter at all.
 func (s *Server) channelsVisibleTo(ctx context.Context, store LocalChannelStore, authr *channelstore.Authorizer,
-	q string, global bool, ids map[int64]bool) ([]channelstore.Channel, error) {
+	q string, categoryIDs []int64, global bool, ids map[int64]bool) ([]channelstore.Channel, error) {
 
-	query := channelstore.ChannelListQuery{Query: q}
+	query := channelstore.ChannelListQuery{Query: q, CategoryIDs: categoryIDs}
 	userID := authr.UserID()
 	if global {
 		denied := authr.DeniedIDs(channelstore.KindChannel, channelstore.ActionView)

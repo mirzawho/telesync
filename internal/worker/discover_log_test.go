@@ -100,8 +100,8 @@ func (s *scriptedTelegram) Dialogs(context.Context) ([]tgapi.Channel, error) {
 func (s *scriptedTelegram) History(context.Context, tgapi.Channel, int, int) (tgapi.HistoryPage, error) {
 	return tgapi.HistoryPage{}, errors.New("not scripted")
 }
-func (s *scriptedTelegram) DownloadMedia(context.Context, tgapi.Channel, int) (tgapi.MediaFile, error) {
-	return tgapi.MediaFile{}, errors.New("not scripted")
+func (s *scriptedTelegram) DownloadMedia(context.Context, tgapi.Channel, int, tgapi.MediaSlice) (tgapi.MediaStream, error) {
+	return tgapi.MediaStream{}, errors.New("not scripted")
 }
 func (s *scriptedTelegram) Message(context.Context, tgapi.Channel, int) (tgapi.Message, error) {
 	return tgapi.Message{}, errors.New("not scripted")

@@ -5,6 +5,7 @@ package tgapi
 import (
 	"errors"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -63,6 +64,11 @@ type Media struct {
 	// webpage or other.
 	Type  string
 	Label string
+	// Filename is the name the sender gave the file, exactly as Telegram
+	// reported it. It is empty when Telegram reported no name, and is never
+	// derived from the media type or the MIME type: a name nobody chose is not
+	// a filename. Only document-based media can carry one.
+	Filename string
 	// MimeType and Size come from the backend when it reports them.
 	MimeType string
 	Size     int64
@@ -72,6 +78,45 @@ type Media struct {
 type MediaFile struct {
 	MimeType string
 	Data     []byte
+}
+
+// MediaSlice names the part of one attachment to stream.
+//
+// It carries the two shapes an HTTP Range header takes: a run of bytes counted
+// from the start of the attachment, and a suffix counted from its end. Exactly
+// one shape is used at a time — Tail greater than zero selects the suffix and
+// makes the other two fields meaningless.
+type MediaSlice struct {
+	// Offset is the first byte wanted, counted from the start of the attachment.
+	Offset int64
+	// Limit is the most bytes wanted after Offset. Zero means "everything from
+	// Offset to the end".
+	Limit int64
+	// Tail is how many of the attachment's last bytes are wanted. Zero means
+	// the slice is counted from Offset instead.
+	Tail int64
+}
+
+// MediaStream is one attachment's content, streamed from the backend.
+//
+// The body is a reader over Telegram's own chunks, so a 60 MB document reaches
+// the caller without ever landing in one buffer. The caller closes the body
+// when it is done, including when it stops early.
+type MediaStream struct {
+	// MimeType is the content type the backend reported for the attachment.
+	MimeType string
+	// Filename is the name the sender gave the file, empty when Telegram
+	// reported none. It is never invented.
+	Filename string
+	// Size is the byte size of the whole attachment, zero when the backend did
+	// not report one. It is not the size of the slice Body yields.
+	Size int64
+	// Offset is the attachment byte offset Body starts at.
+	Offset int64
+	// Length is the number of bytes Body will yield, zero when the total is
+	// unknown and the body simply runs to the end of the attachment.
+	Length int64
+	Body   io.ReadCloser
 }
 
 // Sender identifies a message author.

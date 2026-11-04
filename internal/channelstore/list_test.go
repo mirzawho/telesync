@@ -200,3 +200,69 @@ func TestListChannelsForUserIsScopedByTheAssignment(t *testing.T) {
 	}
 	want("update grant without view", ids(), a.ID)
 }
+
+func TestListChannelsFiltersByAtLeastOneSelectedCategory(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	tech := upsert(t, store, "official", 1, "Tech Daily", "tech")
+	sports := upsert(t, store, "official", 2, "Sports Hour", "sports")
+	plain := upsert(t, store, "official", 3, "Untagged", "plain")
+	newsCat, err := store.CreateCategory(ctx, "News", "")
+	if err != nil {
+		t.Fatalf("CreateCategory: %v", err)
+	}
+	sportsCat, err := store.CreateCategory(ctx, "Sports", "")
+	if err != nil {
+		t.Fatalf("CreateCategory: %v", err)
+	}
+	if err := store.ReplaceCategories(ctx, tech.ClientKey, tech.ChannelID, []int64{newsCat.ID}); err != nil {
+		t.Fatalf("ReplaceCategories: %v", err)
+	}
+	if err := store.ReplaceCategories(ctx, sports.ClientKey, sports.ChannelID, []int64{sportsCat.ID}); err != nil {
+		t.Fatalf("ReplaceCategories: %v", err)
+	}
+
+	one, total, err := store.ListChannels(ctx, channelstore.ChannelListQuery{
+		Page: 1, PerPage: 20, CategoryIDs: []int64{newsCat.ID},
+	})
+	if err != nil {
+		t.Fatalf("ListChannels: %v", err)
+	}
+	if total != 1 || len(one) != 1 || one[0].ID != tech.ID {
+		t.Fatalf("news filter = %d/%d rows (ids %v), want only the tech channel", total, len(one), channelIDs(one))
+	}
+
+	// OR semantics: either selected category admits its channels, but an
+	// untagged channel never appears.
+	both, total, err := store.ListChannels(ctx, channelstore.ChannelListQuery{
+		Page: 1, PerPage: 20, CategoryIDs: []int64{newsCat.ID, sportsCat.ID},
+	})
+	if err != nil {
+		t.Fatalf("ListChannels: %v", err)
+	}
+	if total != 2 || len(both) != 2 {
+		t.Fatalf("both categories = %d/%d rows (ids %v), want the 2 tagged channels", total, len(both), channelIDs(both))
+	}
+	for _, ch := range both {
+		if ch.ID == plain.ID {
+			t.Fatal("untagged channel appeared under a category filter")
+		}
+	}
+
+	// A filter of no categories behaves as no filter at all.
+	_, unfiltered, err := store.ListChannels(ctx, channelstore.ChannelListQuery{Page: 1, PerPage: 20})
+	if err != nil {
+		t.Fatalf("ListChannels: %v", err)
+	}
+	if unfiltered != 3 {
+		t.Fatalf("no filter total = %d, want 3", unfiltered)
+	}
+}
+
+func channelIDs(rows []channelstore.Channel) []int64 {
+	out := make([]int64, 0, len(rows))
+	for _, ch := range rows {
+		out = append(out, ch.ID)
+	}
+	return out
+}

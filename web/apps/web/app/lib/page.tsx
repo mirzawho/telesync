@@ -9,10 +9,19 @@ import { errorMessage } from "@/lib/api"
 // data.
 export interface SectionHandle {
   section?: string
+  // fullBleed asks the layout to drop the page column's max-width, centering
+  // and gutters for this route. It is for a workspace that is the screen — the
+  // channel explorer — not for a document page, and it is opt-in so every other
+  // route keeps its margins.
+  fullBleed?: boolean
 }
 
 export function section(name: string): SectionHandle {
   return { section: name }
+}
+
+export function fullBleedSection(name: string): SectionHandle {
+  return { section: name, fullBleed: true }
 }
 
 export function pageMeta(name: string) {

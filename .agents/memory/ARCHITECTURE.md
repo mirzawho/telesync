@@ -24,7 +24,7 @@ internal/peerstore      per-worker channel access-hash memory
 internal/login          interactive authorization state machine
 internal/tgapi          library-independent data the worker exchanges
 internal/auth           Argon2id hashing, HS256 tokens
-internal/channelstore   SQLite: migrations 1–5, repositories, Authorizer
+internal/channelstore   SQLite: migrations 1–7, repositories, Authorizer
 internal/avatarcache    persistent 24 h avatar cache
 internal/secrets        AES-256-GCM seal for credentials that must be read back
 internal/wordpress      WordPress REST client: URL/SSRF rules, settings probe
@@ -110,13 +110,15 @@ worker process (per key)
                                        ──► MTProto
 ```
 
-- **Migrations 1–5:** `managed_channels`, `categories`, `channel_categories`,
+- **Migrations 1–7:** `managed_channels`, `categories`, `channel_categories`,
   `users`, `user_permissions`, `user_channels_permission`,
   `user_categories_permission`, `wordpress_sites`, `user_wordpress_permission`,
-  `wordpress_site_categories`. **There is no message table**; messages are read
-  live from Telegram and never stored.
-- Only explicit actions write: `join` (Upsert `managed_channels`), `leave`,
-  category/user/site CRUD, and permission PUTs. Reads never write (D28, D29).
+  `wordpress_site_categories`, managed-channel notice/permission snapshots, and
+  `publish_operations` for idempotency. **There is no message table**; messages
+  are read live from Telegram and never stored.
+- Only explicit actions write: `join`/`leave`, category/user/site CRUD,
+  permission changes, and publishing (including its idempotency record). Reads
+  never write (D28, D29).
 - `foreign_keys(1)` in the DSN, `SetMaxOpenConns(1)`, file 0600, directory 0700.
 - Workers own the access-hash file because MTProto needs it per client; the
   daemon owns the keyed stores because it is the only component that knows every
@@ -128,8 +130,9 @@ worker process (per key)
 `/healthz` and `/docs...` (public), `/api/v1/auth/login` (public),
 `/api/v1/...` (`serveAPI`), everything else under the mount → the panel.
 `serveTelegram` authenticates **before** looking up the key; an unknown or
-disabled key is `404 unknown_client`. Only `channels/{id}/join` is POST on the
-Telegram side; the local side has POST/PUT/PATCH/DELETE per resource.
+disabled key is `404 unknown_client`. Telegram-side writes are explicit join and
+publishing operations; content reads do not write. Local resources have their
+own POST/PUT/PATCH/DELETE routes.
 
 Authorization: `auth.authenticate` (operator token in constant time, or HS256 →
 user re-read + `AuthorizerFor` + `PermissionsOf` per request) → handlers →
@@ -148,24 +151,26 @@ Users: `users` table, Argon2id PHC hashes, HS256 JWT (`iss=telesync`,
 ≤ 24 h. Operator token (`api.auth_token_env`) only on loopback; it holds every
 permission but is not an account. WordPress: `internal/secrets` seals the
 application password (AES-256-GCM, versioned box) with a key from
-`api.wordpress.*` (never generated); `internal/wordpress` probes
-`wp/v2/settings` + `wp/v2/media/{id}` through an https-only, public-host,
-resolve-once, no-redirect, no-proxy client. `Server.Credential` is the only
-decryption path and no route calls it.
+`api.wordpress.*` (never generated); the explicit WordPress publish route opens
+it only for the backend request and never returns it. `internal/wordpress`
+probes `wp/v2/settings` + `wp/v2/media/{id}` through an https-only, public-host,
+resolve-once, no-redirect, no-proxy client. `Server.Credential` is the
+backend-only decryption path.
 
 ## Telegram adapter — current operations
 
 `Manager` (gotdclient): `Dialogs` (`messages.getDialogs`), `History`
-(`messages.getHistory`), `Message` (`channels.getMessages`), `DownloadMedia` and
-`DownloadChannelAvatar` (downloader, 32 MiB cap), `FindChannels`
-(`contacts.resolveUsername`, `messages.checkChatInvite`, `contacts.search` +
-`messages.searchGlobal`, peer-cache resolution), `ResolveChannel`,
-`JoinChannel` (`channels.joinChannel` / `messages.importChatInvite`),
-`LeaveChannel` (`channels.leaveChannel`).
+(`messages.getHistory`), `Message` (`channels.getMessages`), `DownloadMedia`,
+`DownloadChannelAvatar` (downloader, 32 MiB cap), `DownloadCustomEmoji`,
+`SendMessage`, `FindChannels` (`contacts.resolveUsername`,
+`messages.checkChatInvite`, `contacts.search` + `messages.searchGlobal`,
+peer-cache resolution), `ResolveChannel`, `JoinChannel`
+(`channels.joinChannel` / `messages.importChatInvite`), and `LeaveChannel`
+(`channels.leaveChannel`).
 
-**No send, forward, copy, edit or delete call exists in the adapter.** Adding
-publishing is a new adapter operation: `rpc.Backend` → `rpc.Client` →
-`worker.Service` → `Manager` → `tg.Client`.
+`SendMessage` is the explicit Telegram publishing operation through
+`rpc.Backend` → `rpc.Client` → `worker.Service` → `Manager` → `tg.Client`.
+Reading a source message never sends, forwards, copies, edits, or deletes it.
 
 `tgapi.NormalizePermissions(ChannelAccess)` is the single permission
 normalizer. The adapter builds `ChannelAccess` from the channel object

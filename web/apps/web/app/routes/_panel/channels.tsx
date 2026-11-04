@@ -2,41 +2,29 @@ import {
   Link,
   redirect,
   useNavigation,
-  useRevalidator,
+  useOutlet,
+  useParams,
   useSearchParams,
   useSubmit,
+  type ShouldRevalidateFunctionArgs,
 } from "react-router"
 import {
   CloudOffIcon,
   MessageSquareTextIcon,
-  MoreHorizontalIcon,
   PlusIcon,
-  SearchIcon,
   SendIcon,
-  UsersIcon,
 } from "lucide-react"
 import * as React from "react"
 
-import { ChannelAvatar } from "@/components/channel-avatar"
-import {
-  Combobox,
-  ComboboxChip,
-  ComboboxChips,
-  ComboboxChipsInput,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxValue,
-  useComboboxAnchor,
-} from "@workspace/ui/components/combobox"
-import { ConfirmDialog } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { PageError, PageShell, pageMeta, section } from "@/lib/page"
-import { faDateTime, faDigits } from "@/components/persian-digits"
-import { SearchInput } from "@/components/search-input"
-import { EmptyState, ErrorState, LoadingState } from "@/components/states"
-import { Badge } from "@workspace/ui/components/badge"
+import { CategoryMultiSelect } from "@/components/category-multi-select"
+import { ChannelListPane } from "@/components/channel-explorer/channel-list"
+import { ChannelDeleteDialog } from "@/components/channel-explorer/channel-delete-dialog"
+import { fullBleedSection, pageMeta } from "@/lib/page"
+import { filterChannels, toggleCategory } from "@/lib/channel-filter"
+import { deleteChannelForm, fileCategoriesForm } from "@/lib/channel-actions"
+import { EmptyState, ErrorState } from "@/components/states"
+import { SubmitButton } from "@/components/submit-button"
+import { TelegramServerCombobox } from "@/components/telegram-server-combobox"
 import { Button } from "@workspace/ui/components/button"
 import {
   Dialog,
@@ -47,27 +35,14 @@ import {
   DialogTitle,
 } from "@workspace/ui/components/dialog"
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@workspace/ui/components/dropdown-menu"
-import {
   Field,
   FieldDescription,
   FieldError,
   FieldLabel,
   FieldControl,
 } from "@workspace/ui/components/field"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@workspace/ui/components/table"
+import { useToast } from "@workspace/ui/components/toast"
+import { cn } from "@workspace/ui/lib/utils"
 
 import { ApiError, apiRequest } from "@/lib/api"
 import { LOGIN_REDIRECT_TO, getToken, listAll, requireSession } from "@/lib/session"
@@ -79,11 +54,13 @@ import type {
   FoundChannel,
   TelegramServer,
 } from "@/lib/types"
-import { connectionLabels, connectionOf } from "@/lib/server-state"
 
 import type { Route } from "./+types/channels"
 
-const PAGE_SIZE = 20
+// The whole managed-channel list is read into the workspace so the search and
+// the category chips answer as the reader types. A deployment with a very large
+// inventory sees the first `LIST_PAGES * 100` channels.
+const LIST_PAGES = 5
 
 interface ChannelList {
   channels: Channel[]
@@ -105,13 +82,51 @@ function toAvailability(error: unknown): ChannelAvailability {
   }
 }
 
-// The server selector is a plain GET form: choosing a server is a navigation
-// to ?server=<key>, which reloads the loader from the local store. The table is
-// always the local database's; nothing about it is read from Telegram.
+// parseCategoryFilter reads the URL's category_ids: comma-separated the way the
+// backend documents it (`category_ids=1,2,3`), and repeated params as a
+// convenience. Anything that is not a positive integer is dropped rather than
+// invented.
+function parseCategoryFilter(value: string | null): number[] {
+  if (!value) return []
+  return value
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((id) => Number.isInteger(id) && id > 0)
+}
+
+// parseIDList reads a submit payload's category_ids. The dialog sends it as
+// one JSON array string; a URLSearchParams-flattened legacy value ("5,12") and
+// repeated form entries are read too. Anything that is not a positive integer
+// is dropped rather than invented.
+function parseIDList(raw: FormDataEntryValue | FormDataEntryValue[]): number[] {
+  const parts = (Array.isArray(raw) ? raw : [raw]).flatMap((entry) => {
+    if (typeof entry !== "string" || entry === "") return []
+    if (entry.startsWith("[")) {
+      // A JSON array of ids (numbers or numeric strings); anything else in
+      // the array is dropped.
+      try {
+        const parsed: unknown = JSON.parse(entry)
+        if (Array.isArray(parsed)) return parsed.map((id) => String(id))
+      } catch {
+        return []
+      }
+    }
+    return entry.split(",")
+  })
+  return [
+    ...new Set(
+      parts
+        .map((part) => Number(String(part).trim()))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    ),
+  ]
+}
+
+// The workspace holds the channel list and the categories; which channel is
+// open is the child route's job, so that a channel carries no Telegram ids.
 export async function clientLoader({ request }: Route.LoaderArgs) {
   const { token } = await requireSession(request)
   const url = requestURL(request)
-  const q = (url.searchParams.get("q") ?? "").trim()
   const wanted = (url.searchParams.get("server") ?? "").trim()
 
   let availability: ChannelAvailability
@@ -120,8 +135,8 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
   let serversError: string | undefined
   try {
     // The listing is behind "servers.view". Without it this page still shows
-    // the local table; a server is named by typing its key, and the API
-    // refuses a key it does not serve.
+    // the local list; a server is named by typing its key, and the API refuses
+    // a key it does not serve.
     const { data } = await apiRequest<{ servers: TelegramServer[] }>(
       "GET",
       "/telegram",
@@ -142,26 +157,21 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
   const canPickServer = servers.length > 0
 
   try {
-    const { data, meta } = await apiRequest<ChannelList>(
-      "GET",
+    const listed = await listAll<Channel>(
+      token,
       "/local/channels",
-      {
-        token,
-        query: {
-          per_page: PAGE_SIZE,
-          page: (url.searchParams.get("page") ?? "") || undefined,
-          q: q || undefined,
-        },
-      }
+      (data) => (data as ChannelList).channels ?? [],
+      {},
+      LIST_PAGES
     )
     availability = {
       state: "ready",
-      channels: data.channels ?? [],
+      channels: listed.rows,
       meta: {
-        total: meta.total,
-        has_more: meta.has_more,
-        page: meta.page,
-        total_pages: meta.total_pages,
+        total: listed.meta.total,
+        has_more: listed.meta.has_more,
+        page: listed.meta.page,
+        total_pages: listed.meta.total_pages,
       },
     }
   } catch (error) {
@@ -172,21 +182,25 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
     }
     availability = toAvailability(error)
   }
-  // Every category by name: the dialog picks from this list and the table
-  // shows which of them hold each channel.
+
+  // Every category by name: the editor picks from this list and the chips are
+  // drawn from it.
   const categoryList = await listAll<Category>(
     token,
     "/local/categories",
     (data) => (data as { categories: Category[] }).categories ?? []
   )
-    .then((result) => [...result.rows].sort((a, b) => a.name.localeCompare(b.name, "fa")))
+    .then((result) =>
+      [...result.rows].sort((a, b) => a.name.localeCompare(b.name, "fa"))
+    )
     .catch(() => [] as Category[])
+
   // Which categories hold which channel, asked from the category side: one
   // listing per category, in parallel, and a category that cannot be read is
-  // simply not shown against any channel.
-  const channelCategories: Record<number, string[]> = {}
+  // simply not shown against any channel. The chips filter on these ids.
+  const filed: Record<number, number[]> = {}
   if (availability.state === "ready") {
-    const filed = await Promise.all(
+    const under = await Promise.all(
       categoryList.map(async (category) => {
         const result = await apiRequest<{ channels: Channel[] }>(
           "GET",
@@ -196,23 +210,33 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
         return [category, result?.data?.channels ?? []] as const
       })
     )
-    for (const [category, channels] of filed) {
+    for (const [category, channels] of under) {
       for (const channel of channels) {
-        ;(channelCategories[channel.id] ??= []).push(category.name)
+        ;(filed[channel.id] ??= []).push(category.id)
       }
     }
   }
 
   return {
     token,
-    q,
     server,
     servers,
     serversError,
+    canPickServer,
     availability,
     categories: categoryList,
-    channelCategories,
+    filed,
   }
+}
+
+// The workspace's list is not a function of which channel is open: moving
+// between channels must not throw the list away and rebuild it, and the search
+// and the chips are applied to what is already in hand. Only a submission —
+// a channel added, refiled or deleted — asks the server for the list again.
+export function shouldRevalidate({
+  formMethod,
+}: ShouldRevalidateFunctionArgs): boolean {
+  return Boolean(formMethod)
 }
 
 // describeJoin turns a join response into the one sentence it deserves.
@@ -265,13 +289,14 @@ export async function clientAction({
   const { token } = await requireSession(request)
   const form = await request.formData()
   const intent = String(form.get("intent") ?? "")
+  const url = requestURL(request)
 
   if (intent === "define") {
     // One field, one query: the discovery route takes the same forms the others
     // do (an id, @username or a t.me link), so nothing here has to classify it.
     const server = String(form.get("server") ?? "")
     const q = String(form.get("ref") ?? "").trim()
-    const categoryIDs = form.getAll("category_ids").map(Number)
+    const categoryIDs = parseIDList(form.getAll("category_ids"))
     if (!server || !q) {
       return { error: "شناسه، نام کاربری یا لینک کانال را وارد کنید.", intent }
     }
@@ -332,7 +357,7 @@ export async function clientAction({
         await fileChannel(token, created.id, categoryIDs)
       }
     }
-    return redirect(strip(requestURL(request).pathname))
+    return redirect(strip(url.pathname))
   }
 
   if (intent === "join") {
@@ -362,7 +387,7 @@ export async function clientAction({
 
   if (intent === "categories") {
     // The edit dialog's save: the whole set of categories for one channel.
-    const selectedCategories = form.getAll("category_ids").map(Number)
+    const selectedCategories = parseIDList(form.getAll("category_ids"))
     const id = Number(form.get("id"))
     if (!Number.isInteger(id) || id <= 0) {
       return { error: "شناسه کانال نامعتبر است.", intent }
@@ -378,7 +403,7 @@ export async function clientAction({
       }
       return { error: "ذخیرهٔ دسته‌بندی‌ها انجام نشد.", intent }
     }
-    return redirect(strip(requestURL(request).pathname))
+    return redirect(strip(url.pathname))
   }
 
   if (intent !== "leave") {
@@ -396,10 +421,13 @@ export async function clientAction({
       `/local/channels/${id}/leave`,
       { token, body: { telegram } }
     )
-    const next = new URLSearchParams(requestURL(request).searchParams)
-    return redirect(
-      strip(`${requestURL(request).pathname}?${next.toString()}`)
-    )
+    // If the channel being deleted is the one open in the messages pane, that
+    // route no longer has a channel to show: go back to the workspace rather
+    // than leaving a link to a record that is gone.
+    const leaving = parseLocalID(url.pathname.split("/")[2])
+    const next = new URLSearchParams(url.searchParams)
+    if (leaving === id) return redirect(strip(`/channels${searchSuffix(next)}`))
+    return redirect(strip(`${url.pathname}${searchSuffix(next)}`))
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 401) {
@@ -410,9 +438,9 @@ export async function clientAction({
       }
       if (error.code === "partial_failure") {
         // Telegram left but the record stayed: the server's message carries the
-        // retry advice (leave with telegram:false).
+        // retry advice. The two effects are separate and are reported as such.
         return {
-          error: `${error.message} — برای حذف فقط رکورد محلی، دوباره با «حذف رکورد محلی» تلاش کنید.`,
+          error: `${error.message} — رکورد محلی هنوز در فهرست است.`,
           intent,
         }
       }
@@ -422,342 +450,233 @@ export async function clientAction({
   }
 }
 
+function searchSuffix(params: URLSearchParams): string {
+  const query = params.toString()
+  return query ? `?${query}` : ""
+}
+
+// parseLocalID reads a managed-channel id out of a path segment. It is the
+// local row id and never a Telegram channel id.
+function parseLocalID(raw: string | undefined): number | null {
+  if (!raw || !/^[0-9]+$/.test(raw)) return null
+  const value = Number(raw)
+  return Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
 export const meta = () => pageMeta("کانال‌ها")
 
-export const handle = section("کانال‌ها")
+export const handle = fullBleedSection("کانال‌ها")
 
-
-function serverStateBadge(server: TelegramServer) {
-  const state = connectionOf(server)
-  switch (state) {
-    case "connected":
-      return <Badge variant="success">{connectionLabels[state]}</Badge>
-    case "connecting":
-      return <Badge variant="muted">{connectionLabels[state]}</Badge>
-    case "needs_login":
-      return <Badge variant="warning">{connectionLabels[state]}</Badge>
-    default:
-      return <Badge variant="destructive">{connectionLabels[state]}</Badge>
-  }
-}
-
-// serverLabel is the selector's text: the key, and what the API says about the
-// server's connection. Configuration and health are shown as two facts.
-function serverLabel(server: TelegramServer) {
-  return `${server.key} (${server.type}) — ${connectionLabels[connectionOf(server)]}`
-}
-
-export default function Channels({
-  loaderData,
-  actionData,
-}: Route.ComponentProps) {
-  const { categories, channelCategories } = loaderData
-  const { token, q, server, servers, serversError, availability } = loaderData
+export default function Channels({ loaderData, actionData }: Route.ComponentProps) {
+  const { categories, filed, availability, servers, server, serversError } =
+    loaderData
+  const params = useParams()
+  const selectedId = parseLocalID(params.id)
+  // The open channel's timeline is the child route at `channels/:id/messages`,
+  // so a shared link and the back button both keep working.
+  const outlet = useOutlet()
   const navigation = useNavigation()
-  const revalidator = useRevalidator()
   const submit = useSubmit()
+  const { toast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [search, setSearch] = React.useState(q)
-  const submitting = navigation.state === "submitting"
 
+  // The filters live in the URL so a shared link and the browser's back and
+  // forward buttons restore them, and are applied to the list already in hand
+  // so typing is instant.
+  const q = searchParams.get("q") ?? ""
+  const categoryFilterIds = [
+    ...new Set(searchParams.getAll("category_ids").flatMap(parseCategoryFilter)),
+  ]
+  const [search, setSearch] = React.useState(q)
   React.useEffect(() => setSearch(q), [q])
 
-  // --- table state --------------------------------------------------------
-  const loading =
-    navigation.state === "loading" && navigation.location?.pathname === "/channels"
+  const applySearch = (value: string) => {
+    setSearch(value)
+    const next = new URLSearchParams(searchParams)
+    if (value.trim()) next.set("q", value.trim())
+    else next.delete("q")
+    // A filter change is not a page in the reader's history.
+    setSearchParams(next, { replace: true })
+  }
 
-  const [confirming, setConfirming] = React.useState<{
-    channel: Channel
-    telegram: boolean
-  } | null>(null)
+  const applyCategories = (ids: number[]) => {
+    const next = new URLSearchParams(searchParams)
+    if (ids.length > 0) next.set("category_ids", ids.join(","))
+    else next.delete("category_ids")
+    setSearchParams(next, { replace: true })
+  }
+
+  const clearFilters = () => {
+    setSearch("")
+    const next = new URLSearchParams(searchParams)
+    next.delete("q")
+    next.delete("category_ids")
+    setSearchParams(next, { replace: true })
+  }
+
+  const filtersActive = q.trim() !== "" || categoryFilterIds.length > 0
+
+  const rows =
+    availability.state === "ready"
+      ? filterChannels(availability.channels, {
+          search,
+          categoryIds: categoryFilterIds,
+          filed,
+        })
+      : []
+
+  // --- mutations ----------------------------------------------------------
+  const submitting = navigation.state === "submitting"
+  const [confirming, setConfirming] = React.useState<Channel | null>(null)
   const [defining, setDefining] = React.useState(false)
   const [editing, setEditing] = React.useState<Channel | null>(null)
-  // A failed save reopens the dialog it came from with the server's message.
+
+  // A successful action answers with a redirect, so actionData is gone by the
+  // time it lands; the intent recorded from the submit that just left is what
+  // names the result for the toast.
+  const pendingIntent = React.useRef<string | null>(null)
   React.useEffect(() => {
-    if (actionData?.intent === "define" && actionData.error) setDefining(true)
-    if (actionData?.intent === "categories" && actionData.error && editing) {
-      setEditing(editing)
-    }
-    // Reopening only needs the message to appear; editing is kept above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actionData])
+    const formData = navigation.formData
+    if (formData) pendingIntent.current = String(formData.get("intent") ?? "")
+  }, [navigation.formData])
+
   const wasSaving = React.useRef(false)
   React.useEffect(() => {
     if (wasSaving.current && !submitting && !actionData?.error) setEditing(null)
     wasSaving.current = submitting
   }, [submitting, actionData])
-  const confirmError =
-    confirming && actionData?.intent === "leave" ? actionData.error : null
 
   const wasSubmitting = React.useRef(false)
   React.useEffect(() => {
-    if (wasSubmitting.current && !submitting && !actionData?.error)
+    if (wasSubmitting.current && !submitting && !actionData?.error) {
       setConfirming(null)
+    }
     wasSubmitting.current = submitting
   }, [submitting, actionData])
 
-  const onSearchLocal = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const next = new URLSearchParams(searchParams)
-    if (search.trim()) next.set("q", search.trim())
-    else next.delete("q")
-    next.delete("page")
-    setSearchParams(next)
-  }
+  React.useEffect(() => {
+    if (actionData?.intent === "define" && actionData.error) setDefining(true)
+    // Reopening only needs the message to appear; `editing` is kept above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionData])
 
-  const goToPage = (page: number) => {
-    const next = new URLSearchParams(searchParams)
-    if (page > 1) next.set("page", String(page))
-    else next.delete("page")
-    setSearchParams(next)
-  }
+  const confirmError =
+    confirming && actionData?.intent === "leave" ? actionData.error : null
 
-  const page =
-    availability.state === "ready" ? (availability.meta.page ?? 1) : 1
-  const totalPages =
-    availability.state === "ready" ? (availability.meta.total_pages ?? 1) : 1
+  // Mutation feedback: success fires once when a submission ends clean (a
+  // redirect dropped actionData, so the recorded intent names the result);
+  // failure fires once per message so React's double invocation in development
+  // cannot repeat it.
+  const toastedError = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (actionData?.error) {
+      if (toastedError.current === actionData.error) return
+      toastedError.current = actionData.error
+      toast({
+        variant: "error",
+        title: "انجام نشد.",
+        description: actionData.error,
+      })
+      return
+    }
+    toastedError.current = null
+    if (wasSubmitting.current || submitting || actionData?.intent) return
+    const intent = pendingIntent.current
+    if (!intent) return
+    pendingIntent.current = null
+    const titles: Record<string, string> = {
+      define: "کانال ثبت شد.",
+      categories: "دسته‌بندی‌ها ذخیره شد.",
+      leave: "کانال از فهرست حذف شد.",
+    }
+    const title = titles[intent]
+    if (title) toast({ variant: "success", title })
+  }, [actionData, submitting, toast])
+
+  // On a narrow screen the workspace shows one pane at a time: the list until a
+  // channel is chosen, then its messages with a way back.
+  const showMessages = selectedId !== null
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="کانال‌ها"
-        description="کانال‌هایی که برای پایش و خواندن محتوا در فهرست سرورها ثبت کرده‌اید."
-        actions={
-          <Button onClick={() => setDefining(true)}>
-            <PlusIcon data-icon="inline-start" />
-            کانال جدید
-          </Button>
-        }
-      />
-
-      {/* D. The local table — always the local database, never Telegram */}
-      <section className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <form onSubmit={onSearchLocal} className="flex items-center gap-2" role="search">
-            <SearchInput
-              name="q"
-              value={search}
-              onChange={setSearch}
-              placeholder="جستجو در کانال‌های محلی…"
-              className="w-full sm:w-64"
+    // The workspace is the whole content area, directly under the breadcrumb
+    // bar: no page heading, no page column, no card around it. Each pane keeps
+    // its own scroll, so reading a channel never moves the list.
+    <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+      {/* Under RTL the first child sits on the physical right, which is where
+          the product wants the channel list; the messages fill the left. */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div
+          className={cn(
+            "min-h-0",
+            showMessages ? "hidden lg:flex" : "flex w-full lg:w-auto"
+          )}
+        >
+          {availability.state === "not_configured" ? (
+            <div className="flex w-full items-center justify-center p-6">
+              <EmptyState
+                icon={CloudOffIcon}
+                title="ذخیره‌سازی کانال‌های محلی پیکربندی نشده است"
+                description={`در این استقرار، کانال‌ها از پنل قابل مشاهده نیستند. پیام سرور: ${availability.message}`}
+              />
+            </div>
+          ) : availability.state === "unavailable" ? (
+            <div className="flex w-full items-center justify-center p-6">
+              <ErrorState
+                title="وضعیت کانال‌ها در دسترس نیست"
+                message={`${availability.message} (کد: ${availability.code})`}
+                onRetry={() => window.location.reload()}
+              />
+            </div>
+          ) : (
+            <ChannelListPane
+              channels={rows}
+              categories={categories}
+              filed={filed}
+              selectedId={selectedId}
+              search={search}
+              onSearchChange={applySearch}
+              selectedCategories={categoryFilterIds}
+              onToggleCategory={(id) =>
+                applyCategories(toggleCategory(categoryFilterIds, id))
+              }
+              onAdd={() => setDefining(true)}
+              onEditCategories={setEditing}
+              onDelete={setConfirming}
+              hasChannels={availability.channels.length > 0}
+              filtersActive={filtersActive}
+              onClearFilters={clearFilters}
             />
-            <Button type="submit" variant="outline" size="sm">
-              جستجو
-            </Button>
-          </form>
+          )}
         </div>
 
-        {availability.state === "not_configured" ? (
-          <div className="bg-card rounded-xl border">
-            <EmptyState
-              icon={CloudOffIcon}
-              title="ذخیره‌سازی کانال‌های محلی پیکربندی نشده است"
-              description={`در این استقرار، کانال‌ها از پنل قابل مشاهده نیستند. پیام سرور: ${availability.message}`}
-            />
-          </div>
-        ) : availability.state === "unavailable" ? (
-          <ErrorState
-            title="وضعیت کانال‌ها در دسترس نیست"
-            message={`${availability.message} (کد: ${availability.code})`}
-            onRetry={() => revalidator.revalidate()}
-          />
-        ) : loading ? (
-          <LoadingState label="در حال بارگذاری کانال‌ها…" />
-        ) : availability.channels.length === 0 ? (
-          <div className="bg-card rounded-xl border">
-            <EmptyState
-              icon={SendIcon}
-              title={q ? "نتیجه‌ای پیدا نشد" : "هیچ کانالی ذخیره نشده است"}
-              description={
-                q
-                  ? "عبارت جستجو را تغییر دهید."
-                  : "کانال‌ها پس از پیوستن موفق به یک کانال در اینجا ظاهر می‌شوند."
+        <div
+          className={cn(
+            "min-h-0 min-w-0 flex-1",
+            showMessages ? "flex" : "hidden lg:flex"
+          )}
+        >
+          {outlet ?? (
+            <WorkspaceEmptyState
+              hasChannels={
+                availability.state === "ready" && availability.channels.length > 0
               }
+              onAdd={() => setDefining(true)}
             />
-          </div>
-        ) : (
-          <div className="bg-card overflow-x-auto rounded-xl border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>کانال</TableHead>
-                  <TableHead>دسته‌بندی</TableHead>
-                  <TableHead>سرور</TableHead>
-                  <TableHead>اعضا</TableHead>
-                  <TableHead>آخرین همگام‌سازی</TableHead>
-                  <TableHead className="w-12 text-end">
-                    <span className="sr-only">عملیات</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {availability.channels.map((channel) => (
-                  <TableRow key={channel.id}>
-                    <TableCell>
-                      <div className="flex min-w-0 items-center gap-3">
-                        <ChannelAvatar
-                          id={channel.id}
-                          title={channel.title}
-                          className="size-8"
-                        />
-                        <div className="flex min-w-0 flex-col">
-                          <Link
-                            to={`/channels/${channel.id}/messages`}
-                            className="hover:text-primary max-w-56 truncate font-medium transition-colors"
-                          >
-                            {channel.title}
-                          </Link>
-                          <span
-                            className="text-muted-foreground max-w-56 truncate text-xs"
-                            dir="ltr"
-                          >
-                            {channel.username
-                              ? `@${channel.username}`
-                              : channel.channel_id}
-                          </span>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {(channelCategories[channel.id] ?? []).length === 0 ? (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        ) : (
-                          channelCategories[channel.id].map((name) => (
-                            <Badge key={name} variant="outline">
-                              {name}
-                            </Badge>
-                          ))
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{channel.client_key}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground tabular-nums">
-                      {faDigits(channel.participants_count)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {faDateTime(channel.last_synced_at)}
-                    </TableCell>
-                    <TableCell className="text-end">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              aria-label={`عملیات کانال ${channel.title}`}
-                            />
-                          }
-                        >
-                          <MoreHorizontalIcon />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            render={
-                              <Link to={`/channels/${channel.id}/messages`} />
-                            }
-                          >
-                            <MessageSquareTextIcon />
-                            مشاهدهٔ پیام‌ها
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onClick={() => setEditing(channel)}
-                          >
-                            ویرایش دسته‌بندی‌ها
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onClick={() =>
-                              setConfirming({ channel, telegram: false })
-                            }
-                          >
-                            حذف رکورد محلی
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onClick={() =>
-                              setConfirming({ channel, telegram: true })
-                            }
-                          >
-                            خروج از کانال (تلگرام)
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            {(totalPages > 1 || page > 1) && (
-              <div className="flex items-center justify-between gap-2 border-t px-3 py-2 text-sm">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1 || loading}
-                  onClick={() => goToPage(page - 1)}
-                >
-                  قبلی
-                </Button>
-                <span className="text-muted-foreground tabular-nums">
-                  صفحهٔ {faDigits(page)} از {faDigits(totalPages)}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages || loading}
-                  onClick={() => goToPage(page + 1)}
-                >
-                  بعدی
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-      </section>
+          )}
+        </div>
+      </div>
 
-      <ConfirmDialog
+      <ChannelDeleteDialog
         open={confirming !== null}
         onOpenChange={(open) => !open && setConfirming(null)}
-        title={
-          confirming?.telegram ? "خروج از کانال در تلگرام" : "حذف رکورد محلی"
-        }
-        description={
-          confirming ? (
-            confirming.telegram ? (
-              <>
-                از کانال «{confirming.channel.title}» در تلگرام هم خارج می‌شوید
-                و رکورد محلی آن حذف می‌شود. اگر تلگرام قبول کند اما حذف رکورد
-                محلی ناموفق باشد، پیام سرور نحوه تلاش دوباره را نشان می‌دهد.
-              </>
-            ) : (
-              <>
-                فقط رکورد محلی کانال «{confirming.channel.title}» حذف می‌شود؛
-                عضویت در تلگرام و داده‌های کانال دست نمی‌خورد.
-              </>
-            )
-          ) : (
-            ""
-          )
-        }
-        confirmLabel={
-          confirming?.telegram ? "خروج از تلگرام و حذف" : "حذف رکورد"
-        }
+        channel={confirming ?? PLACEHOLDER_CHANNEL}
         pending={submitting}
         error={confirmError}
-        onConfirm={() => {
+        onConfirm={({ leaveTelegram }) => {
           if (!confirming) return
-          submit(
-            {
-              intent: "leave",
-              id: String(confirming.channel.id),
-              telegram: confirming.telegram ? "true" : "false",
-            },
-            { method: "post" }
-          )
+          submit(deleteChannelForm(confirming.id, { leaveTelegram }), {
+            method: "post",
+          })
         }}
       />
 
@@ -765,12 +684,10 @@ export default function Channels({
         <EditChannelDialog
           channel={editing}
           categories={categories}
-          initial={categories
-            .filter((category) =>
-              (channelCategories[editing.id] ?? []).includes(category.name)
-            )
-            .map((category) => category.id)}
-          error={actionData?.intent === "categories" ? actionData.error : undefined}
+          initial={(filed[editing.id] ?? []).slice()}
+          error={
+            actionData?.intent === "categories" ? actionData.error : undefined
+          }
           pending={submitting}
           onClose={() => setEditing(null)}
         />
@@ -780,6 +697,7 @@ export default function Channels({
         <DefineChannelDialog
           servers={servers}
           server={server}
+          canPickServer={loaderData.canPickServer}
           categories={categories}
           error={actionData?.intent === "define" ? actionData.error : undefined}
           pending={submitting}
@@ -790,144 +708,47 @@ export default function Channels({
   )
 }
 
-// DefineChannelDialog adds one channel: it joins it on the chosen server and,
-// when a category is chosen, files it there afterwards.
-function DefineChannelDialog({
-  servers,
-  server,
-  categories,
-  error,
-  pending,
-  onClose,
-}: {
-  servers: TelegramServer[]
-  server?: string
-  categories: Category[]
-  error?: string
-  pending: boolean
-  onClose: () => void
-}) {
-  const submit = useSubmit()
-  const [ref, setRef] = React.useState("")
-  const [chosenServer, setChosenServer] = React.useState(server ?? "")
-  // The listing needs "servers.view"; without it the key is typed instead of
-  // picked, and the API still refuses a key it does not serve.
-  const canPickServer = servers.length > 0
-  const [categoryIds, setCategoryIds] = React.useState<number[]>([])
-  const [touched, setTouched] = React.useState(false)
-  const refError =
-    touched && ref.trim() === "" ? "شناسه، نام کاربری یا لینک کانال را وارد کنید." : null
+// The dialog is always mounted so its opening is animated; it is only ever
+// about a real channel, and this is what it shows before one is chosen.
+const PLACEHOLDER_CHANNEL: Channel = {
+  id: 0,
+  client_key: "",
+  channel_id: 0,
+  type: "channel",
+  title: "",
+  avatar_available: false,
+  membership_status: "unknown",
+  participants_count: null,
+  created_at: "",
+  updated_at: "",
+  last_synced_at: "",
+}
 
+function WorkspaceEmptyState({
+  hasChannels,
+  onAdd,
+}: {
+  hasChannels: boolean
+  onAdd: () => void
+}) {
   return (
-    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>کانال جدید</DialogTitle>
-          <DialogDescription>
-            کانال در سرور انتخاب‌شده پیدا و عضو می‌شود و در فهرست محلی ثبت
-            می‌گردد. اگر دسته‌ای انتخاب کنید، بعد از ثبت در همان دسته قرار
-            می‌گیرد.
-          </DialogDescription>
-        </DialogHeader>
-        {(
-          <form
-            className="flex flex-col gap-4"
-            noValidate
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (ref.trim() === "") {
-                setTouched(true)
-                return
-              }
-              const values: Record<string, string | string[]> = {
-                intent: "define",
-                server: chosenServer,
-                ref: ref.trim(),
-              }
-              if (categoryIds.length > 0) {
-                values.category_ids = categoryIds.map(String)
-              }
-              submit(values, { method: "post" })
-              return
-            }}
-          >
-            <Field>
-              <FieldLabel htmlFor="define-server">سرور تلگرام</FieldLabel>
-              {canPickServer ? (
-                <FieldControl
-                  id="define-server"
-                  value={chosenServer}
-                  onChange={(event) => setChosenServer(event.target.value)}
-                  render={<select />}
-                >
-                  {servers.map((s) => (
-                    <option key={s.key} value={s.key}>
-                      {s.key}
-                    </option>
-                  ))}
-                </FieldControl>
-              ) : (
-                <FieldControl
-                  id="define-server"
-                  dir="ltr"
-                  value={chosenServer}
-                  onChange={(event) => setChosenServer(event.target.value)}
-                  placeholder="official"
-                  required
-                />
-              )}
-            </Field>
-            <Field data-invalid={refError ? "" : undefined}>
-              <FieldLabel htmlFor="define-ref">کانال</FieldLabel>
-              <FieldControl
-                id="define-ref"
-                dir="ltr"
-                value={ref}
-                onChange={(event) => setRef(event.target.value)}
-                onBlur={() => setTouched(true)}
-                placeholder="@channel یا t.me/channel یا 1234567890"
-                required
-              />
-              {refError ? (
-                <FieldError>{refError}</FieldError>
-              ) : (
-                <FieldDescription>
-                  نام کاربری (@channel)، لینک t.me، لینک دعوت، شناسهٔ عددی یا
-                  عبارت جستجو؛ سرور خودش تشخیص می‌دهد.
-                </FieldDescription>
-              )}
-            </Field>
-            <Field>
-              <FieldLabel>دسته‌بندی‌ها (اختیاری)</FieldLabel>
-              <CategoryPicker
-                categories={categories}
-                selected={categoryIds}
-                onChange={setCategoryIds}
-              />
-              <FieldDescription>
-                یک کانال می‌تواند هم‌زمان در چند دسته باشد.
-              </FieldDescription>
-            </Field>
-            {error && (
-              <p
-                role="alert"
-                className="bg-destructive/10 text-destructive rounded-lg px-3 py-2 text-sm"
-              >
-                {error}
-              </p>
-            )}
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
-                انصراف
-              </Button>
-              <Button type="submit" disabled={pending}>
-                {pending ? "در حال ثبت…" : "ثبت کانال"}
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
+    <div className="flex flex-1 items-center justify-center p-6">
+      <EmptyState
+        icon={hasChannels ? MessageSquareTextIcon : SendIcon}
+        title={hasChannels ? "یک کانال انتخاب کنید" : "هنوز کانالی ثبت نشده است"}
+        description={
+          hasChannels
+            ? "برای مشاهده پیام‌ها، یک کانال از فهرست انتخاب کنید یا کانال جدیدی اضافه کنید."
+            : "کانال‌ها پس از پیوستن موفق به یک کانال در اینجا ظاهر می‌شوند."
+        }
+        action={
+          <Button onClick={onAdd}>
+            <PlusIcon data-icon="inline-start" />
+            کانال جدید
+          </Button>
+        }
+      />
+    </div>
   )
 }
 
@@ -955,7 +776,11 @@ function explainSearchError(error: ApiError): string {
 
 // fileChannel sets one channel's categories to exactly the ids given, through
 // the channel's own route.
-async function fileChannel(token: string, channelID: number, categoryIDs: number[]) {
+async function fileChannel(
+  token: string,
+  channelID: number,
+  categoryIDs: number[]
+) {
   return apiRequest<{ categories: Category[] }>(
     "PUT",
     `/local/channels/${channelID}/categories`,
@@ -963,76 +788,155 @@ async function fileChannel(token: string, channelID: number, categoryIDs: number
   )
 }
 
-// CategoryPicker is the set of categories a channel is in: a combobox whose
-// chosen categories sit in the field as chips, and whose list filters as you
-// type. The chosen ones are submitted as repeated `category_ids` fields, so one
-// channel can be in as many categories as the operator wants.
-function CategoryPicker({
+// DefineChannelDialog adds one channel: it joins it on the chosen server and,
+// when a category is chosen, files it there afterwards.
+function DefineChannelDialog({
+  servers,
+  server,
+  canPickServer,
   categories,
-  selected,
-  onChange,
+  error,
+  pending,
+  onClose,
 }: {
+  servers: TelegramServer[]
+  server?: string
+  canPickServer: boolean
   categories: Category[]
-  selected: number[]
-  onChange: (selected: number[]) => void
+  error?: string
+  pending: boolean
+  onClose: () => void
 }) {
-  const anchor = useComboboxAnchor()
-  const names = categories.map((category) => category.name)
-  const chosen = categories
-    .filter((category) => selected.includes(category.id))
-    .map((category) => category.name)
-
-  if (categories.length === 0) {
-    return (
-      <p className="text-muted-foreground text-sm">
-        هنوز دسته‌بندی‌ای ساخته نشده؛ از صفحهٔ دسته‌بندی‌ها یکی بسازید.
-      </p>
-    )
-  }
+  const submit = useSubmit()
+  const [ref, setRef] = React.useState("")
+  const [chosenServer, setChosenServer] = React.useState(server ?? "")
+  const [categoryIds, setCategoryIds] = React.useState<number[]>([])
+  const [touched, setTouched] = React.useState(false)
+  const refError =
+    touched && ref.trim() === ""
+      ? "شناسه، نام کاربری یا لینک کانال را وارد کنید."
+      : null
 
   return (
-    <>
-      <Combobox
-        multiple
-        autoHighlight
-        items={names}
-        value={chosen}
-        onValueChange={(value) => {
-          const picked = (value as string[] | null) ?? []
-          onChange(
-            categories
-              .filter((category) => picked.includes(category.name))
-              .map((category) => category.id)
-          )
-        }}
-      >
-        <ComboboxChips ref={anchor} className="w-full">
-          <ComboboxValue>
-            {(values: string[]) => (
-              <React.Fragment>
-                {values.map((value) => (
-                  <ComboboxChip key={value}>{value}</ComboboxChip>
-                ))}
-                <ComboboxChipsInput placeholder="جستجوی دسته‌بندی…" />
-              </React.Fragment>
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>کانال جدید</DialogTitle>
+          <DialogDescription>
+            کانال در سرور انتخاب‌شده پیدا و عضو می‌شود و در فهرست محلی ثبت
+            می‌گردد. اگر دسته‌ای انتخاب کنید، بعد از ثبت در همان دسته قرار
+            می‌گیرد.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="flex flex-col gap-4"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (ref.trim() === "") {
+              setTouched(true)
+              return
+            }
+            const values: Record<string, string | string[]> = {
+              intent: "define",
+              server: chosenServer,
+              ref: ref.trim(),
+            }
+            if (categoryIds.length > 0) {
+              values.category_ids = JSON.stringify(categoryIds.map(Number))
+            }
+            submit(values, { method: "post" })
+          }}
+        >
+          <Field>
+            <FieldLabel htmlFor="define-server" required>
+              سرور تلگرام
+            </FieldLabel>
+            {canPickServer ? (
+              <TelegramServerCombobox
+                id="define-server"
+                servers={servers}
+                value={chosenServer || undefined}
+                onChange={(key) => setChosenServer(key ?? "")}
+              />
+            ) : (
+              <>
+                <FieldControl
+                  id="define-server"
+                  dir="ltr"
+                  value={chosenServer}
+                  onChange={(event) => setChosenServer(event.target.value)}
+                  placeholder="official"
+                  required
+                />
+                <FieldDescription>
+                  فهرست سرورها در دسترس نیست؛ کلید اتصال را بنویسید.
+                </FieldDescription>
+              </>
             )}
-          </ComboboxValue>
-        </ComboboxChips>
-        <ComboboxContent anchor={anchor}>
-          <ComboboxEmpty>دسته‌بندی‌ای پیدا نشد.</ComboboxEmpty>
-          <ComboboxList>
-            {(item: string) => (
-              <ComboboxItem key={item} value={item}>
-                {item}
-              </ComboboxItem>
+          </Field>
+          <Field data-invalid={refError ? "" : undefined}>
+            <FieldLabel htmlFor="define-ref" required>
+              کانال
+            </FieldLabel>
+            <FieldControl
+              id="define-ref"
+              dir="ltr"
+              value={ref}
+              onChange={(event) => setRef(event.target.value)}
+              onBlur={() => setTouched(true)}
+              placeholder="@channel یا t.me/channel یا 1234567890"
+              required
+            />
+            {refError ? (
+              <FieldError>{refError}</FieldError>
+            ) : (
+              <FieldDescription>
+                نام کاربری (@channel)، لینک t.me، لینک دعوت، شناسهٔ عددی یا
+                عبارت جستجو؛ سرور خودش تشخیص می‌دهد.
+              </FieldDescription>
             )}
-          </ComboboxList>
-        </ComboboxContent>
-      </Combobox>
-      {selected.map((id) => (
-        <input key={id} type="hidden" name="category_ids" value={id} />
-      ))}
-    </>
+          </Field>
+          <CategoryMultiSelect
+            id="define-categories"
+            title="دسته‌بندی‌ها"
+            categories={categories.map((category) => ({
+              id: category.id,
+              name: category.name,
+            }))}
+            value={categoryIds}
+            onChange={setCategoryIds}
+            name="category_ids"
+            description={
+              categories.length === 0
+                ? "هنوز دسته‌بندی‌ای ساخته نشده؛ از صفحهٔ دسته‌بندی‌ها یکی بسازید."
+                : "یک کانال می‌تواند هم‌زمان در چند دسته باشد؛ انتخاب دسته الزامی نیست."
+            }
+          />
+          {error && (
+            <p
+              role="alert"
+              className="bg-destructive/10 text-destructive rounded-lg px-3 py-2 text-sm"
+            >
+              {error}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={pending}
+            >
+              انصراف
+            </Button>
+            <SubmitButton pending={pending} submittingLabel="در حال ثبت…">
+              ثبت کانال
+            </SubmitButton>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1086,7 +990,7 @@ function EditChannelDialog({
     <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>ویرایش دسته‌بندی‌ها</DialogTitle>
+          <DialogTitle>ویرایش دسته‌بندی</DialogTitle>
           <DialogDescription>
             کانال «{channel.title}» را در هر تعداد دسته‌ای که می‌خواهید قرار
             دهید.
@@ -1096,23 +1000,29 @@ function EditChannelDialog({
           className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault()
-            const values: Record<string, string | string[]> = {
-              intent: "categories",
-              id: String(channel.id),
-            }
-            if (selected.length > 0) {
-              values.category_ids = selected.map(String)
-            }
-            submit(values, { method: "post" })
+            submit(fileCategoriesForm(channel.id, selected), { method: "post" })
           }}
         >
           {!loaded ? (
-            <LoadingState label="در حال خواندن دسته‌بندی‌ها…" />
+            <p className="text-muted-foreground py-4 text-sm">
+              در حال خواندن دسته‌بندی‌ها…
+            </p>
           ) : (
-            <CategoryPicker
-              categories={categories}
-              selected={selected}
+            <CategoryMultiSelect
+              id="edit-categories"
+              title="دسته‌بندی‌ها"
+              categories={categories.map((category) => ({
+                id: category.id,
+                name: category.name,
+              }))}
+              value={selected}
               onChange={setSelected}
+              name="category_ids"
+              description={
+                categories.length === 0
+                  ? "هنوز دسته‌بندی‌ای ساخته نشده؛ از صفحهٔ دسته‌بندی‌ها یکی بسازید."
+                  : "یک کانال می‌تواند هم‌زمان در چند دسته باشد؛ انتخاب دسته الزامی نیست."
+              }
             />
           )}
           {error && (
@@ -1124,12 +1034,17 @@ function EditChannelDialog({
             </p>
           )}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={pending}
+            >
               انصراف
             </Button>
-            <Button type="submit" disabled={pending || !loaded}>
-              {pending ? "در حال ذخیره…" : "ذخیره"}
-            </Button>
+            <SubmitButton pending={pending} submittingLabel="در حال ذخیره…">
+              ذخیره
+            </SubmitButton>
           </DialogFooter>
         </form>
       </DialogContent>

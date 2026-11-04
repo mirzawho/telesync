@@ -410,7 +410,12 @@ func routeHandlers(proj *project) map[string]map[string]handlerRef {
 		},
 		"/api/v1/local/wordpress":            {http.MethodGet: h("listWordPressSites"), http.MethodPost: h("createWordPressSite")},
 		"/api/v1/local/wordpress/{id}/posts": {http.MethodPost: h("publishWordPress")},
+		// Both taxonomy listings are served by one handler, which is why they
+		// name the same method: the path decides which taxonomy is read.
+		"/api/v1/local/wordpress/{id}/categories": {http.MethodGet: h("wordPressTerms")},
+		"/api/v1/local/wordpress/{id}/tags":       {http.MethodGet: h("wordPressTerms")},
 		"/api/v1/local/wordpress/{id}": {
+			http.MethodGet:   h("getWordPressSite"),
 			http.MethodPatch: h("updateWordPressSite"), http.MethodDelete: h("deleteWordPressSite"),
 		},
 		"/api/v1/local/users": {http.MethodGet: h("listUsers"), http.MethodPost: h("createUser")},
@@ -418,6 +423,7 @@ func routeHandlers(proj *project) map[string]map[string]handlerRef {
 			http.MethodGet: h("getUser"), http.MethodPut: h("updateUser"), http.MethodDelete: h("deleteUser"),
 		},
 		"/api/v1/local/users/{id}/permissions": {http.MethodGet: h("userPermissions"), http.MethodPut: h("userPermissions")},
+		"/api/v1/local/stats/dashboard":        {http.MethodGet: h("dashboardStats")},
 	}
 }
 

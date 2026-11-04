@@ -14,6 +14,7 @@ import { PageError, PageShell, pageMeta, section } from "@/lib/page"
 import { faDateTime, faDigits } from "@/components/persian-digits"
 import { SearchInput } from "@/components/search-input"
 import { EmptyState, ErrorState, LoadingState } from "@/components/states"
+import { SubmitButton } from "@/components/submit-button"
 import { Button } from "@workspace/ui/components/button"
 import {
   Dialog,
@@ -37,6 +38,7 @@ import {
   FieldError,
   FieldLabel,
 } from "@workspace/ui/components/field"
+import { useToast } from "@workspace/ui/components/toast"
 import {
   Table,
   TableBody,
@@ -59,9 +61,7 @@ interface CategoryList {
   categories: Category[]
 }
 
-
 // ChannelOption is one managed channel, as the channel dialog names it.
-
 
 type PageTitle = { title: string }
 
@@ -196,11 +196,10 @@ export async function clientAction({
       // PUT replaces the whole record: an empty description clears it.
       const body = { name, description }
       if (intent === "create") {
-        await apiRequest<{ category: Category }>(
-          "POST",
-          "/local/categories",
-          { token, body }
-        )
+        await apiRequest<{ category: Category }>("POST", "/local/categories", {
+          token,
+          body,
+        })
         message = "دسته‌بندی ساخته شد."
       } else {
         await apiRequest<{ category: Category }>(
@@ -247,15 +246,104 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   )
 }
 
+// Physical left, not RTL start: the actions column stays pinned while the
+// table scrolls under it, and bg-background keeps text from showing through.
+const ACTIONS_HEAD = "sticky left-0 z-20 w-12 bg-background text-end"
+const ACTIONS_CELL = "sticky left-0 z-10 bg-background text-end"
+
+// Single-line cells keep row heights even; the container scrolls instead of
+// the page, so no wrapper is added around the shared Table.
+export function CategoriesTable({
+  categories,
+  canManage,
+  onEdit,
+  onDelete,
+}: {
+  categories: Category[]
+  canManage: boolean
+  onEdit: (category: Category) => void
+  onDelete: (category: Category) => void
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>نام</TableHead>
+          <TableHead>توضیحات</TableHead>
+          <TableHead>تاریخ ایجاد</TableHead>
+          <TableHead className={ACTIONS_HEAD}>
+            <span className="sr-only">عملیات</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {categories.map((category) => (
+          <TableRow key={category.id}>
+            <TableCell className="font-medium">{category.name}</TableCell>
+            <TableCell
+              className="text-muted-foreground"
+              title={category.description || undefined}
+            >
+              {category.description || "—"}
+            </TableCell>
+            <TableCell className="text-muted-foreground">
+              {faDateTime(category.created_at)}
+            </TableCell>
+            <TableCell className={ACTIONS_CELL}>
+              {canManage && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`عملیات دسته‌بندی ${category.name}`}
+                      />
+                    }
+                  >
+                    <MoreHorizontalIcon />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => onEdit(category)}>
+                      ویرایش
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => onDelete(category)}
+                    >
+                      حذف
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
 export default function Categories({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
   const navigation = useNavigation()
+  const { toast } = useToast()
   const submit = useSubmit()
   const [searchParams, setSearchParams] = useSearchParams()
   const loading = navigation.state === "loading"
   const submitting = navigation.state === "submitting"
+  // A successful action answers with a redirect, so the finished intent (read
+  // from the submit that just left) is what names the result for the toast.
+  const pendingIntent = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    const formData = navigation.formData
+    if (formData) {
+      pendingIntent.current = String(formData.get("intent") ?? "")
+    }
+  }, [navigation.formData])
 
   // null = dialog closed. A category object edits it; "new" creates.
   const [form, setForm] = React.useState<Category | "new" | null>(null)
@@ -298,9 +386,35 @@ export default function Categories({
     if (wasSubmitting.current && !submitting && !actionData?.error) {
       setForm(null)
       setDeleting(null)
+      // A redirect carries no payload, so the intent captured above says what
+      // was actually saved.
+      const intent = pendingIntent.current
+      if (intent === "create")
+        toast({ variant: "success", title: "دسته‌بندی ساخته شد." })
+      else if (intent === "update")
+        toast({ variant: "success", title: "تغییرات دسته‌بندی ذخیره شد." })
+      else if (intent === "delete")
+        toast({ variant: "success", title: "دسته‌بندی حذف شد." })
+      pendingIntent.current = null
     }
     wasSubmitting.current = submitting
-  }, [submitting, actionData])
+  }, [submitting, actionData, toast])
+
+  // Every refusal is also a toast, so the message is read even when the dialog
+  // reopened elsewhere or the user dismissed it; the form keeps its own inline
+  // field errors where the work was done.
+  const toastedError = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (!actionData?.error) return
+    const key = `${actionData.intent ?? ""}:${actionData.error}`
+    if (toastedError.current === key) return
+    toastedError.current = key
+    toast({
+      variant: "error",
+      title: "عملیات انجام نشد.",
+      description: actionData.error,
+    })
+  }, [actionData, toast])
 
   const openEdit = (category: Category) => setForm(category)
 
@@ -361,25 +475,22 @@ export default function Categories({
               placeholder="جستجوی دسته‌بندی…"
               className="w-full sm:w-72"
             />
-            <Button type="submit" variant="outline" size="sm">
-              جستجو
-            </Button>
             {loaderData.q && (
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 onClick={() => {
                   setQ("")
                   setSearchParams({})
                 }}
               >
-                حذف جستجو
+                پاک کردن فیلترها
               </Button>
             )}
           </form>
 
-          <div className="bg-card rounded-xl border">
+          <div className="rounded-xl border bg-card">
             {loading ? (
               <LoadingState label="در حال بارگذاری دسته‌بندی‌ها…" />
             ) : loaderData.categories.length === 0 ? (
@@ -409,67 +520,12 @@ export default function Categories({
                 }
               />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>نام</TableHead>
-                    <TableHead>توضیحات</TableHead>
-                    <TableHead>تاریخ ایجاد</TableHead>
-                    <TableHead className="w-12 text-end">
-                      <span className="sr-only">عملیات</span>
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loaderData.categories.map((category) => (
-                    <TableRow key={category.id}>
-                      <TableCell className="font-medium">
-                        {category.name}
-                      </TableCell>
-                      <TableCell
-                        className="text-muted-foreground max-w-72 truncate whitespace-normal"
-                        title={category.description || undefined}
-                      >
-                        {category.description || "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {faDateTime(category.created_at)}
-                      </TableCell>
-                      <TableCell className="text-end">
-                        {loaderData.canManage && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger
-                              render={
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  aria-label={`عملیات دسته‌بندی ${category.name}`}
-                                />
-                              }
-                            >
-                              <MoreHorizontalIcon />
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                onClick={() => openEdit(category)}
-                              >
-                                ویرایش
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onClick={() => setDeleting(category)}
-                              >
-                                حذف
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <CategoriesTable
+                categories={loaderData.categories}
+                canManage={loaderData.canManage}
+                onEdit={openEdit}
+                onDelete={setDeleting}
+              />
             )}
           </div>
 
@@ -477,7 +533,7 @@ export default function Categories({
             className="flex items-center justify-between"
             aria-label="صفحه‌بندی"
           >
-            <p className="text-muted-foreground text-xs">
+            <p className="text-xs text-muted-foreground">
               صفحه {faDigits(loaderData.currentPage)}
             </p>
             <div className="flex items-center gap-2">
@@ -630,7 +686,9 @@ function CategoryDialog({
         >
           {category && <input type="hidden" name="id" value={category.id} />}
           <Field data-invalid={nameError ? "" : undefined}>
-            <FieldLabel htmlFor="category-name">نام</FieldLabel>
+            <FieldLabel htmlFor="category-name" required>
+              نام
+            </FieldLabel>
             <FieldControl
               id="category-name"
               name="name"
@@ -651,13 +709,13 @@ function CategoryDialog({
               className="h-auto min-h-20 py-2"
             />
             <FieldDescription>
-              اختیاری؛ برای ویرایش، ارسال خالی آن را پاک می‌کند.
+              برای ویرایش، ارسال خالی این فیلد توضیحات را پاک می‌کند.
             </FieldDescription>
           </Field>
           {error && (
             <p
               role="alert"
-              className="bg-destructive/10 text-destructive rounded-lg px-3 py-2 text-sm"
+              className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
             >
               {error}
             </p>
@@ -671,9 +729,12 @@ function CategoryDialog({
             >
               انصراف
             </Button>
-            <Button type="submit" disabled={pending}>
-              {pending ? "در حال ذخیره…" : "ذخیره"}
-            </Button>
+            <SubmitButton
+              pending={pending}
+              submittingLabel={category ? "در حال ذخیره…" : "در حال ایجاد…"}
+            >
+              {category ? "ذخیره" : "ایجاد"}
+            </SubmitButton>
           </DialogFooter>
         </form>
       </DialogContent>

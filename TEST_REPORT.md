@@ -1,0 +1,1040 @@
+# Test Report
+
+## Test run results
+
+- Go: packages passed except `internal/worker`, where two Unix-socket tests failed with sandbox `bind: invalid argument`.
+- Frontend content tests: 21 passed.
+- Panel version tests: 18 passed.
+
+## Test files and titles
+
+### `cmd/telesync/admin_test.go`
+- TestCreateAdministratorStoresAHashAndEveryPermission
+- TestCreateAdministratorIsIdempotentAndResetsThePassword
+- TestCreateAdministratorNeverRemovesItsOwnAccess
+- TestCreateAdministratorRejectsInvalidInputBeforeTouchingAnything
+- TestCreateAdministratorCreatesTheSchemaOnFirstRun
+- TestTheAdministratorCanLogInThroughTheRealAuth
+
+### `cmd/telesync/passwd_test.go`
+- TestHashPasswordCommandPrintsAVerifiableHash
+- TestHashPasswordCommandRefusesAnEmptyPassword
+
+### `cmd/telesync/prompt_test.go`
+- TestPromptPhoneReadsLine
+- TestPromptCodeHintsDelivery
+- TestPromptCodeDoesNotEchoTheCodeItself
+- TestPromptEOFIsAnErrorNotAHang
+- TestPromptPasswordFromPipeIsRead
+- TestSentCodeHintVariants
+
+### `internal/apidocs/docs_test.go`
+- TestRouteTableMatchesGateway
+- TestRemovedRouteIsDetected
+- TestEveryRouteIsDocumented
+- TestLinkedRoutesExist
+- TestRelativeLinksResolve
+- TestExamplesAreValidAndIndexed
+- TestIndexCoversEveryRoute
+- TestExamplesRunAgainstTheGateway
+  - subtest: every listed method is accepted
+  - subtest: no unlisted method is accepted
+  - subtest: a misspelled resource is refused
+
+### `internal/apidocs/probe_test.go`
+- No top-level test functions (test helpers/fixtures).
+
+### `internal/apidocs/scriptsite_test.go`
+- No top-level test functions (test helpers/fixtures).
+
+### `internal/apidocs/table_test.go`
+- TestDocumentationCoversEveryRoute
+- TestGeneratorIsOffline
+
+### `internal/appconfig/config_test.go`
+- TestLoadValidOfficial
+- TestLoadValidCustom
+- TestDefaultPathsAndTimeouts
+- TestRelativePathsResolveAgainstTheConfigDirectory
+- TestRejectMissingRequiredFields
+- TestRejectUnsupportedType
+- TestRejectDuplicateKeys
+- TestRejectUnsafeClientKeys
+- TestRejectInvalidPorts
+- TestRejectUnknownFields
+- TestRejectInvalidDurations
+- TestRejectConflictingPaths
+- TestDisabledClientIsStillValidatedAndExcluded
+- TestDisabledClientStillRequiresItsSecret
+- TestSecretResolutionNeverLeaksValues
+- TestMissingSecretNamesTheVariableAndNotAValue
+- TestRemoteBindRequiresAuthentication
+- TestJWTSecretMustBeLongAndComeFromOnePlace
+- TestJWTSecretCanBeWrittenInTheFile
+- TestJWTTTLDefaultsToOneHour
+- TestLoopbackAllowsNoAuth
+- TestOfficialRejectsServerBlock
+- TestCustomRejectsMissingKeyFile
+- TestCustomRejectsInvalidEnums
+- TestMalformedJSON
+- TestMissingConfigFile
+- TestLiteralAppHashIsAccepted
+- TestLiteralPhoneIsAccepted
+- TestAppHashAndEnvTogetherAreRejected
+- TestNeitherAppHashNorEnvIsRejected
+- TestLiteralHashNeverAppearsInOutput
+- TestReconnectDefaultsToTenSeconds
+- TestReconnectIsAWholeNumberOfSeconds
+- TestReconnectRejectsUnusableValues
+- TestLoopbackRecognisesEveryFormAndNothingElse
+- TestTheOperatorTokenIsOnlyHonouredOnALoopbackListener
+- TestDescribeNeverPrintsTheOperatorToken
+
+### `internal/appconfig/docsdir_test.go`
+- TestDocsDirFindsTheCheckoutTree
+- TestDocsDirDefaultsToTheEmbeddedCopy
+- TestDocsDirNamedMustExist
+
+### `internal/appconfig/starter_test.go`
+- TestDefaultPathUsesTheHomeDirectory
+- TestCreateIfMissingWritesAStarterFile
+- TestCreateIfMissingNeverOverwrites
+- TestCreateIfMissingRejectsAnEmptyPath
+- TestCreateIfMissingFailsOnAnUnwritableParent
+- TestStarterIsParseableAndHonest
+- TestStarterNeverInventsCredentials
+
+### `internal/appconfig/wordpress_test.go`
+- TestTheWordPressKeyIsResolvedFromItsVariable
+- TestTheWordPressKeyMayBeALiteralInTheFile
+- TestTheWordPressKeyIsOptional
+- TestTheWordPressKeyIsRefusedWhenUnusable
+- TestNewWordPressEncrypterFailsWithoutAKey
+- TestTheWordPressKeyMayComeFromAFile
+- TestTheWordPressKeyFileIsRefusedWhenUnusable
+
+### `internal/auth/auth_test.go`
+- TestHashPasswordRoundTripsAndUsesArgon2id
+- TestHashPasswordUsesAFreshSaltEachTime
+- TestVerifyPasswordRejectsAnUnusableHash
+- TestNewTokensRequiresASecretOfAtLeast32Bytes
+- TestTokenDefaultsToOneHour
+- TestIssueAndParseRoundTrip
+- TestParseRejectsAnExpiredToken
+- TestParseRejectsATokenSignedWithAnotherSecret
+- TestParseRejectsMalformedAndUnsignedTokens
+- TestParseRejectsAnotherIssuerAndABadSubject
+- TestBurnPasswordCheckCompletes
+
+### `internal/auth/password_test.go`
+- TestTheDocumentedHashVerifies
+
+### `internal/auth/signers_test.go`
+- TestMissingCatchesATypedNil
+- TestMissingAcceptsARealSigner
+
+### `internal/avatarcache/cache_test.go`
+- TestFirstRequestFetchesAndCaches
+- TestARepeatedRequestWithinTheDayServesTheCache
+- TestAnExpiredEntryIsRefreshed
+- TestCacheEntriesAreIsolatedByClientKey
+- TestCacheEntriesAreIsolatedByChannel
+- TestTheCacheSurvivesAReopen
+- TestAFailedFetchIsNotCached
+- TestAMissingAvatarIsReportedAsSuch
+- TestConcurrentRequestsCauseOneDownload
+- TestAnExpiredEntryIsServedBrieflyWhenTheRefreshFails
+- TestAVeryOldEntryIsNotServed
+- TestASidecarWithoutBytesIsAMiss
+- TestUnsafeClientKeysAreRejected
+- TestANonPositiveChannelIsRejected
+- TestOversizedImagesAreRejected
+- TestTheContentTypeComesFromTheFetcher
+- TestCleanupRemovesOnlyExpiredEntries
+- TestCleanupLeavesTheCacheUsableOnAnEmptyDirectory
+- TestOpenRejectsARelativeDirectory
+- TestTheCacheDirectoryIsPrivate
+
+### `internal/channelstore/categories_test.go`
+- TestCreateTrimsTheNameAndRecordsTimestamps
+- TestCreateAcceptsAnEmptyDescription
+- TestCreateRejectsBlankNames
+- TestCreateRejectsDuplicateNamesIgnoringCase
+- TestListCategoriesPaginatesAndCounts
+- TestListCategoriesIsEmptyBeforeAnythingExists
+- TestListCategoriesFiltersNameAndDescription
+- TestGetCategoryMissesCleanly
+- TestUpdateCategoryChangesFieldsAndKeepsCreatedAt
+- TestUpdateCategoryRejectsMissingAndDuplicate
+- TestDeleteCategoryRemovesOnlyTheCategoryAndItsAssignments
+- TestDeleteCategoryMissesCleanly
+- TestAssignChannelRepresentsEachChannelOnce
+- TestCategoriesSurviveAReopen
+
+### `internal/channelstore/channel_notices_test.go`
+- TestANewDatabaseStoresTheChannelNotices
+- TestUpsertReplacesTheChannelNotices
+- TestARowWrittenBeforeMigrationSixHasUnknownNotices
+- TestTheUpgradePreservesEverythingAroundTheChannel
+- TestAReportWithoutTheNoticesKeepsTheStoredOnes
+- TestThePermissionsRoundTripAndSurviveAnUnreportedWrite
+
+### `internal/channelstore/list_test.go`
+- TestListChannelsPaginatesWithATotal
+- TestListChannelsSearchesTitleUsernameAndClientKey
+- TestListChannelsTreatsSearchTextAsLiteral
+- TestListChannelsIsEmptyWithoutRows
+- TestListChannelsByIDsPagesOverExactlyThoseRows
+- TestListChannelsForUserIsScopedByTheAssignment
+- TestListChannelsFiltersByAtLeastOneSelectedCategory
+
+### `internal/channelstore/permissions_test.go`
+- TestReplacePermissionsStoresExactlyWhatWasAsked
+- TestReplacePermissionsRemovesWhatTheNewSetOmits
+- TestReplacePermissionsRejectsAnUnknownChannelWithoutWritingAnything
+- TestAChannelIDIsTheLocalIDNotTheTelegramID
+- TestReplacePermissionsRejectsInvalidActionsEffectsAndDuplicates
+- TestReplacePermissionsMissesAnUnknownUser
+- TestDeletingAChannelRemovesItsAssignments
+- TestDeletingACategoryRemovesItsAssignmentsAndKeepsChannels
+- TestAuthorizerFollowsTheDocumentedRules
+- TestManageEditsAndDeletesWithinTheSelection
+- TestAuthorizerForReadsTheDatabase
+
+### `internal/channelstore/publish_operations_internal_test.go`
+- TestMigrationsUpgradeASixDatabase
+
+### `internal/channelstore/publish_operations_test.go`
+- TestAPublishOperationIsRecordedAsInFlight
+- TestTheSameKeyWithADifferentRequestIsAConflict
+- TestAConfirmedSuccessIsReplayedNotRepeated
+- TestAFailedAttemptMayBeRetried
+- TestAnUncertainOutcomeIsNeverReRun
+- TestAnInFlightAttemptIsNotReRunConcurrently
+- TestTheIdempotencyKeyIsScopedToTheAccount
+- TestFinishingAnOperationThatDoesNotExistIsAnError
+- TestPublishOperationStampsItsOwnClock
+- TestDeletingAnAccountRemovesItsPublishOperations
+
+### `internal/channelstore/publish_permission_test.go`
+- TestContentPublishIsItsOwnGlobalPermission
+- TestPublishingIsNotGrantedByAnyOtherPermission
+
+### `internal/channelstore/schema_internal_test.go`
+- TestSchemaRejectsADuplicateNameIgnoringCase
+- TestSchemaRejectsABlankCategoryName
+- TestSchemaRejectsAnAssignmentToAMissingCategory
+- TestForeignKeyEnforcementIsOnEveryConnection
+- TestMigrationsUpgradeAVersionOneDatabase
+- TestSchemaRefusesADuplicateAssignment
+- TestSchemaRefusesAnUnknownPermissionOrEffect
+
+### `internal/channelstore/site_categories_internal_test.go`
+- TestTheSiteCategoryLinksCascadeFromBothSides
+
+### `internal/channelstore/store_test.go`
+- TestOpenAppliesTheSchemaAndReportsItsVersion
+- TestOpenCreatesTheDirectoryAndRestrictsTheFile
+- TestOpenRejectsARelativePath
+- TestManagedChannelsAreListedWithTheirLocalID
+- TestUpsertInsertsThenUpdatesWithoutDuplicating
+- TestTheSameChannelIDUnderTwoClientKeysIsTwoRecords
+- TestConcurrentUpsertsOfTheSameChannelConverge
+- TestListIsEmptyBeforeAnythingIsSelected
+- TestDataSurvivesAReopen
+- TestGetMissesCleanly
+- TestUpsertRejectsInvalidRecords
+- TestUpsertRecordsTheClockItWasGiven
+- TestNullableParticipantsCount
+- TestUniquenessIsEnforcedByTheDatabase
+
+### `internal/channelstore/users_test.go`
+- TestCreateUserStoresTheHashAndTrimsTheProfile
+- TestCreateUserRejectsABlankPasswordHash
+- TestCreateUserRejectsDuplicateUsernamesIgnoringCase
+- TestNormalizeUserRejectsUnsafeValues
+- TestValidatePasswordEnforcesALength
+- TestGetUserAndUserByUsernameMissCleanly
+- TestUpdateUserAppliesPartialChanges
+- TestUpdateUserRejectsADuplicateUsername
+- TestUpdateUserMissesCleanly
+- TestListUsersPaginatesSearchesAndFiltersByID
+- TestDeleteUserRequiresAnotherActiveAdministrator
+- TestDeactivatingTheLastAdministratorIsRefused
+- TestUsersWithoutUsersManageDoNotCountAsAdministrators
+- TestDeletingAUserRemovesEveryAssignment
+- TestSetPasswordHashRecoversAnAccount
+- TestUserIDsWithAnyPermission
+- TestUsersReadBackTheirActiveFlag
+
+### `internal/channelstore/wordpress_test.go`
+- TestWordPressSitesRoundTripWithoutAPlaintextCredential
+- TestTheDatabaseHoldsNoPlaintextCredential
+- TestCreateWordPressSiteRefusesASecondURL
+- TestWordPressSiteURLsAreUniqueIgnoringCase
+- TestCreateWordPressSiteValidatesTheRecord
+- TestGetWordPressSiteReportsAMissingRow
+- TestUpdateWordPressSiteKeepsWhatIsOmitted
+- TestUpdateWordPressSiteReportsAMissingRow
+- TestUpdateWordPressSiteRefusesAnotherSitesURL
+- TestDeleteWordPressSiteRemovesOnlyThatRow
+- TestDeletingAUserThatHeldASiteRightLeavesTheSite
+- TestWordPressSitePermissionsRoundTrip
+- TestWordPressSitePermissionsRequireAnExistingSite
+- TestDeletingASiteRemovesItsAssignmentsNotTheAccount
+- TestSiteCategoriesAreSetReadAndCascaded
+- TestSiteCategoriesRefuseAnUnknownSiteOrCategory
+
+### `internal/cli/admin_test.go`
+- TestAdminAsksForCredentialsAndCreatesTheAccount
+- TestAdminDefaultsTheFullNameToTheUsername
+- TestAdminRefusesMismatchedPasswords
+- TestAdminReportsAnInvalidAccountAsAUsageError
+- TestAdminReportsAMissingDatabaseAsAFailure
+- TestAdminSaysWhenItResetAnExistingAccount
+- TestAdminRejectsUnknownArguments
+- TestHelpMentionsAdmin
+
+### `internal/cli/configresolve_test.go`
+- TestFirstRunCreatesTheDefaultConfig
+- TestFirstRunPrintsWhereTheFileWasWritten
+- TestSecondRunDoesNotRewriteTheFile
+- TestExplicitConfigPathIsNeverCreated
+- TestExplicitFlagPathIsNeverCreated
+- TestDaemonCreatesTheDefaultConfigToo
+- TestDefaultConfigIsValidJSONWithExpectedShape
+- TestBareInvocationCreatesTheDefaultConfig
+- TestBareInvocationReportsAnExistingConfig
+- TestBareInvocationDoesNotCreateAnExplicitPath
+- TestHelpFlagDoesNotCreateAnything
+
+### `internal/cli/daemon_test.go`
+- TestConfigValidateAcceptsAValidFile
+- TestConfigValidateReportsProblemsWithExitCode1
+- TestConfigValidateWithNoPathCreatesTheDefaultAndExplainsIt
+- TestDaemonStartsWithTheConfiguredClients
+- TestDaemonReportsAnError
+- TestWorkerRequiresAnEnabledKnownKey
+- TestWorkerStartsTheRequestedClient
+- TestWorkerUsage
+- TestAuthRunsTheInteractiveFlowForOneClient
+- TestAuthFailsWhenTheSessionIsStillUnauthorized
+- TestAuthRejectsAnUnknownKey
+- TestHelpMentionsTheRuntimeCommands
+- TestAuthTimesOutWhenTheConnectionNeverBecomesReady
+- TestAuthRejectsANonPositiveTimeout
+- TestConfigPathComesFromTheEnvironment
+- TestConfigValidateEmitsJSONOnRequest
+
+### `internal/docsgen/embed_test.go`
+- TestEmbedDirMirrorsDocsAPIAndIsIdempotent
+
+### `internal/docsite/docsite_test.go`
+- TestEmbeddedTreeIsTheDocumentationRoot
+
+### `internal/docsite/wiring_test.go`
+- TestEmbeddedTreeRendersThroughTheGateway
+- TestEmbeddedCopyIsServed
+
+### `internal/gateway/authz_access_test.go`
+- TestLoginReturnsABearerTokenForAValidPassword
+- TestLoginRejectsAWrongPasswordAndAnUnknownUserTheSameWay
+- TestLoginRefusesAnInactiveAccount
+- TestProtectedRoutesRejectMissingInvalidAndExpiredTokens
+- TestAMissingOrDuplicateTokenDoesNotRevealWhetherAClientExists
+- TestMeReportsTheStoredPermissionsWithoutTheHash
+- TestPermissionChangesTakeEffectWithoutANewToken
+- TestDeactivatingAnAccountInvalidatesItsTokenImmediately
+- TestOneChannelFullAndAnotherViewOnly
+- TestAChannelWithoutAGrantIsForbidden
+- TestAnExplicitChannelDenyOverridesTheGlobalView
+- TestChannelPermissionsUseTheLocalIDNotTheTelegramID
+- TestAnExplicitChannelAllowGrantsWithoutAGlobalPermission
+- TestTheChannelListIsFilteredAndItsTotalRestated
+- TestTheGlobalChannelViewListsEverythingWithoutDenies
+- TestFindHidesChannelsTheCallerMayNotSee
+- TestJoiningNeedsTheGlobalCreatePermission
+- TestProfileNeedsSomeChannelVisibility
+- TestTwoCategoriesWithDifferentPermissions
+- TestCategoryListingOmitsHiddenCategoriesAndCountsWhatRemains
+- TestCategoryPaginationIsAppliedAfterFiltering
+- TestCreatingACategoryNeedsTheGlobalPermission
+- TestMeReportsWhatTheCallerMayRead
+
+### `internal/gateway/authz_isolation_test.go`
+- TestALimitedAccountSeesAndReachesOnlyItsOwnLocalChannel
+- TestSearchOfLocalChannelsDoesNotLeakNames
+- TestALimitedAccountCannotReachAnotherTelegramChannelByID
+- TestALimitedAccountReachesOnlyItsOwnCategoryAndItsChannels
+- TestACategoriesChannelListHidesChannelsTheCallerMayNotSee
+- TestAccessToAParentCategoryDoesNotExposeItsOtherChannels
+- TestALimitedAccountSeesAndReachesOnlyItsOwnWordPressSite
+- TestAnEmptyAssignmentNeverMeansEveryResource
+- TestRevokingAChannelGrantTakesEffectOnTheNextRequest
+- TestAChannelDenyOverridesTheGlobalViewOnEveryRoute
+- TestAnUpdateOrDeleteGrantWithoutViewDoesNotRevealTheResource
+- TestAnExplicitViewDenyTakesAwayTheUpdateGrantToo
+- TestTheOperatorTokenIsTheOnlyExplicitBypass
+- TestRefusedResourcesAreNeverFetchedUpstream
+- TestTheReportedScenarioThroughThePermissionAPI
+- TestACallerWithNoAssignmentSelectsNothing
+- TestSavingChannelPermissionsKeepsTheStoredSiteGrants
+
+### `internal/gateway/authz_test_helpers_test.go`
+- No top-level test functions (test helpers/fixtures).
+
+### `internal/gateway/categories_test.go`
+- TestListCategoriesDefaultsToPageOneOfTwenty
+- TestListCategoriesPaginates
+- TestListCategoriesValidatesPagination
+- TestListCategoriesFiltersByQuery
+- TestGetCategory
+- TestGetCategoryNotFoundAndInvalidID
+- TestCreateCategory
+- TestCreateCategoryAcceptsAnEmptyBody
+- TestCreateCategoryValidation
+- TestCreateCategoryRequiresJSONContentType
+- TestCreateCategoryRejectsADuplicateName
+- TestUpdateCategory
+- TestUpdateCategoryErrors
+- TestDeleteCategory
+- TestDeleteCategoryKeepsChannelAssignmentsOfOtherCategories
+- TestCategoryRoutesRejectUnsupportedMethods
+- TestCategoryRoutesRequireAValidSession
+- TestCategoryRoutesNeedNoWorker
+
+### `internal/gateway/category_channels_test.go`
+- TestAChannelIsFiledAndListedFromBothSides
+- TestFilingNeedsTheChannelAndTheCategory
+
+### `internal/gateway/channel_contract_test.go`
+- TestBothChannelDetailRoutesAnswerTheSameChannelObject
+- TestLocalChannelDetailIdentifiesTheChannelByItsTelegramID
+- TestLocalChannelDetailIsTheStoredSnapshotNotTelegram
+- TestLocalChannelDetailKeepsWhatTelegramDidNotReport
+- TestTheLocalChannelListKeepsItsOwnListingContract
+- TestTheJoinedChannelReadsBackThroughBothRoutes
+
+### `internal/gateway/custom_emoji_test.go`
+- TestCustomEmojiStreamsTheEmojiByDocumentID
+- TestCustomEmojiMissingIsNotFound
+- TestCustomEmojiRejectsABadID
+
+### `internal/gateway/docs_test.go`
+- TestDocsLandingPageRenders
+- TestDocsMarkdownRendersTablesCodeAndLinks
+- TestDocsNestedPagesAndRelativeLinks
+- TestDocsMissingAndUnsupportedFilesAre404
+- TestDocsTraversalIsBlocked
+- TestDocsSymlinkOutsideTheRootIsRefused
+- TestDocsRawHTMLAndDangerousLinksAreInert
+- TestDocsMethodNotAllowed
+- TestGatewayDocsArePublic
+
+### `internal/gateway/docsnav_test.go`
+- TestSidebarRendersTheNestedTree
+- TestSidebarDirectoryPageIsTheOverview
+- TestSidebarMarksOnlyTheCurrentPage
+- TestDocsBreadcrumb
+
+### `internal/gateway/gateway_test.go`
+- TestHealthRoutesToTheConfiguredWorker
+- TestUnknownKeyIs404AndNeverFallsBack
+- TestUnavailableWorkerIs503NotASubstitute
+- TestWorkerTimeoutIs504
+- TestNeedsAuthIs409WithAnExplicitState
+- TestNotConnectedIs503
+- TestChannelNotFoundIs404
+- TestRateLimitIs429WithRetryAfter
+- TestInternalWorkerErrorIs502WithoutLeakingDetails
+- TestChannelsPassValidatedPagination
+- TestPaginationValidation
+- TestDefaultsArePageOneTwentyPerPage
+- TestMessagesRoute
+- TestMessagesRejectInvalidChannelIDs
+- TestProfileRoute
+- TestProfileNeverExposesSecrets
+- TestMethodsOtherThanGetAreRejected
+- TestGatewayHealthIsSeparateFromClientHealth
+- TestOperatorTokenIsRequiredWhenConfigured
+- TestAuthIsCheckedBeforeKeyLookup
+- TestUnauthorizedErrorBodyDoesNotEchoTheToken
+- TestUnknownRouteAndClientKeyValidation
+- TestEveryResponseHasARequestID
+- TestRequestIDIsEchoed
+- TestContextCancellationStopsTheWorkerCall
+- TestConfiguredClientsWithoutAnEnabledWorkerAre404
+- TestKeysAreCaseSensitive
+- TestClientTypeIsReportedNotGuessed
+- TestProfileDoesNotExposeTheBackendAddress
+- TestConfigIsAuthoritativeForRouting
+- TestMisspelledResourceExplainsTheCanonicalRoute
+- TestUnknownResourceStillGetsAPlain404
+- TestMessagesReturnTextAndMediaExactly
+- TestMessagesMetaDoesNotClaimATotal
+- TestChannelsMetaStillReportsATotal
+- TestMediaDescriptorCarriesAFetchableURL
+- TestMediaEndpointStreamsTheBytes
+- TestMediaEndpointMapsNoMediaTo404
+- TestMediaEndpointRejectsBadIDs
+- TestMediaEndpointRequiresAuth
+- TestSingleMessageRoute
+- TestSingleMessageMediaCarriesAURL
+- TestSingleMessageMissingIs404
+- TestSingleMessageRejectsBadIDs
+- TestFindRoutesByClientKeyAndReturnsAnArray
+- TestFindPermissionsAreAlwaysBooleans
+- TestFindRejectsAMissingOrOversizedQuery
+- TestFindIdentifiesQueryForms
+- TestFindReturnsAnEmptyArrayNotAnObject
+- TestJoinPersistsAConfirmedMembership
+- TestJoinRecordsAnAlreadyMemberChannel
+- TestRepeatedJoinIsIdempotent
+- TestAPendingJoinIsNotStoredAsMember
+- TestAFailedJoinCreatesNoRecord
+- TestJoinAfterConfirmedMembershipWithAFailedWriteIsRecoverable
+- TestJoinRequiresAPOST
+- TestJoinRejectsAnInvalidReference
+- TestListNeverReadsTheLocalStore
+- TestSearchDoesNotInsertLocalRecords
+- TestFindMarksAManagedChannel
+- TestAvatarServesBytesFromTheCache
+- TestAvatarWithoutAPhotoIs404
+- TestAvatarRejectsAnInviteReference
+- TestAvatarServesDirectlyWithoutACache
+- TestChannelListingCarriesPermissions
+- TestSingleChannelReturnsTheTelegramState
+- TestSingleChannelReportsTheLocalSelection
+- TestSingleChannelRejectsABadReference
+- TestSingleChannelMapsNotFound
+
+### `internal/gateway/list_filters_test.go`
+- TestLocalChannelsListFiltersBySelectedCategories
+- TestLocalChannelsListRefusesAMalformedCategoryFilter
+- TestWordPressListSearchesAndFiltersByCategories
+- TestWordPressListRefusesAMalformedFilter
+
+### `internal/gateway/local_channels_test.go`
+- TestLocalChannelsListPaginatesSearchesAndReportsTotals
+- TestLocalChannelGetReturnsTheStoredSnapshotInTheCanonicalShape
+- TestLocalChannelGetDoesNotAcceptTheTelegramID
+- TestLocalChannelRoutesValidateIDsAndMethods
+- TestLocalChannelMessagesComeFromTheChannelsClientAndAreNotStored
+- TestLocalChannelMessagesReportUpstreamFailures
+- TestLocalChannelAvatarUsesTheRowsClient
+- TestLocalChannelLeaveWithoutABodyRemovesOnlyTheRecord
+- TestLocalChannelLeaveWithTelegramCallsTelegramBeforeDeleting
+- TestLocalChannelLeaveKeepsTheRowWhenTelegramFails
+- TestLocalChannelLeaveRejectsAnUnknownClientWithoutDeleting
+- TestLocalChannelLeaveValidatesItsBody
+- TestLocalChannelRoutesRequireAuthAndPerChannelAccess
+- TestManageChannelsRemovesARecordAndStaysInsideItsSelection
+- TestLocalChannelLeaveReadsNoCredentialFromTheBody
+- TestLocalChannelLeaveRefusesTheOperatorToken
+- TestLocalChannelLeaveLeavesTheCallersStoredGrantsAlone
+- TestLocalChannelLeaveReportsAPartialFailure
+- TestLocalChannelLocalOnlyDeleteFailureIsAStoreError
+- TestLocalChannelReportedErrorsHideTheUpstreamFailure
+- TestLocalChannelListingNeverAsksTelegram
+- TestLocalChannelMessagesUseTheGlobalViewForEveryRow
+- TestLocalChannelDeletionRemovesOnlyTheRowsDependents
+
+### `internal/gateway/local_channels_upstream_test.go`
+- TestLocalChannelAvatarUpstreamFailureIsReportedWithItsCause
+- TestLocalChannelAvatarWithoutAPhotoIs404
+
+### `internal/gateway/panel_test.go`
+- TestPanelPageAndAssetsAreServedUnderTheBasePath
+- TestPagesNeedNoCredential
+- TestPanelPageIsOnlyForNavigations
+- TestAPIAnswersUnderTheBasePath
+- TestUnauthenticatedRequestNamesTheMountedLogin
+
+### `internal/gateway/password_test.go`
+- TestChangePasswordNeedsAValidToken
+- TestChangePasswordRejectsAMissingField
+- TestChangePasswordRefusesAWrongCurrentPassword
+- TestChangePasswordRefusesAWeakNewPassword
+- TestChangePasswordReplacesTheHashAndAnswersANewToken
+- TestChangePasswordCannotTargetAnotherUser
+
+### `internal/gateway/publish_test.go`
+- TestPublishNeedsACredential
+- TestPublishNeedsThePublishingPermission
+- TestPublishSendsThePreparedTextThroughTheNamedConnection
+- TestPublishRefusesASourceTheCallerCannotRead
+- TestPublishRefusesASourceMessageThatIsNotThere
+- TestPublishRefusesAnUnknownDestinationConnection
+- TestPublishRefusesADestinationTheAccountCannotPostTo
+- TestPublishRefusesADestinationTheCallerCannotSee
+- TestPublishReplaysAConfirmedResultInsteadOfSendingAgain
+- TestPublishRefusesAnIdempotencyKeyUsedForADifferentRequest
+- TestPublishRejectsAnUnknownBodyField
+- TestChannelsCapabilityFilterKeepsOnlySendableChannels
+- TestChannelsRejectsAnUnknownCapability
+
+### `internal/gateway/servers_permission_test.go`
+- TestServerListIsBehindTheServersViewPermission
+- TestServerListByPermissionNeverNamesConfiguredSecrets
+- TestServerListReportsTheAccountsIdentity
+- TestServerListRejectsOtherMethodsWithPermission
+
+### `internal/gateway/servers_test.go`
+- TestServerListReturnsTheEligibleServers
+- TestServerListNeverExposesConfiguration
+- TestServerListRequiresAuthentication
+- TestServerListRequiresTheViewPermission
+- TestServerListWithoutServersIsAnEmptyArray
+- TestServerListRejectsOtherMethods
+- TestServerListReportsAnUnreachableWorker
+
+### `internal/gateway/signer_missing_test.go`
+- TestLoginWithoutASignerAnswers503InsteadOfPanicking
+- TestProtectedRoutesWithNoSignerAnswer401
+- TestLoginWorksWithAConfiguredSigner
+
+### `internal/gateway/stats_dashboard_test.go`
+- TestDashboardStatsCountOnlyWhatEachCallerMaySee
+- TestDashboardStatsSubtractExplicitDeniesFromAGlobalView
+- TestDashboardStatsAreNullForCollectionsTheCallerCannotSee
+- TestDashboardAdministratorsCountNeedsAGlobalUserRight
+- TestDashboardStatsRequireAuthAndGetOnly
+- TestDashboardStatsAre503WhenAStoreIsNotConfigured
+- TestDashboardStatsReportAStoreFailureAs500
+- TestDashboardStatsCountVisibleWordPressSites
+
+### `internal/gateway/users_test.go`
+- TestCreateUserHashesThePasswordAndNeverReturnsIt
+- TestCreateUserValidation
+- TestListUsersPaginatesAndSearches
+- TestGetUserReturnsTheProfileAndStoredPermissions
+- TestAUserMayReadItselfButNotOthersWithoutThePermission
+- TestUpdateUserChangesProfileActivationAndPassword
+- TestAnAdministratorCannotEscalateHimself
+- TestUserManagementNeedsThePermission
+- TestDeleteUserRemovesItAndEveryAssignment
+- TestTheLastAdministratorIsProtected
+- TestDeactivatingAUserIsRefusedWhenItWouldStrandTheDeployment
+- TestPermissionsEndpointReadsAndReplacesTheWholeSet
+- TestPermissionsEndpointRejectsInvalidInput
+- TestAManagePermissionRequiresItsViewPermission
+- TestOnlyAuthorizedCallersMayChangeAnotherUsersPermissions
+- TestTheLastUserAdministratorCannotLoseThePermission
+
+### `internal/gateway/wordpress_test.go`
+- TestWordPressListRequiresACredential
+- TestWordPressCollectionRejectsAnUnknownMethod
+- TestWordPressListIsEmptyAndNeverInvented
+- TestWordPressRoutesAnswer503WithoutStorageOrAKey
+- TestWordPressCreateRejectsABadBody
+- TestWordPressCreateRejectsUnsafeURLsBeforeAnyRequest
+- TestWordPressCreateRefusesARedirectedRequest
+- TestWordPressCreateReportsEachFailureAndStoresNothing
+- TestWordPressCreateRecordsTheTitleTheIconAndASealedCredential
+- TestWordPressCreateNormalizesTheURL
+- TestWordPressCreateRefusesASiteThatIsAlreadyRegistered
+- TestWordPressListShowsSitesWithoutCredentials
+- TestWordPressPatchKeepsOmittedFieldsAndTheCredential
+- TestWordPressPatchRotationIsValidatedBeforeItIsStored
+- TestWordPressPatchRejectsUnsafeOrUnknownInput
+- TestWordPressDeleteRemovesOnlyTheRegistration
+- TestWordPressSiteItemMethods
+- TestWordPressUnknownPathBelowTheCollectionIs404
+- TestWordPressPostsRefusesAnyMethodButPost
+- TestWordPressCreateNeedsTheManagePermission
+- TestWordPressCallerWithNoPermissionSeesNothing
+- TestWordPressSiteMetadataFollowsTheRemoteSite
+- TestWordPressNonNumericIconIDIsNotAnError
+- TestWordPressSiteListShowsOnlySitesTheCallerMaySee
+- TestWordPressSiteCredentialIsReadableOnlyInsideTheBackend
+- TestWordPressWritesAnswerADocumentNotARedirect
+- TestWordPressCreateAcceptsCategoriesAndTheViewsListThem
+- TestWordPressCreateRejectsACategoryThatDoesNotExist
+- TestWordPressCreateRejectsANegativeOrRepeatedCategory
+- TestWordPressPatchItselfKeepsCategories
+- TestWordPressPatchChangesCategories
+- TestWordPressGetOneSiteReturnsItWithCategories
+- TestWordPressPatchRejectsBothCategoryForms
+
+### `internal/gateway/wp_publish_test.go`
+- TestWordPressPublishNeedsACredential
+- TestWordPressPublishNeedsThePublishingPermission
+- TestWordPressPublishCreatesThePostWithRealTerms
+- TestWordPressPublishWithoutMediaSendsTextOnly
+- TestWordPressPublishRequiresAValidSiteRecord
+- TestWordPressPublishRefusesASiteTheCallerCannotSee
+- TestWordPressPublishDoesNotClaimSuccessWhenTheSiteRefuses
+
+### `internal/gotdclient/customemoji_test.go`
+- TestDownloadCustomEmojiReturnsItsBytes
+- TestDownloadCustomEmojiFetchesTheSetOnce
+- TestDownloadCustomEmojiOfARecycledDocumentIsNotFound
+
+### `internal/gotdclient/discover_test.go`
+- TestFindByUsernameResolvesAndDescribesTheChannel
+- TestFindByUsernameReturnsEmptyForAnOccupiedNonChannel
+- TestFindByUsernameReturnsEmptyWhenTheNameIsFree
+- TestFindByInviteReportsAnExistingMembership
+- TestFindByInviteDescribesAChannelTheAccountHasNotJoined
+- TestFindByTextKeepsTheAccountsOwnResultsWhenPublicSearchStalls
+- TestDedupeCollapsesRepeatedChannels
+- TestFindByTextReportsAFailureWhenBothSearchesFail
+- TestFindByNumericIDNeedsPeerInformation
+- TestFindByNumericIDUsesTheRememberedAccessHash
+- TestJoinReportsAlreadyMemberWithoutCallingTelegram
+- TestJoinJoinsAndReportsTheConfirmedMembership
+- TestJoinReportsAPendingRequest
+- TestJoinMapsInviteErrors
+- TestJoinByInviteReportsAnExistingMembership
+- TestAvatarDownloadsTheProfilePhoto
+- TestAvatarReportsAChannelWithoutAPhoto
+
+### `internal/gotdclient/entities_test.go`
+- TestEntitiesReadsEverySpanOfAMessage
+- TestEntitiesIsNeverNil
+- TestEntitiesCarriesTheTypeSpecificFields
+- TestEntitiesMapsTheRemainingTelegramTypesByName
+- TestInputEntitiesRebuildsTheSpansForSending
+- TestInputEntitiesDropsAKindItCannotRebuild
+
+### `internal/gotdclient/helpers_test.go`
+- No top-level test functions (test helpers/fixtures).
+
+### `internal/gotdclient/lastsuccess_test.go`
+- TestStatusRecordsTheLastSuccessfulProbe
+- TestUnauthorizedClientHasNoLastSuccess
+
+### `internal/gotdclient/manager_test.go`
+- TestManagerReportsReadyWithTheAuthorizedAccount
+- TestManagerReportsUnauthorizedWithoutAUser
+- TestManagerDialogsOnlyChannelsWithTheirUnreadCount
+- TestManagerHistoryDoesNotMarkAnythingRead
+- TestManagerCallsFailWhenUnauthorized
+- TestManagerRequestsFailFastWhenNeverConnected
+
+### `internal/gotdclient/media_test.go`
+- TestDownloadMediaReturnsPhotoBytes
+- TestDownloadMediaReportsAMessageWithoutMedia
+- TestDownloadMediaRejectsANonPositiveMessageID
+- TestDownloadMediaUsesTheChannelScopedLookup
+
+### `internal/gotdclient/metrics_test.go`
+- TestViewsIsNilWhenTelegramDidNotReportIt
+- TestReactionsPreserveKindAndChosenState
+- TestReactionsAreEmptyWithoutTheConstructor
+- TestHistoryWithoutViewsReportsNullAndEmptyReactions
+- TestSingleMessageCarriesViewsAndReactions
+
+### `internal/gotdclient/reconnect_test.go`
+- TestManagerLogsConnectAndDisconnect
+- TestManagerDefaultReconnectIsTenSeconds
+
+### `internal/gotdclient/reply_test.go`
+- TestReplyToMessageIDExposesOnlyTheID
+- TestHistoryCarriesReplyMetadataWithoutAnExtraRequest
+
+### `internal/panel/wiring_test.go`
+- TestEmbeddedPanelHasAPage
+- TestPanelServedUnderTheBasePath
+
+### `internal/peerstore/store_test.go`
+- TestSaveAndFindRoundTrip
+- TestTheStoreSurvivesAReopen
+- TestTheFileIsRestricted
+- TestAnEmptyPathIsRejected
+- TestSaveRejectsZeroValues
+- TestACorruptedFileIsRecoveredAsEmpty
+
+### `internal/profile/instance_test.go`
+- TestFromClientOfficialUsesLibraryDefaults
+- TestFromClientCustomSetsEverythingExplicitly
+- TestFromClientCustomRejectsASessionFromAnotherDC
+- TestFromClientValidatesItsInput
+- TestFromClientInstancesAreIsolated
+
+### `internal/rpc/rpc_test.go`
+- TestHealthRoundTrip
+- TestProfileRoundTripAndUnauthorizedState
+- TestChannelsPassPaginationAndReturnData
+- TestMessagesRoundTrip
+- TestMessagesRoundTripViewsAndReactions
+- TestClientDecodesANullReactionListAsEmpty
+- TestCustomEmojiRoundTrip
+- TestServerRejectsInvalidPagination
+- TestServerDefaultsPagination
+- TestServerMapsBackendErrorsToCodes
+- TestClientReturnsTypedErrors
+- TestClientMapsSentinelErrors
+- TestClientTimesOutOnASlowBackend
+- TestClientReportsUnreachableWorker
+- TestClientRejectsMalformedResponses
+- TestServerRejectsUnknownRoutesAndMethods
+- TestServerRejectsUnknownQueryParameters
+- TestErrorStringDoesNotLeakInternals
+- TestMediaRoundTrip
+- TestMediaDownloadRoundTrip
+- TestMediaRouteRejectsBadInput
+- TestSingleMessageRoundTrip
+- TestSingleMessageRouteRejectsBadIDs
+- TestSingleMessageMissingIsNotFound
+- TestFindRoundTrip
+- TestFindRejectsAGetRequest
+- TestChannelAndJoinRoundTrip
+- TestAvatarRoundTripCarriesBytes
+- TestWorkerErrorsKeepTheirMeaningOnTheWire
+
+### `internal/rpc/send_test.go`
+- TestSendMessageRoundTripCarriesTheWholeRequest
+- TestSendMessageTravelsWithItsAttachmentBesideTheJSON
+- TestSendMessageWithoutAnAttachmentSendsTextOnly
+- TestSendMessageReportsAnOversizedAttachment
+- TestSendMessageRejectsARequestMethodOtherThanPost
+- TestSendMessageRejectsAPlainJSONBody
+- TestSendMessageMapsARefusalToAForeignCode
+- TestSendMessageMapsAFloodWait
+
+### `internal/runtime/account_test.go`
+- No top-level test functions (test helpers/fixtures).
+
+### `internal/runtime/auth_e2e_test.go`
+- TestDaemonLoginEndToEnd
+
+### `internal/runtime/e2e_test.go`
+- TestDaemonToWorkerToMTProtoEndToEnd
+
+### `internal/runtime/runtime_test.go`
+- TestRegistryRegistersOnlyEnabledClients
+- TestRegistryFailsWhenAWorkerCannotBeBuilt
+- TestRegistryKeepsClientsApart
+- TestDaemonSupervisesAndServesTheGateway
+- TestDaemonRefusesToStartWithoutAConfigPathError
+- TestDaemonDoesNotStartTheSupervisorTwice
+- TestRunWorkerStartsTheClientAndServesRPC
+- TestRunWorkerReportsAStartupFailure
+- TestServersListsEnabledClientsOnlyAndNeverTheirConfiguration
+
+### `internal/runtime/strict_test.go`
+- TestDaemonSaysWordPressIsDisabledWhenItsKeyIsBroken
+- TestDaemonRefusesANonLoopbackListenerWhenWordPressIsUnconfigured
+- TestDaemonStartsOnLoopbackWithoutWordPress
+
+### `internal/secrets/secrets_test.go`
+- TestRoundTripReturnsThePlaintext
+- TestSealNeverCarriesThePlaintext
+- TestSealUsesAFreshNonce
+- TestOpenRejectsATamperedCiphertext
+- TestOpenRejectsATamperedNonce
+- TestAnotherKeyCannotOpenTheBox
+- TestNewEncrypterRefusesAMissingOrShortKey
+- TestParseKeyAcceptsBothEncodings
+- TestOpenRejectsPlaintextAndEmptyBoxes
+- TestSealUsesVersionOne
+- TestKeyFromEnvNamesTheVariableAndNeverTheValue
+- TestParseKeyAcceptsHex
+- TestParseKeyDoesNotAcceptLongerPassphrases
+
+### `internal/supervisor/supervisor_test.go`
+- TestStartsOneProcessPerEnabledClient
+- TestDoesNotStartDisabledClients
+- TestRestartsAnUnexpectedExitWithBoundedBackoff
+- TestBackoffIsJittered
+- TestAHungWorkerIsRestartedAfterRepeatedFailedProbes
+- TestATransientProbeFailureDoesNotRestart
+- TestGivesUpAfterTheRestartBudget
+- TestAStartupThatNeverBecomesReadyIsRestartedWithinBudget
+- TestOneWorkerFailureDoesNotStopTheOthers
+- TestGracefulShutdownSignalsEveryChild
+- TestShutdownKillsAChildThatIgnoresTheSignal
+- TestStaleSocketFilesAreRemovedButOtherFilesAreNot
+- TestStaleSocketIsRefusedOutsideTheRunDirectory
+- TestStatesExposeTheProcessView
+- TestRestartCounterResetsAfterAStableRun
+
+### `internal/tgapi/entity_test.go`
+- TestUTF16LenCountsCodeUnitsNotBytesOrRunes
+- TestUTF16SliceReturnsExactlyTheSpannedText
+- TestUTF16SliceOfAMultiByteRunOnlyCoversWholeRunes
+- TestEntityValidateRejectsSpansOutsideTheText
+- TestEntityTypesAreTheOnesTelegramDefines
+
+### `internal/tgapi/permissions_test.go`
+- TestNormalizePermissionsForAnOrdinarySupergroupSubscriber
+- TestNormalizePermissionsForAnOrdinaryBroadcastSubscriber
+- TestNormalizePermissionsForTheCreator
+- TestNormalizePermissionsForAnAdminWithPostingRights
+- TestNormalizePermissionsForAnAdminWithoutPostingRights
+- TestNormalizePermissionsForARestrictedOrBannedMember
+- TestNormalizePermissionsForAnInaccessibleOrNonMemberChannel
+- TestNormalizePermissionsWithInsufficientInformation
+- TestNormalizePermissionsForADefaultRestrictedSupergroup
+
+### `internal/tgapi/query_test.go`
+- TestParseChannelQueryClassifiesEachSupportedForm
+- TestParseChannelQueryRejectsUnusableInput
+- TestParseChannelIDAcceptsBothRenderings
+- TestParseChannelRefAcceptsIDsAndInvites
+- TestParseChannelRefRejectsGarbage
+
+### `internal/wordpress/client_test.go`
+- TestProbeReadsTitleAndResolvesTheIconAttachment
+- TestProbeSendsBasicAuthOverTheURL
+- TestProbeLeavesNoIconWhenTheSiteHasNone
+- TestProbeKeepsTheTitleWhenTheIconCannotBeResolved
+- TestProbeIgnoresAnIconURLThatIsNotAPublicHTTPSURL
+- TestProbeReportsBadCredentials
+- TestProbeReportsInsufficientPermissions
+- TestProbeReportsASiteThatIsNotWordPress
+- TestProbeReportsAnHTMLLoginPageAsIncompatible
+- TestProbeReportsACompatibleSiteThatAnswersWrong
+- TestProbeReportsAnEmptyTitle
+- TestProbeReadsTheIconOnlyFromAnAttachmentID
+- TestProbeReportsAtLeastFourHundredAsNotWordPress
+- TestProbeDoesNotFetchAnIconURLAsOne
+- TestProbeTimesOut
+- TestProbeRefusesAnOversizedBody
+- TestProbeReportsAnUnreachableSite
+- TestProbeFollowsNoRedirect
+- TestProbeRequiresHTTPSInProduction
+- TestProbeUsesTheSitePathPrefix
+
+### `internal/wordpress/dial_test.go`
+- TestSafeDialRefusesAPrivateAnswer
+- TestSafeDialRefusesWhenAnyAnswerIsPrivate
+- TestSafeDialConnectsToTheAddressesItChecked
+- TestSafeDialReportsANameThatDoesNotResolve
+- TestSafeDialReturnsTheLastConnectionError
+- TestSafeDialAllowsLoopbackOnlyUnderTheTestPolicy
+
+### `internal/wordpress/policy_test.go`
+- TestBlockedIPRefusesEveryNonPublicDestination
+- TestBlockedIPAllowsPublicDestinations
+- TestBlockedIPUnmapsIPv4InIPv6
+
+### `internal/wordpress/publish_test.go`
+- TestCreatePostSendsThePreparedPostAndReturnsWhatTheSiteConfirmed
+- TestCreatePostReportsBadCredentials
+- TestCreatePostReportsAMissingCapability
+- TestUploadMediaPostsTheBytesAndReturnsTheAttachment
+- TestUploadMediaReportsAnUnsupportedType
+- TestFindTagReturnsTheExistingTerm
+- TestFindTagReportsAMissingTerm
+- TestCreateTagMakesTheMissingTerm
+- TestCreateTagReportsAPermissionRefusalWithoutPretendingItWorked
+
+### `internal/wordpress/url_test.go`
+- TestNormalizeBaseURLAcceptsHTTPS
+- TestNormalizeBaseURLRefusesWhatMustNotBeFetched
+- TestNormalizeBaseURLRefusesInternalHostnames
+- TestNormalizeBaseURLRejectsOversizedComponents
+- TestTestPolicyAllowsLoopbackForTheTestServer
+
+### `internal/worker/discover_log_test.go`
+- TestDiscoverFailuresAreLoggedBeforeTheyBecomeInternal
+- TestDiscoverErrorsStillMapToTheirCodes
+
+### `internal/worker/send_test.go`
+- TestServiceSendMessagePassesThePreparedMessageThrough
+- TestServiceSendMessageRefusesWorkWithoutAnAuthorizedAccount
+- TestServiceSendMessageReportsARefusedDestination
+- TestServiceSendMessageReportsAFloodWait
+- TestServiceSendMessageReportsAnUnresolvableDestination
+- TestServiceSendMessageReportsATooLongMessage
+
+### `internal/worker/server_test.go`
+- TestServeAnswersRPCAndShutsDownOnContext
+- TestListenPreparesTheSocketPath
+- TestListenRefusesANonSocketFile
+- TestListenRemovesADeadSocket
+- TestWriteConfigIsNotPartOfTheWorker
+
+### `internal/worker/worker_test.go`
+- TestHealthSeparatesProcessFromConnectionAndAuth
+- TestHealthReportsConnectedButUnauthorized
+- TestHealthReportsReadyAndUptime
+- TestHealthReportsWhetherASessionFileExists
+- TestHealthDoesNotInventALastSuccess
+- TestHealthCarriesASanitizedError
+- TestProfileIsExplicitWhenUnauthorized
+- TestProfileReturnsTheAccountWhenAuthorized
+- TestChannelsPageThroughTheSnapshot
+- TestChannelsCachesTheSnapshotBriefly
+- TestChannelsRequiresAuthorization
+- TestChannelsWrapUpstreamErrors
+- TestChannelsSurfaceAFloodWaitAsRateLimited
+- TestMessagesPageOlderHistory
+- TestMessagesNeverMarkAsRead
+- TestMessagesRejectUnknownChannel
+- TestMessagesResolveAnUncachedChannelWithoutTheSnapshot
+- TestMessagesRejectsACursorFromAnotherChannel
+- TestPaginationCacheIsBounded
+- TestChannelDTOOmitsUnavailableUnreadCount
+- TestMessagesCarryAMediaDescriptorWithAnID
+- TestMediaFetchesTheBytesForAMessage
+- TestCustomEmojiNeedsALiveClientAndMapsAMissingOne
+- TestMediaRequiresAuthorization
+- TestMediaRejectsAMessageWithoutAnAttachment
+- TestSingleMessageReturnsOnePost
+- TestMessagesCarryViewsAndReactions
+- TestSingleMessageMapsMissingToNotFound
+- TestSingleMessageRequiresAuthorization
+- TestSingleMessageRejectsUnknownChannel
+- TestFindParsesTheQueryAndReturnsChannels
+- TestFindRejectsMalformedQueriesBeforeTouchingTelegram
+- TestFindMapsUnresolvableIDToItsOwnCode
+- TestFindReturnsAnEmptyArrayNotNil
+- TestFindRequiresAuthorization
+- TestLeaveReportsTelegramConfirmation
+- TestLeaveOfAChannelTheAccountIsNotInIsNotAnError
+- TestLeaveKeepsTheTelegramFailure
+- TestLeaveNeedsALiveClient
+- TestJoinReportsWhatTelegramConfirmed
+- TestJoinPendingIsNotReportedAsMembership
+- TestJoinMapsTelegramErrorsToCodes
+- TestJoinRequiresAValidReference
+- TestChannelReturnsTheResolvedChannel
+- TestAvatarReturnsBytesAndMapsAMissingPhoto
+- TestPermissionsAreAlwaysBooleansInTheWireShape
+- TestChannelReportsThePhotoApartFromItsVersion
+
+### `web/apps/web/app/lib/content.test.ts`
+- extracts several hashtags and mentions
+- persian and english hashtags survive intact
+- emoji next to a hashtag does not swallow it
+- a hash inside a URL is not a hashtag
+- an at sign inside a URL is not a mention
+- an email address is not a mention
+- punctuation around a token does not join it
+- a message with no tokens keeps its text
+- empty text with media parses to empty sections
+- only mentions leaves an empty main
+- telegram entities are preferred over the lexer
+- formatting spans are kept and remapped onto the main text
+- a span that touched an extracted token is dropped, not stretched
+- original text is never changed
+- compose puts hashtags and mentions on their own lines
+- compose does not duplicate a token already in the main text
+- compose emits no trailing block when there is nothing to add
+- compose computes UTF-16 offsets the way Telegram does
+- compose keeps formatting spans that stay inside the main text
+- compose drops a formatting span that falls outside the main text
+- editing the text and recomposing never duplicates tokens
+
+### `web/scripts/version.test.mjs`
+- the tag
+- a version is tagged with a leading v
+- an unreleased package version is no version
+- the file wins, so a missing tag does not hide the release
+- the tag does not override the version in the file
+- with no version in the file, the git tag is the fallback
+- past the tag, the fallback names the commit
+- the newest tag on the history is the fallback
+- a tag that is not version-shaped is not a version
+- no repository and no tag are no version
+- a checkout that is not a repository still gets the version, with a note
+- a repository with no commit has no HEAD to tag
+- a tag that exists is left alone
+- writing a version rewrites only it and keeps the formatting
+- --stamp writes the version and never touches git
+- a plain release tags HEAD after writing the version
+- query mode never writes and knows --json
+- write-only mode leaves a git tag out of the picture entirely

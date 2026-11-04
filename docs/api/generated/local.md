@@ -22,6 +22,7 @@
 | PUT | `/api/v1/local/channels/{id}/categories` | `Server.` | — | 4 | [api-v1-local-channels-id-categories](local/api-v1-local-channels-id-categories.md) |
 | POST | `/api/v1/local/channels/{id}/leave` | `Server.leaveLocalChannel` | `200` | 5 | [api-v1-local-channels-id-leave](local/api-v1-local-channels-id-leave.md) |
 | GET | `/api/v1/local/channels/{id}/messages` | `Server.localChannelMessages` | `200` | 4 | [api-v1-local-channels-id-messages](local/api-v1-local-channels-id-messages.md) |
+| GET | `/api/v1/local/stats/dashboard` | `Server.dashboardStats` | `200` | 5 | [api-v1-local-stats-dashboard](local/api-v1-local-stats-dashboard.md) |
 | GET | `/api/v1/local/users` | `Server.listUsers` | `200` | 4 | [api-v1-local-users](local/api-v1-local-users.md) |
 | POST | `/api/v1/local/users` | `Server.createUser` | `201` | 6 | [api-v1-local-users](local/api-v1-local-users.md) |
 | DELETE | `/api/v1/local/users/{id}` | `Server.deleteUser` | `200` | 6 | [api-v1-local-users-id](local/api-v1-local-users-id.md) |
@@ -32,6 +33,8 @@
 | GET | `/api/v1/local/wordpress` | `Server.listWordPressSites` | `200` | 5 | [api-v1-local-wordpress](local/api-v1-local-wordpress.md) |
 | POST | `/api/v1/local/wordpress` | `Server.createWordPressSite` | — | 5 | [api-v1-local-wordpress](local/api-v1-local-wordpress.md) |
 | DELETE | `/api/v1/local/wordpress/{id}` | `Server.deleteWordPressSite` | `200` | 5 | [api-v1-local-wordpress-id](local/api-v1-local-wordpress-id.md) |
-| GET | `/api/v1/local/wordpress/{id}` | `Server.` | — | 5 | [api-v1-local-wordpress-id](local/api-v1-local-wordpress-id.md) |
+| GET | `/api/v1/local/wordpress/{id}` | `Server.getWordPressSite` | `200` | 5 | [api-v1-local-wordpress-id](local/api-v1-local-wordpress-id.md) |
 | PATCH | `/api/v1/local/wordpress/{id}` | `Server.updateWordPressSite` | — | 5 | [api-v1-local-wordpress-id](local/api-v1-local-wordpress-id.md) |
+| GET | `/api/v1/local/wordpress/{id}/categories` | `Server.wordPressTerms` | `200` | 4 | [api-v1-local-wordpress-id-categories](local/api-v1-local-wordpress-id-categories.md) |
 | POST | `/api/v1/local/wordpress/{id}/posts` | `Server.publishWordPress` | `200` | 4 | [api-v1-local-wordpress-id-posts](local/api-v1-local-wordpress-id-posts.md) |
+| GET | `/api/v1/local/wordpress/{id}/tags` | `Server.wordPressTerms` | `200` | 4 | [api-v1-local-wordpress-id-tags](local/api-v1-local-wordpress-id-tags.md) |

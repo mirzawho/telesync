@@ -19,7 +19,7 @@
 ### Authorization conditions in the source
 
 - `authr.Allowed(kind, action, localID)  (access.go:visible)`
-- `authr.CanList(channelstore.KindCategory)  (categories.go:listCategories)`
+- `authr.CanList(channelstore.KindCategory)  (categories.go:visibleCategories)`
 - `authr.CanList(kind)  (access.go:visible)`
 
 What these mean for who may call the route is in the authentication paragraph; the conditions are checked, not interpreted.

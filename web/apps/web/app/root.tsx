@@ -8,6 +8,7 @@ import {
 } from "react-router"
 
 import type { Route } from "./+types/root"
+import { ToastProvider } from "@workspace/ui/components/toast"
 import "@workspace/ui/globals.css"
 
 export const links: Route.LinksFunction = () => [
@@ -50,8 +51,15 @@ export function HydrateFallback() {
   )
 }
 
+// The provider root for every page in the panel — login included — so a route
+// can call useToast() without its own mount. One ToastProvider only: the panel
+// layout must not add a second one.
 export default function App() {
-  return <Outlet />
+  return (
+    <ToastProvider>
+      <Outlet />
+    </ToastProvider>
+  )
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {

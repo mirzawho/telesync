@@ -344,5 +344,10 @@ func (e *accountEnv) onlyCategoryPermissions(t *testing.T) {
 // test that needs a handler with one field changed.
 func (e *accountEnv) handlerConfig() gateway.Config { return e.started }
 
-// useConfig rebuilds the handler over the suite's store with cfg.
-func (e *accountEnv) useConfig(cfg gateway.Config) { e.handler = gateway.New(cfg) }
+// useConfig rebuilds the handler over the suite's store with cfg, and remembers
+// it: handlerConfig answers with what the handler is built from now, so a test
+// that changes one field and rebuilds keeps the rest of what it already set.
+func (e *accountEnv) useConfig(cfg gateway.Config) {
+	e.started = cfg
+	e.handler = gateway.New(cfg)
+}

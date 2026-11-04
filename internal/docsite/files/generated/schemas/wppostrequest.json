@@ -5,10 +5,10 @@
       "go_type": "struct { LocalChannelID int64 `json:\"local_channel_id\"` MessageID int `json:\"message_id\"` }"
     },
     "post": {
-      "go_type": "struct { Title string `json:\"title\"` Content string `json:\"content\"` Status string `json:\"status\"` Tags []string `json:\"tags\"` }"
+      "go_type": "struct { Title string `json:\"title\"` Slug string `json:\"slug\"` Content string `json:\"content\"` Status string `json:\"status\"` Tags []string `json:\"tags\"` TagIDs []int `json:\"tag_ids\"` CategoryIDs []int `json:\"categories\"` }"
     },
     "media": {
-      "go_type": "struct { Mode string `json:\"mode\"` }"
+      "go_type": "struct { Mode string `json:\"mode\"` AttachmentID string `json:\"attachment_id,omitempty\"` }"
     },
     "options": {
       "go_type": "struct { CommentStatus string `json:\"comment_status\"` }"

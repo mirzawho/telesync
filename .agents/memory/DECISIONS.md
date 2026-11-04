@@ -1049,3 +1049,109 @@ explicit about what it is carrying and cannot exhaust the worker by accident.
 
 **How to apply.** Any future worker operation that moves bytes uses the same
 shape. Do not raise the JSON body limit to accommodate media.
+
+## D62 — The manage right writes inside the caller's own selection
+
+**Decision.** The global manage permission of a kind (`channels.create`,
+`categories.create`, `wordpress.create`) allows `update` and `delete` on that
+kind, not only `create`. An explicit per-resource assignment of the action still
+decides first, and a write still needs the view. The manage right is narrowed by
+the caller's **selection**: while any per-resource assignment is stored it
+covers only the resources carrying `view: allow`, and with none stored it covers
+every resource of the kind. A selection is stored as a `view: allow` per picked
+item plus an `update: deny` with a `delete: deny` per item left out, which is
+what the administrators dialog writes; a lone deny is an exclusion over the
+whole and does not make a selection.
+
+**Why.** The panel labels `channels.create` "مدیریت کانال‌ها" (manage channels)
+and showed a delete action for every row, but the model granted delete only
+through a per-channel `delete` assignment the dialog never wrote — so no account
+could ever remove a record (the owner's reported bug). WordPress's identically
+labelled `wordpress.create` already covered every write, so the same label meant
+two different things. Scoping the right keeps D36's "no global update/delete
+that overrides a per-resource deny" and gives the dialog its documented "all
+items, or the picked ones" choice.
+
+**Why the selection is stored as write denies too.** Assignment rows cascade
+with their resource (D34), so a selection recorded only as `view: allow` on the
+picked items evaporates when the last one is deleted — the manager would fall
+back to every item, which is a scoped manager escalating themselves by deleting
+their own channel. The denies on the items left out outlive the picked records
+and keep the selection in place. The residue is narrow: a manager scoped to
+every item in the inventory, all of which are later deleted and replaced, can
+then manage the replacements.
+
+**How to apply.** `channelstore.Authorizer.allowedWrite` is the one rule;
+`gateway.visible()` already routes every write through it. Do not grant a kind's
+writes from `channels.view`-style globals, and do not let a per-resource deny be
+overridden by a manage right. A new manageable kind maps its own global in
+`managePermission` and stores its selection the same way. This amends D36's
+"update and delete are always per resource" and D48's "per-site update and
+delete grant nothing"; WordPress writing still also needs the global on the
+route, so a per-site assignment alone never replaces a credential.
+
+## D63 — Attachment bytes cross the worker boundary as a stream, never as JSON
+
+Reading an attachment (`GET /api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/media`)
+returns the file's bytes as a raw response body. The worker's internal media
+route answers `200` with `Content-Type`, `Content-Length`, and three headers
+carrying what the URL cannot (`X-Telesync-Size`, `X-Telesync-Offset`,
+`X-Telesync-Filename`); the gateway turns those into the public contract. The
+previous shape — `rpc.MediaFile{Data []byte}` JSON-encoded over the socket — put
+every attachment through a base64 buffer on both sides and was capped at 32 MiB,
+so a 60 MB APK could not be downloaded at all.
+
+**Why.** "A 60 MB APK must be downloadable without buffering the entire file in
+RAM" cannot be met by any encoding that materialises the whole file: only a
+stream does. `rpc.MediaStream` carries an `io.ReadCloser`, `gotdclient` pulls
+512 KiB `upload.getFile` parts as they are read, and the gateway forwards with
+`io.Copy` and flushes the headers first. Nothing on the path holds more than one
+part.
+
+**How to apply.** `rpc.Backend.Media` and `gateway.Worker.Media` take a
+`rpc.MediaSlice{Offset, Limit, Tail}` and return `rpc.MediaStream`. `Tail` exists
+because an HTTP suffix range cannot be resolved to an offset without the size,
+and only the worker has it; the gateway keeps all Range parsing (`parseRange`,
+`unsatisfiableRange`, `contentDisposition` in `internal/gateway/mediahttp.go`),
+so HTTP meaning stays in the public layer. Callers that genuinely need one
+buffer — preparing a send, uploading to WordPress — call `MediaStream.ReadAll`,
+which is bounded by `MaxSendMediaBytes`; nothing else may. The `rpc.Client`'s
+`stream` HTTP client has no total timeout (a large transfer is legitimate), only
+`ResponseHeaderTimeout` on the shared transport and the caller's context.
+
+A range is only honoured and only advertised (`Accept-Ranges: bytes`) when the
+backend reported a size; with no size the route serves the whole attachment and
+says `Accept-Ranges: none` rather than promising something it cannot deliver.
+This amends D61's direction of travel only for reads: media *sent* to a worker
+still arrives as multipart.
+
+## D64 — A picked scope denies what it left out, for the view as well as the write
+
+**Decision.** When the administrators dialog saves a resource scope, the items
+the picker left out are stored with `view: deny` alongside the `update: deny`
+and `delete: deny` D62 already puts there. The picked items keep `view: allow`,
+and no rows at all still means the whole kind. This amends D62's stored shape
+(`view: allow` on the picks, write denies on the rest) without touching its
+rule: `marksASelection` still sees a selection, so the manage right is still
+narrowed to the picks exactly as before.
+
+**Why.** With D62's shape the *view* was never scoped: an unpicked row carried
+no `view` assignment, so `allowedHere` fell through to the kind's global viewing
+permission and the account saw every channel it had just been narrowed away
+from. The picker's own text says "هر مورد انتخاب‌شده یعنی دسترسی فقط به همان
+موارد", and the redesigned report tab has to state what access actually results
+— under the old shape it would have had to write "دسترسی به ۲ کانال" while the
+answer was "all of them". An explicit deny is the only stored form that outranks
+the global grant, and denying is the safe direction.
+
+**How to apply.** A scope is `view: allow` on the picks and
+`view: deny, update: deny, delete: deny` on every other row of the same kind in
+the same catalog; an empty picker still posts no rows (the widest access, D62's
+"no selection"). Do not drop the write denies to shorten the rows: a lone
+`view: deny` is an exclusion over the whole and would stop marking a selection,
+which is exactly the escalation D62 guards against. Known residue, unchanged in
+kind from D62: a record added to the inventory *after* the save has no row and
+so is still visible under the global viewing permission (the global cannot be
+omitted while a manage right is granted — `requireViewForManage` demands it),
+but it can never be written. The report tab says "دسترسی به N" for the picked
+count rather than pretending the scope covers records that do not exist yet.

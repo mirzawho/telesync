@@ -255,6 +255,59 @@ func TestAuthorizerFollowsTheDocumentedRules(t *testing.T) {
 	}
 }
 
+func TestManageEditsAndDeletesWithinTheSelection(t *testing.T) {
+	newA := func(globals []channelstore.GlobalPermission, grants ...channelstore.Grant) *channelstore.Authorizer {
+		return channelstore.NewAuthorizer(globals, grants)
+	}
+	grant := func(kind channelstore.ResourceKind, id int64, action channelstore.Action, effect channelstore.Effect) channelstore.Grant {
+		return channelstore.Grant{Kind: kind, ResourceID: id, Action: action, Effect: effect}
+	}
+	ch := func(id int64, action channelstore.Action, effect channelstore.Effect) channelstore.Grant {
+		return grant(channelstore.KindChannel, id, action, effect)
+	}
+	manage := []channelstore.GlobalPermission{
+		channelstore.PermissionChannelsCreate, channelstore.PermissionChannelsView,
+	}
+
+	tests := []struct {
+		name     string
+		auth     *channelstore.Authorizer
+		kind     channelstore.ResourceKind
+		action   channelstore.Action
+		resource int64
+		want     bool
+	}{
+		{"manage deletes an unassigned channel", newA(manage), channelstore.KindChannel, channelstore.ActionDelete, 5, true},
+		{"manage updates an unassigned channel", newA(manage), channelstore.KindChannel, channelstore.ActionUpdate, 5, true},
+		{"manage without the view grants no write", newA([]channelstore.GlobalPermission{channelstore.PermissionChannelsCreate}), channelstore.KindChannel, channelstore.ActionDelete, 5, false},
+		{"the selection limits manage to the picked channel", newA(manage, ch(5, channelstore.ActionView, channelstore.EffectAllow)), channelstore.KindChannel, channelstore.ActionDelete, 5, true},
+		{"the selection keeps manage off an unpicked channel", newA(manage, ch(5, channelstore.ActionView, channelstore.EffectAllow)), channelstore.KindChannel, channelstore.ActionDelete, 6, false},
+		{"the selection limits update too", newA(manage, ch(5, channelstore.ActionView, channelstore.EffectAllow)), channelstore.KindChannel, channelstore.ActionUpdate, 6, false},
+		{"a deny-only set is not a selection", newA(manage, ch(9, channelstore.ActionView, channelstore.EffectDeny)), channelstore.KindChannel, channelstore.ActionDelete, 5, true},
+		{"one write deny is an exclusion, not a selection", newA(manage, ch(9, channelstore.ActionDelete, channelstore.EffectDeny)), channelstore.KindChannel, channelstore.ActionDelete, 5, true},
+		{"a deny of both writes marks a selection", newA(manage, ch(9, channelstore.ActionDelete, channelstore.EffectDeny), ch(9, channelstore.ActionUpdate, channelstore.EffectDeny)), channelstore.KindChannel, channelstore.ActionDelete, 5, false},
+		{"a view deny takes the write away", newA(manage, ch(5, channelstore.ActionView, channelstore.EffectDeny)), channelstore.KindChannel, channelstore.ActionDelete, 5, false},
+		{"an explicit deny of the action beats manage", newA(manage, ch(5, channelstore.ActionDelete, channelstore.EffectDeny)), channelstore.KindChannel, channelstore.ActionDelete, 5, false},
+		{"an explicit deny of update does not take delete", newA(manage, ch(5, channelstore.ActionUpdate, channelstore.EffectDeny)), channelstore.KindChannel, channelstore.ActionDelete, 5, true},
+		{"an explicit allow still grants without manage", newA([]channelstore.GlobalPermission{channelstore.PermissionChannelsView},
+			ch(5, channelstore.ActionView, channelstore.EffectAllow), ch(5, channelstore.ActionDelete, channelstore.EffectAllow)), channelstore.KindChannel, channelstore.ActionDelete, 5, true},
+		{"channel manage does not reach categories", newA(manage), channelstore.KindCategory, channelstore.ActionDelete, 5, false},
+		{"category manage works the same way", newA([]channelstore.GlobalPermission{channelstore.PermissionCategoriesCreate, channelstore.PermissionCategoriesView}), channelstore.KindCategory, channelstore.ActionDelete, 3, true},
+		{"category manage is scoped by its own selection", newA([]channelstore.GlobalPermission{channelstore.PermissionCategoriesCreate, channelstore.PermissionCategoriesView},
+			grant(channelstore.KindCategory, 3, channelstore.ActionView, channelstore.EffectAllow)), channelstore.KindCategory, channelstore.ActionDelete, 4, false},
+		{"site manage works the same way", newA([]channelstore.GlobalPermission{channelstore.PermissionWordPressManage, channelstore.PermissionWordPressView}), channelstore.KindWordPress, channelstore.ActionDelete, 2, true},
+		{"site manage is scoped by its own selection", newA([]channelstore.GlobalPermission{channelstore.PermissionWordPressManage, channelstore.PermissionWordPressView},
+			grant(channelstore.KindWordPress, 1, channelstore.ActionView, channelstore.EffectAllow)), channelstore.KindWordPress, channelstore.ActionDelete, 2, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.auth.Allowed(tt.kind, tt.action, tt.resource); got != tt.want {
+				t.Fatalf("Allowed = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAuthorizerForReadsTheDatabase(t *testing.T) {
 	ctx := context.Background()
 	store := open(t)

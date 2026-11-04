@@ -15,7 +15,15 @@ import {
 import * as React from "react"
 
 import { faDateTime, faDigits } from "@/components/persian-digits"
-import { releaseMedia, fetchMedia } from "@/lib/message-media"
+import { downloadMedia, releaseMedia, fetchMedia } from "@/lib/message-media"
+import {
+  downloadName,
+  formatSize,
+  mediaExtension,
+  mediaKind,
+  mediaTitle,
+  type MediaKind,
+} from "@/lib/media-view"
 import type {
   ChannelMessage,
   MessageMedia,
@@ -41,16 +49,16 @@ const iconFor: Record<string, React.ComponentType<{ className?: string }>> = {
   other: PaperclipIcon,
 }
 
-// A media type the API may report but whose bytes this build cannot show
-// inline. The card says so instead of pretending an attachment is there.
-const inlineTypes = new Set(["photo", "video", "gif"])
+// INLINE_KINDS are shown as their own content: the picture, the frame of the
+// video. Everything else is an attachment the card describes and offers to
+// save. Media with bytes the panel can play gets them fetched; a document does
+// not, so listing a channel of large files downloads nothing until asked.
+function inlineKind(kind: MediaKind): boolean {
+  return kind === "image" || kind === "video"
+}
 
-function faSize(bytes?: number): string | null {
-  if (!bytes || bytes <= 0) return null
-  if (bytes < 1024) return `${faDigits(bytes)} بایت`
-  if (bytes < 1024 * 1024)
-    return `${faDigits((bytes / 1024).toFixed(1))} کیلوبایت`
-  return `${faDigits((bytes / (1024 * 1024)).toFixed(1))} مگابایت`
+function needsBytes(kind: MediaKind): boolean {
+  return inlineKind(kind) || kind === "audio"
 }
 
 export function MessageCard({
@@ -340,23 +348,196 @@ function Linkified({ text }: { text: string }) {
   )
 }
 
-function MessageMediaView({ media }: { media: MessageMedia }) {
+// MediaStatus says where an attachment's bytes are: still arriving, in hand,
+// not available at all, or failed to fetch.
+export type MediaStatus = "loading" | "ready" | "empty" | "error"
+
+// MediaAttachmentCard draws one attachment.
+//
+// It is presentational: the bytes arrive through props, so what is on screen is
+// always a straight answer about the state it was given. An audio attachment
+// gets a real player, a document gets its name, its size and a download, and
+// anything the panel has no drawing for is described rather than misrendered.
+export function MediaAttachmentCard({
+  media,
+  status = "loading",
+  url = "",
+}: {
+  media: MessageMedia
+  status?: MediaStatus
+  // url is the fetched object URL, empty while the bytes are not in hand.
+  url?: string
+}) {
+  const kind = mediaKind(media)
+  const title = mediaTitle(media)
+  const size = formatSize(media.size)
   const Icon = iconFor[media.type] ?? PaperclipIcon
-  const size = faSize(media.size)
-  const label = media.label || media.type
-  const [status, setStatus] = React.useState<
-    "loading" | "ready" | "empty" | "error"
-  >("loading")
+  const what = media.label || media.type
+
+  if (kind === "audio") {
+    return (
+      <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 px-3 py-2.5">
+        <div className="flex items-center gap-2 text-sm">
+          <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span dir="auto" className="min-w-0 flex-1 truncate font-medium" title={title}>
+            {title}
+          </span>
+          {size && (
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+              {size}
+            </span>
+          )}
+        </div>
+        {status === "ready" && url ? (
+          <audio controls preload="metadata" src={url} dir="ltr" className="w-full" />
+        ) : (
+          <p
+            className={cn(
+              "text-xs",
+              status === "error" ? "text-destructive" : "text-muted-foreground"
+            )}
+          >
+            {status === "loading"
+              ? `در حال دریافت ${what}…`
+              : status === "empty"
+                ? `${what} در دسترس نیست`
+                : `دریافت ${what} ناموفق بود`}
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  if (kind === "document") {
+    return (
+      <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
+        <span
+          className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-background"
+          aria-hidden="true"
+        >
+          <Icon className="size-4 text-muted-foreground" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p dir="auto" className="truncate text-sm font-medium" title={title}>
+            {title}
+          </p>
+          <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+            {media.label && <span>{media.label}</span>}
+            {mediaExtension(media) && (
+              <Badge variant="muted" className="text-[0.65rem]">
+                {mediaExtension(media)}
+              </Badge>
+            )}
+            {size && <span className="tabular-nums">{size}</span>}
+          </p>
+        </div>
+        <DownloadButton media={media} />
+      </div>
+    )
+  }
+
+  if (!inlineKind(kind)) {
+    return (
+      <div className="flex items-center gap-3 rounded-lg border border-dashed bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground">
+        <Icon className="size-4 shrink-0" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        {size && <span className="text-xs tabular-nums">{size}</span>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-xl overflow-hidden rounded-lg border">
+      {status === "ready" && media.type === "video" && url ? (
+        <video
+          src={url}
+          controls
+          preload="metadata"
+          className="max-h-96 w-full bg-muted"
+        />
+      ) : status === "ready" && url ? (
+        <img
+          src={url}
+          alt={title}
+          loading="lazy"
+          decoding="async"
+          className="max-h-96 w-full bg-muted object-contain"
+        />
+      ) : (
+        <div
+          className={cn(
+            "flex min-h-24 items-center justify-center gap-2 bg-muted/40 px-3 py-6 text-sm",
+            status === "error" ? "text-destructive" : "text-muted-foreground"
+          )}
+        >
+          {status === "loading" ? (
+            <>
+              <Icon className="size-4 animate-pulse" aria-hidden="true" />
+              <span>در حال دریافت {what}…</span>
+            </>
+          ) : status === "empty" ? (
+            <>
+              <Icon className="size-4" aria-hidden="true" />
+              <span>{what} در دسترس نیست</span>
+            </>
+          ) : (
+            <span>دریافت {what} ناموفق بود</span>
+          )}
+        </div>
+      )}
+      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-xs text-muted-foreground">
+        <Icon className="size-3.5" aria-hidden="true" />
+        <span className="truncate">{title}</span>
+        {size && <span className="ms-auto tabular-nums">{size}</span>}
+        <Badge variant="muted" className="text-[0.65rem]">
+          {media.type}
+        </Badge>
+      </div>
+    </div>
+  )
+}
+
+// DownloadButton saves one attachment under the name the sender gave it.
+//
+// The link carries the media URL and the filename so the answer is visible and
+// linkable, but the bytes are fetched with the panel's bearer credential: a
+// plain navigation would arrive at the API unauthenticated. Nothing is put in
+// the URL itself.
+function DownloadButton({ media }: { media: MessageMedia }) {
+  const name = downloadName(media)
+  return (
+    <a
+      href={media.url}
+      download={name}
+      onClick={(event) => {
+        event.preventDefault()
+        if (media.url) {
+          void downloadMedia(media.url, name).catch(() => {
+            // The card says nothing more than it knows: the save simply did
+            // not happen, and the button stays available to try again.
+          })
+        }
+      }}
+      className="shrink-0 rounded-md border bg-background px-3 py-1 text-sm hover:bg-accent"
+    >
+      دانلود
+    </a>
+  )
+}
+
+function MessageMediaView({ media }: { media: MessageMedia }) {
+  const kind = mediaKind(media)
+  const [status, setStatus] = React.useState<MediaStatus>("loading")
   const [url, setUrl] = React.useState("")
-  // The URL only becomes visible when the card is near the viewport, so a long
+  // The bytes only become visible when the card is near the viewport, so a long
   // history does not download every attachment as it loads.
   const [visible, setVisible] = React.useState(false)
   const box = React.useRef<HTMLDivElement>(null)
 
-  const inline = inlineTypes.has(media.type) && Boolean(media.url)
+  const fetched = needsBytes(kind)
 
   React.useEffect(() => {
-    if (!inline) return
+    if (!fetched) return
     const node = box.current
     if (!node) return
     if (typeof IntersectionObserver === "undefined") {
@@ -374,10 +555,10 @@ function MessageMediaView({ media }: { media: MessageMedia }) {
     )
     observer.observe(node)
     return () => observer.disconnect()
-  }, [inline])
+  }, [fetched])
 
   React.useEffect(() => {
-    if (!visible || !media.url) return
+    if (!fetched || !visible || !media.url) return
     const controller = new AbortController()
     let objectUrl = ""
     let live = true
@@ -405,65 +586,15 @@ function MessageMediaView({ media }: { media: MessageMedia }) {
       setUrl("")
       setStatus("loading")
     }
-  }, [visible, media.url])
-
-  if (!inline) {
-    return (
-      <div className="flex items-center gap-3 rounded-lg border border-dashed bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground">
-        <Icon className="size-4 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        {size && <span className="text-xs tabular-nums">{size}</span>}
-      </div>
-    )
-  }
+  }, [fetched, visible, media.url])
 
   return (
-    <div ref={box} className="max-w-xl overflow-hidden rounded-lg border">
-      {status === "ready" && media.type === "video" && url ? (
-        <video
-          src={url}
-          controls
-          preload="metadata"
-          className="max-h-96 w-full bg-muted"
-        />
-      ) : status === "ready" && url ? (
-        <img
-          src={url}
-          alt={label}
-          loading="lazy"
-          decoding="async"
-          className="max-h-96 w-full bg-muted object-contain"
-        />
-      ) : (
-        <div
-          className={cn(
-            "flex min-h-24 items-center justify-center gap-2 bg-muted/40 px-3 py-6 text-sm",
-            status === "error" ? "text-destructive" : "text-muted-foreground"
-          )}
-        >
-          {status === "loading" ? (
-            <>
-              <Icon className="size-4 animate-pulse" aria-hidden="true" />
-              <span>در حال دریافت {label}…</span>
-            </>
-          ) : status === "empty" ? (
-            <>
-              <Icon className="size-4" aria-hidden="true" />
-              <span>{label} در دسترس نیست</span>
-            </>
-          ) : (
-            <span>دریافت {label} ناموفق بود</span>
-          )}
-        </div>
-      )}
-      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-xs text-muted-foreground">
-        <Icon className="size-3.5" aria-hidden="true" />
-        <span className="truncate">{label}</span>
-        {size && <span className="ms-auto tabular-nums">{size}</span>}
-        <Badge variant="muted" className="text-[0.65rem]">
-          {media.type}
-        </Badge>
-      </div>
+    <div ref={box}>
+      <MediaAttachmentCard
+        media={media}
+        status={fetched ? status : "ready"}
+        url={url}
+      />
     </div>
   )
 }

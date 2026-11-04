@@ -48,6 +48,15 @@ type wpSiteHandler struct {
 	gotUploadName  string
 	postErr        error
 	nextTagID      int
+	// The taxonomy listing records exactly what the route asked the site for,
+	// so a test can prove the site's own terms are the ones being offered.
+	terms           map[string][]wordpress.TermRef
+	termsErr        error
+	gotTermsOf      string
+	gotTermsSearch  string
+	gotTermsPage    int
+	gotTermsPerPage int
+	gotTermsCalls   int
 }
 
 // wpFakeClient is the gateway's WordPress client over the scripted site.
@@ -76,6 +85,22 @@ func (c *wpFakeClient) UploadMedia(_ context.Context, _, _, _, name, _ string, _
 	c.uploadsCreated++
 	c.gotUploadName = name
 	return wordpress.MediaRef{ID: 5, SourceURL: "https://site.example.com/a.jpg"}, nil
+}
+
+func (c *wpFakeClient) ListTerms(_ context.Context, _, _, _, taxonomy, search string, page, perPage int) (wordpress.TermPage, error) {
+	c.gotTermsCalls++
+	c.gotTermsOf = taxonomy
+	c.gotTermsSearch = search
+	c.gotTermsPage = page
+	c.gotTermsPerPage = perPage
+	if c.termsErr != nil {
+		return wordpress.TermPage{}, c.termsErr
+	}
+	terms := append([]wordpress.TermRef(nil), c.terms[taxonomy]...)
+	return wordpress.TermPage{
+		Terms: terms, Page: page, PerPage: perPage,
+		Total: len(terms), TotalPages: 1,
+	}, nil
 }
 
 func (c *wpFakeClient) FindTag(_ context.Context, _, _, _, name string) (wordpress.TagRef, bool, error) {
@@ -126,6 +151,13 @@ func wpRequest(localID int64, messageID int, title string) string {
 // wpPublishEnv wires an account suite with a registered site, a source channel
 // and a scripted WordPress client.
 func wpPublishEnv(t *testing.T) (*accountEnv, *wpFakeClient, channelstore.Channel) {
+	env, client, row, _ := wpPublishEnvWorker(t)
+	return env, client, row
+}
+
+// wpPublishEnvWorker is wpPublishEnv with the worker it drives, so a test can
+// see what the gateway asked Telegram to read.
+func wpPublishEnvWorker(t *testing.T) (*accountEnv, *wpFakeClient, channelstore.Channel, *fakeWorker) {
 	t.Helper()
 	client := &wpFakeClient{
 		wpSiteHandler: &wpSiteHandler{},
@@ -138,7 +170,10 @@ func wpPublishEnv(t *testing.T) (*accountEnv, *wpFakeClient, channelstore.Channe
 		Messages: []rpc.Message{{ID: 9, Text: "hello"}},
 		Page:     rpc.PageInfo{Page: 1, PerPage: 1, Total: 1},
 	}
-	worker.media = rpc.MediaFile{MediaID: "555:9", MimeType: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+	worker.mediaBytes = []byte{0xff, 0xd8, 0xff}
+	worker.mediaType = "image/jpeg"
+	worker.mediaName = "photo.jpg"
+	worker.mediaSize = int64(len(worker.mediaBytes))
 
 	env := newAccountEnv(t, registry{"official": worker}, func(c *gateway.Config) {
 		c.WordPress = envStoreFor(c)
@@ -157,7 +192,7 @@ func wpPublishEnv(t *testing.T) (*accountEnv, *wpFakeClient, channelstore.Channe
 	if _, err := env.store.CreateWordPressSite(context.Background(), site); err != nil {
 		t.Fatalf("register site: %v", err)
 	}
-	return env, client, row
+	return env, client, row, worker
 }
 
 func mustBox(t *testing.T) secrets.Box {

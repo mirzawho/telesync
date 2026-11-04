@@ -12,6 +12,7 @@ requests after it.
 | GET | `/docs` | — | below |
 | POST | `/api/v1/auth/login` | — | below |
 | GET | `/api/v1/auth/me` | — | below |
+| POST | `/api/v1/auth/password` | — | below |
 | GET | `/api/v1/telegram` | — | below |
 | GET | `/api/v1/telegram/{key}/health` | — | below |
 | GET | `/api/v1/telegram/{key}/profile` | — | below |
@@ -41,6 +42,8 @@ requests after it.
 | GET | `/api/v1/local/wordpress` | — | below |
 | POST | `/api/v1/local/wordpress` | `site` | below |
 | GET | `/api/v1/local/wordpress/{site_id}` | — | below |
+| GET | `/api/v1/local/wordpress/{site_id}/categories` | — | below |
+| GET | `/api/v1/local/wordpress/{site_id}/tags` | — | below |
 | PATCH | `/api/v1/local/wordpress/{site_id}` | — | below |
 | POST | `/api/v1/local/wordpress/{site_id}/posts` | — | below |
 | DELETE | `/api/v1/local/wordpress/{site_id}` | — | below |
@@ -51,6 +54,7 @@ requests after it.
 | DELETE | `/api/v1/local/users/{user_id}` | — | below |
 | GET | `/api/v1/local/users/{user_id}/permissions` | — | below |
 | PUT | `/api/v1/local/users/{user_id}/permissions` | — | below |
+| GET | `/api/v1/local/stats/dashboard` | — | below |
 
 `category`, `site` and `user` are ids the API assigns: `api.http` creates them,
 captures them and substitutes them into the later requests, and the test runs the file

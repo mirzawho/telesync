@@ -247,6 +247,10 @@ func (s *Server) serveLocal(w http.ResponseWriter, r *http.Request, requestID st
 			return
 		}
 		s.localChannels(w, r, requestID)
+	case underPath(r.URL.Path, s.fullPath(statsPrefix)):
+		// The dashboard's counts read every local store, so the handler decides
+		// which of them it needs and what a missing one means.
+		s.dashboardStats(w, r, requestID)
 	default:
 		w.Header().Set("Allow", http.MethodGet)
 		s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "Only GET is supported.", requestID)

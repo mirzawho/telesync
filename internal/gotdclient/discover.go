@@ -488,7 +488,7 @@ func (m *Manager) DownloadChannelAvatar(ctx context.Context, ref tgapi.ChannelRe
 
 	var buf bytes.Buffer
 	if _, err := downloader.NewDownloader().Download(client.API(), loc).
-		Stream(ctx, &limitedWriter{w: &buf, limit: maxMediaBytes}); err != nil {
+		Stream(ctx, &limitedWriter{w: &buf, limit: maxSmallFileBytes}); err != nil {
 		return tgapi.AvatarFile{}, ClassifyError(err)
 	}
 	if buf.Len() == 0 {

@@ -11,7 +11,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@workspace/ui/components/sheet"
-import { useIsMobile } from "@workspace/ui/hooks/use-media-query"
+import { useMediaQuery } from "@workspace/ui/hooks/use-media-query"
 import { cn } from "@workspace/ui/lib/utils"
 
 const SIDEBAR_WIDTH = "16rem"
@@ -24,7 +24,11 @@ const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 const SidebarInitialPaint = React.createContext(false)
 
 export function SidebarFirstPaint({ children }: { children: React.ReactNode }) {
-  return <SidebarInitialPaint.Provider value={true}>{children}</SidebarInitialPaint.Provider>
+  return (
+    <SidebarInitialPaint.Provider value={true}>
+      {children}
+    </SidebarInitialPaint.Provider>
+  )
 }
 
 type SidebarContextValue = {
@@ -60,7 +64,9 @@ function SidebarProvider({
   open?: boolean
   onOpenChange?: (open: boolean) => void
 }) {
-  const isMobile = useIsMobile()
+  // Below lg only: at 768-1023px the shell shows its own bottom navigation, so
+  // there is no drawer there and nothing a trigger could open.
+  const isMobile = useMediaQuery("(max-width: 1023px)", true)
   const [openMobile, setOpenMobileState] = React.useState(false)
   const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen)
   const open = openProp ?? uncontrolledOpen
@@ -78,7 +84,10 @@ function SidebarProvider({
     [setOpenProp]
   )
 
-  const setOpenMobile = React.useCallback((value: boolean) => setOpenMobileState(value), [])
+  const setOpenMobile = React.useCallback(
+    (value: boolean) => setOpenMobileState(value),
+    []
+  )
 
   const toggleSidebar = React.useCallback(() => {
     if (isMobile) {
@@ -90,7 +99,10 @@ function SidebarProvider({
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
+      if (
+        event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
+        (event.metaKey || event.ctrlKey)
+      ) {
         event.preventDefault()
         toggleSidebar()
       }
@@ -99,7 +111,7 @@ function SidebarProvider({
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [toggleSidebar])
 
-  // A resize across the md breakpoint must not carry the mobile sheet state.
+  // A resize across the lg breakpoint must not carry the mobile sheet state.
   React.useEffect(() => {
     if (!isMobile) {
       setOpenMobile(false)
@@ -120,14 +132,25 @@ function SidebarProvider({
       toggleSidebar,
       animate: !initialPaint || hydrated,
     }),
-    [open, setOpen, openMobile, setOpenMobile, isMobile, toggleSidebar, initialPaint, hydrated]
+    [
+      open,
+      setOpen,
+      openMobile,
+      setOpenMobile,
+      isMobile,
+      toggleSidebar,
+      initialPaint,
+      hydrated,
+    ]
   )
 
   return (
     <SidebarContext.Provider value={value}>
       <div
         data-slot="sidebar-wrapper"
-        style={{ "--sidebar-width": SIDEBAR_WIDTH, ...style } as React.CSSProperties}
+        style={
+          { "--sidebar-width": SIDEBAR_WIDTH, ...style } as React.CSSProperties
+        }
         className={cn("group/sidebar-wrapper flex min-h-svh w-full", className)}
         {...props}
       >
@@ -137,7 +160,7 @@ function SidebarProvider({
   )
 }
 
-// Below md the same children are shown in a sheet; at md and up, in a sticky
+// Below lg the same children are shown in a sheet; at lg and up, in a sticky
 // column. The UI is the same in both, so a page never has two nav trees.
 function Sidebar({
   side = "start",
@@ -161,7 +184,9 @@ function Sidebar({
         >
           <SheetHeader className="border-b border-sidebar-border">
             <SheetTitle>منوی اصلی</SheetTitle>
-            <SheetDescription className="sr-only">مسیرهای پنل مدیریت</SheetDescription>
+            <SheetDescription className="sr-only">
+              مسیرهای پنل مدیریت
+            </SheetDescription>
           </SheetHeader>
           {children}
         </SheetContent>
@@ -174,7 +199,7 @@ function Sidebar({
       data-slot="sidebar"
       data-state={open ? "expanded" : "collapsed"}
       className={cn(
-        "hidden shrink-0 overflow-hidden md:block",
+        "hidden shrink-0 overflow-hidden lg:block",
         open ? "w-(--sidebar-width)" : "w-0",
         animate && "transition-[width] duration-200 ease-linear"
       )}
@@ -192,7 +217,10 @@ function Sidebar({
   )
 }
 
-function SidebarTrigger({ className, ...props }: React.ComponentProps<typeof Button>) {
+function SidebarTrigger({
+  className,
+  ...props
+}: React.ComponentProps<typeof Button>) {
   const { toggleSidebar } = useSidebar()
   return (
     <Button
@@ -223,7 +251,10 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sidebar-content"
-      className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3", className)}
+      className={cn(
+        "flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3",
+        className
+      )}
       {...props}
     />
   )
@@ -233,7 +264,10 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sidebar-footer"
-      className={cn("flex flex-col gap-2 border-t border-sidebar-border p-3", className)}
+      className={cn(
+        "flex flex-col gap-2 border-t border-sidebar-border p-3",
+        className
+      )}
       {...props}
     />
   )
@@ -241,15 +275,25 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
 
 function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
-    <div data-slot="sidebar-group" className={cn("flex flex-col gap-1", className)} {...props} />
+    <div
+      data-slot="sidebar-group"
+      className={cn("flex flex-col gap-1", className)}
+      {...props}
+    />
   )
 }
 
-function SidebarGroupLabel({ className, ...props }: React.ComponentProps<"div">) {
+function SidebarGroupLabel({
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sidebar-group-label"
-      className={cn("px-2 py-1.5 text-xs font-medium text-muted-foreground", className)}
+      className={cn(
+        "px-2 py-1.5 text-xs font-medium text-muted-foreground",
+        className
+      )}
       {...props}
     />
   )
@@ -257,13 +301,21 @@ function SidebarGroupLabel({ className, ...props }: React.ComponentProps<"div">)
 
 function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   return (
-    <ul data-slot="sidebar-menu" className={cn("flex flex-col gap-0.5", className)} {...props} />
+    <ul
+      data-slot="sidebar-menu"
+      className={cn("flex flex-col gap-0.5", className)}
+      {...props}
+    />
   )
 }
 
 function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
   return (
-    <li data-slot="sidebar-menu-item" className={cn("relative", className)} {...props} />
+    <li
+      data-slot="sidebar-menu-item"
+      className={cn("relative", className)}
+      {...props}
+    />
   )
 }
 
@@ -287,7 +339,7 @@ function SidebarMenuButton({
           "data-link-current": undefined,
         },
         className: cn(
-          "flex w-full items-center gap-2.5 overflow-hidden rounded-lg px-2.5 py-2 text-start text-sm font-medium outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-3 focus-visible:ring-sidebar-ring/50 data-[active]:bg-sidebar-accent data-[active]:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+          "flex w-full items-center gap-2.5 overflow-hidden rounded-lg px-2.5 py-2 text-start text-sm font-medium transition-colors outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-3 focus-visible:ring-sidebar-ring/50 disabled:pointer-events-none disabled:opacity-50 data-[active]:bg-sidebar-accent data-[active]:text-sidebar-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
           className
         ),
       },

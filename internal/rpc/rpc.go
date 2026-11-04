@@ -16,6 +16,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -208,6 +209,12 @@ type Media struct {
 	Type string `json:"type"`
 	// Label is a human-readable description.
 	Label string `json:"label,omitempty"`
+	// Filename is the name the sender gave the file, exactly as Telegram
+	// reported it. It is empty when Telegram reported none, and is omitted from
+	// the wire rather than replaced by a name this build made up. It is a
+	// different fact from Label, which describes the media kind and is not a
+	// name at all.
+	Filename string `json:"filename,omitempty"`
 	// MimeType is the content type the backend reported, when known.
 	MimeType string `json:"mime_type,omitempty"`
 	// Size is the byte size the backend reported, when known.
@@ -220,6 +227,75 @@ type MediaFile struct {
 	MimeType string `json:"mime_type"`
 	Data     []byte `json:"data"`
 }
+
+// MediaSlice names the part of one attachment to fetch.
+//
+// It mirrors the two shapes an HTTP Range header takes: a run of bytes counted
+// from the start of the attachment, and a suffix counted from its end. Exactly
+// one shape is used at a time — Tail greater than zero selects the suffix and
+// makes the other two fields meaningless.
+type MediaSlice struct {
+	// Offset is the first byte wanted, counted from the start of the attachment.
+	Offset int64 `json:"offset,omitempty"`
+	// Limit is the most bytes wanted after Offset; zero means "to the end".
+	Limit int64 `json:"limit,omitempty"`
+	// Tail is how many of the attachment's last bytes are wanted; zero means
+	// the slice is counted from Offset instead.
+	Tail int64 `json:"tail,omitempty"`
+}
+
+// MediaStream is one attachment's content, streamed from the worker.
+//
+// The bytes travel as the response body rather than inside a JSON document: a
+// 60 MB attachment must reach the caller without ever being held in one buffer.
+// The facts the URL cannot carry travel as response headers.
+type MediaStream struct {
+	// MimeType is the content type the backend reported.
+	MimeType string
+	// Filename is the name the sender gave the file, empty when Telegram
+	// reported none. It is never invented.
+	Filename string
+	// Size is the byte size of the whole attachment, zero when unknown. It is
+	// not the size of the slice Body yields.
+	Size int64
+	// Offset is the attachment byte offset Body starts at.
+	Offset int64
+	// Length is the number of bytes Body will yield, zero when the total is
+	// unknown and the body simply runs to the end of the attachment.
+	Length int64
+	// Body is the slice itself. The caller closes it, including when it stops
+	// reading early.
+	Body io.ReadCloser
+}
+
+// ReadAll drains the stream into one buffer.
+//
+// Only callers that must hand the attachment on as a single buffer use it —
+// preparing a post, uploading to a site. Answering an HTTP reader never does:
+// that path streams. The buffer is bounded by MaxSendMediaBytes, the same limit
+// a send already carries.
+func (s MediaStream) ReadAll() ([]byte, error) {
+	defer s.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(s.Body, MaxSendMediaBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxSendMediaBytes {
+		return nil, ErrMediaTooLarge
+	}
+	return data, nil
+}
+
+// Response headers carrying a MediaStream's metadata alongside its bytes.
+const (
+	// HeaderMediaFilename is the sender's filename, percent-encoded so it stays
+	// printable ASCII in a header. Absent when Telegram reported no name.
+	HeaderMediaFilename = "X-Telesync-Filename"
+	// HeaderMediaSize is the whole attachment's size in bytes, or 0.
+	HeaderMediaSize = "X-Telesync-Size"
+	// HeaderMediaOffset is the attachment byte offset the body starts at.
+	HeaderMediaOffset = "X-Telesync-Offset"
+)
 
 // Message is one normalized channel post.
 type Message struct {
@@ -362,9 +438,10 @@ type Backend interface {
 	Messages(ctx context.Context, channelID int64, page, perPage int) (MessagePage, error)
 	// Message returns exactly one post, or ErrNotFound.
 	Message(ctx context.Context, channelID int64, messageID int) (MessagePage, error)
-	// Media returns the bytes of one attachment messageID in channelID.
-	// photoIndex selects the thumbnail size for photos (0 = the largest).
-	Media(ctx context.Context, channelID int64, messageID, photoIndex int) (MediaFile, error)
+	// Media streams one attachment of message messageID in channelID, or the
+	// slice of it the request names. photoIndex selects the thumbnail size for
+	// photos (0 = the largest). The returned body is the caller's to close.
+	Media(ctx context.Context, channelID int64, messageID, photoIndex int, slice MediaSlice) (MediaStream, error)
 	// CustomEmoji returns the bytes of one custom emoji by document id, or
 	// CodeNotFound when Telegram does not serve it.
 	CustomEmoji(ctx context.Context, documentID int64) (MediaFile, error)
@@ -688,12 +765,17 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				photoIndex = v
 			}
-			out, err := h.backend.Media(r.Context(), channelID, messageID, photoIndex)
+			slice, sliceErr := parseMediaSlice(r.URL.Query())
+			if sliceErr != nil {
+				h.fail(w, sliceErr)
+				return
+			}
+			out, err := h.backend.Media(r.Context(), channelID, messageID, photoIndex, slice)
 			if err != nil {
 				h.fail(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, out)
+			writeMediaStream(w, out)
 			return
 		}
 		if r.Method != http.MethodGet {
@@ -790,6 +872,63 @@ func parsePaging(q map[string][]string) (int, int, error) {
 		}
 	}
 	return page, perPage, nil
+}
+
+// parseMediaSlice reads the slice of an attachment a media request wants.
+//
+// Every value must be a non-negative integer: a value that is neither is
+// refused rather than silently rounded to something the caller did not ask for.
+func parseMediaSlice(q url.Values) (MediaSlice, error) {
+	var slice MediaSlice
+	for key, dst := range map[string]*int64{
+		"offset": &slice.Offset,
+		"limit":  &slice.Limit,
+		"tail":   &slice.Tail,
+	} {
+		raw := q.Get(key)
+		if raw == "" {
+			continue
+		}
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v < 0 {
+			return MediaSlice{}, NewError(CodeInvalidInput,
+				fmt.Sprintf("%s must be a non-negative integer", key), 0)
+		}
+		*dst = v
+	}
+	return slice, nil
+}
+
+// writeMediaStream sends one attachment as the response body.
+//
+// The bytes are forwarded as they arrive rather than collected into a JSON
+// document: a 60 MB attachment must reach the caller without ever being held
+// in one buffer. The facts the URL cannot carry travel as response headers, and
+// nothing else about the worker does.
+func writeMediaStream(w http.ResponseWriter, stream MediaStream) {
+	// A long transfer must outlive the server's per-request write deadline.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	defer stream.Body.Close()
+
+	contentType := stream.MimeType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if stream.Filename != "" {
+		w.Header().Set(HeaderMediaFilename, url.QueryEscape(stream.Filename))
+	}
+	w.Header().Set(HeaderMediaSize, strconv.FormatInt(stream.Size, 10))
+	w.Header().Set(HeaderMediaOffset, strconv.FormatInt(stream.Offset, 10))
+	w.Header().Set("Content-Type", contentType)
+	if stream.Length > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(stream.Length, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+	// Headers are flushed before the first byte: a caller must learn what it is
+	// being given — the type, the length, where the slice starts — without
+	// waiting for the attachment to arrive.
+	http.NewResponseController(w).Flush()
+	_, _ = io.Copy(w, stream.Body)
 }
 
 // decodeSend reads the multipart body of a send request: one "request" part
@@ -915,6 +1054,12 @@ type Client struct {
 	socketPath string
 	timeout    time.Duration
 	http       *http.Client
+	// stream is the client for calls whose answer is a body to read, not a
+	// document to decode. Its own timeout is zero because a 60 MB attachment
+	// legitimately takes longer than any per-request budget: the caller's
+	// context is what ends a transfer. The transport still bounds how long the
+	// worker may take to start answering.
+	stream *http.Client
 }
 
 // NewClient builds a client for the Unix socket at path.
@@ -931,13 +1076,15 @@ func NewClientWithDialer(dial DialFunc, timeout time.Duration) *Client {
 		timeout = 5 * time.Second
 	}
 	transport := &http.Transport{
-		DialContext:         dial,
-		MaxIdleConnsPerHost: 4,
-		IdleConnTimeout:     30 * time.Second,
+		DialContext:           dial,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       30 * time.Second,
+		ResponseHeaderTimeout: timeout,
 	}
 	return &Client{
 		timeout: timeout,
 		http:    &http.Client{Transport: transport, Timeout: timeout},
+		stream:  &http.Client{Transport: transport},
 	}
 }
 
@@ -1003,15 +1150,65 @@ func (c *Client) CustomEmoji(ctx context.Context, documentID int64) (MediaFile, 
 	return out, err
 }
 
-// Media fetches the bytes of one attachment.
-func (c *Client) Media(ctx context.Context, channelID int64, messageID, photoIndex int) (MediaFile, error) {
-	var out MediaFile
+// Media streams one attachment, or the slice of it slice names.
+//
+// The answer is a body rather than a document, so it is read from the worker as
+// it arrives. The caller closes the body, including when it stops reading early.
+func (c *Client) Media(ctx context.Context, channelID int64, messageID, photoIndex int, slice MediaSlice) (MediaStream, error) {
 	path := fmt.Sprintf("/channels/%d/messages/%d/media", channelID, messageID)
+	query := url.Values{}
 	if photoIndex > 0 {
-		path += "?photo_index=" + strconv.Itoa(photoIndex)
+		query.Set("photo_index", strconv.Itoa(photoIndex))
 	}
-	err := c.get(ctx, path, &out)
-	return out, err
+	if slice.Offset > 0 {
+		query.Set("offset", strconv.FormatInt(slice.Offset, 10))
+	}
+	if slice.Limit > 0 {
+		query.Set("limit", strconv.FormatInt(slice.Limit, 10))
+	}
+	if slice.Tail > 0 {
+		query.Set("tail", strconv.FormatInt(slice.Tail, 10))
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://worker"+path, nil)
+	if err != nil {
+		return MediaStream{}, err
+	}
+	resp, err := c.stream.Do(req)
+	if err != nil {
+		return MediaStream{}, requestError(ctx, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+		if readErr != nil {
+			return MediaStream{}, fmt.Errorf("%w: %w", ErrUnavailable, readErr)
+		}
+		return MediaStream{}, decodeErrorBody(resp.StatusCode, body)
+	}
+
+	offset, _ := strconv.ParseInt(resp.Header.Get(HeaderMediaOffset), 10, 64)
+	size, _ := strconv.ParseInt(resp.Header.Get(HeaderMediaSize), 10, 64)
+	filename := ""
+	if raw := resp.Header.Get(HeaderMediaFilename); raw != "" {
+		if name, decodeErr := url.QueryUnescape(raw); decodeErr == nil {
+			filename = name
+		}
+	}
+	// Content-Length is the exact length of the slice when the worker knew it;
+	// without one the body runs on until the attachment ends.
+	length, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	return MediaStream{
+		MimeType: resp.Header.Get("Content-Type"),
+		Filename: filename,
+		Size:     size,
+		Offset:   offset,
+		Length:   length,
+		Body:     resp.Body,
+	}, nil
 }
 
 func withPaging(path string, page, perPage int) string {

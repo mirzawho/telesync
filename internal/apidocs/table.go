@@ -36,6 +36,7 @@ var gatewayRoutes = []Route{
 
 	{Pattern: "/api/v1/auth/login", Methods: []string{http.MethodPost}},
 	{Pattern: "/api/v1/auth/me", Methods: []string{http.MethodGet}},
+	{Pattern: "/api/v1/auth/password", Methods: []string{http.MethodPost}},
 
 	{Pattern: "/api/v1/telegram", Methods: []string{http.MethodGet}},
 
@@ -66,10 +67,17 @@ var gatewayRoutes = []Route{
 	{Pattern: "/api/v1/local/wordpress", Methods: []string{http.MethodGet, http.MethodPost}},
 	{Pattern: "/api/v1/local/wordpress/{id}", Methods: []string{http.MethodGet, http.MethodPatch, http.MethodDelete}},
 	{Pattern: "/api/v1/local/wordpress/{id}/posts", Methods: []string{http.MethodPost}},
+	// The two taxonomies a publishing form needs: the destination site's own
+	// categories and tags, read through this backend rather than by the browser
+	// calling the site with a credential of its own.
+	{Pattern: "/api/v1/local/wordpress/{id}/categories", Methods: []string{http.MethodGet}},
+	{Pattern: "/api/v1/local/wordpress/{id}/tags", Methods: []string{http.MethodGet}},
 
 	{Pattern: "/api/v1/local/users", Methods: []string{http.MethodGet, http.MethodPost}},
 	{Pattern: "/api/v1/local/users/{id}", Methods: []string{http.MethodGet, http.MethodPut, http.MethodDelete}},
 	{Pattern: "/api/v1/local/users/{id}/permissions", Methods: []string{http.MethodGet, http.MethodPut}},
+
+	{Pattern: "/api/v1/local/stats/dashboard", Methods: []string{http.MethodGet}},
 }
 
 // Prober sends requests to the gateway the way the checks do.

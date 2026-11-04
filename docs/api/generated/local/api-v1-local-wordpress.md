@@ -13,7 +13,7 @@
 ## GET
 
 - **Handler:** `Server.listWordPressSites` (wordpress.go)
-- **Success:** `writeJSON` with `envelope{ Data: map[string]any{"sites": views}, Meta: metaFor(requestID, s.cfg.Now()), }`, status `StatusOK (200)`
+- **Success:** `writeJSON` with `envelope{ Data: map[string]any{"sites": views}, Meta: meta, }`, status `StatusOK (200)`
 - **Documentation:** [wordpress](../../manual/components/wordpress.md)
 
 ### Authorization conditions in the source
@@ -46,7 +46,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>operator: GET /api/v1/local/wordpress → 200</summary>
 
 ```json
-{"data":{"sites":[]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"sites":[]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen","total":0}}
 
 ```
 
@@ -64,7 +64,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>administrator: GET /api/v1/local/wordpress → 200</summary>
 
 ```json
-{"data":{"sites":[]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"sites":[]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen","total":0}}
 
 ```
 
@@ -77,7 +77,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>GET /api/v1/local/wordpress → 200</summary>
 
 ```json
-{"data":{"sites":[]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"sites":[]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen","total":0}}
 
 ```
 

@@ -43,17 +43,19 @@ channels, categories and WordPress sites, each an `allow` or a `deny` for
 | `users.view` | see every account in `GET /api/v1/local/users`, read any account and its permissions |
 | `users.manage` | create, update and delete accounts; replace anyone's permissions; read any account |
 | `channels.view` | list and read every channel (`/channels`, `find`, `/channels/{id}`, messages, media, avatars, `/profile`) |
-| `channels.create` | `POST .../join`, which creates the local channel record |
+| `channels.create` | `POST .../join`, which creates the local channel record, and update/delete on the channels inside the caller's own selection (below) |
 | `categories.view` | list every category and read any category |
-| `categories.create` | create a category |
+| `categories.create` | create a category, and update/delete the categories inside the caller's own selection |
 | `wordpress.view` | list every registered WordPress site |
 | `wordpress.create` | register, update and delete WordPress sites (see below) |
 
 The decision, in order:
 
 1. an explicit assignment for that resource (`allow` or `deny`) decides;
-2. otherwise the global permission for that kind and action decides, which
-   allows `view` and `create` only;
+2. otherwise the global permission for that kind and action decides: `view`
+   admits the resource, `create` makes one, and the kind's manage permission
+   (`channels.create`, `categories.create`, `wordpress.create`) allows `update`
+   and `delete` on the resources inside the caller's own selection;
 3. otherwise the answer is no. An unestablished permission is `false`, never an
    optimistic `true`.
 
@@ -61,11 +63,20 @@ The decision, in order:
 yet and cannot carry an assignment. Per-channel, per-category and per-site
 assignments accept only `view`, `update` and `delete`.
 
-A WordPress site's assignment can admit its `view` in the list; `update` and
-`delete` assignments are accepted and reported but grant nothing, because
-writing a site needs the global `wordpress.create`. A site's credential can be
-replaced through an update, so writing is one global right rather than a
-per-site one.
+A **selection** is how the administrators dialog stores a manager who may manage
+some items rather than all of them: a `view: allow` on each item picked, and an
+`update: deny` with a `delete: deny` on each item left out. While one of those
+is stored the manage right covers only the items carrying `view: allow`; with
+none stored there is no selection and it covers every item of the kind. A lone
+deny is an exclusion over the whole and not a selection: denying one action on
+one channel leaves the rest of the kind manageable.
+
+A WordPress site's assignment can admit its `view` in the list, and its `update`
+and `delete` decide that one site against the manage right like any other kind.
+Writing a site additionally needs the global `wordpress.create` on the route, so
+a per-site assignment on its own never registers or rewrites one. A site's
+credential can be replaced through an update, which is why registering and
+writing stay behind that one global right.
 
 The operator token holds every permission but has no account row: the account
 routes refuse it and it can never be given a set.
@@ -97,9 +108,10 @@ channel: the invite routes require `channels.view` (read) or `channels.create`
 The same rule governs `/api/v1/local/channels/...`, with one addition: those
 routes name the row directly, so the record is looked up first (`404` when it
 does not exist) and then the rule above decides the view. Removing a record with
-`POST /api/v1/local/channels/{id}/leave` needs a `delete` assignment on that row
-(`403` otherwise); the global `channels.view` does not grant it. The operator
-token holds no per-channel assignment, so it cannot remove a record.
+`POST /api/v1/local/channels/{id}/leave` needs either a `delete` assignment on
+that row or the manage right over a channel inside the caller's selection
+(`403` otherwise); `channels.view` grants neither. The route needs an account,
+so the operator token is refused whatever its permissions.
 
 ## Rules that apply to everyone
 

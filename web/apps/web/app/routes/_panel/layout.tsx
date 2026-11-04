@@ -1,3 +1,4 @@
+import * as React from "react"
 import {
   Link,
   Outlet,
@@ -7,7 +8,12 @@ import {
   useRouteLoaderData,
   useSubmit,
 } from "react-router"
-import { ChevronsUpDownIcon, LogOutIcon, RadioTowerIcon } from "lucide-react"
+import {
+  ChevronsUpDownIcon,
+  KeyRoundIcon,
+  LogOutIcon,
+  RadioTowerIcon,
+} from "lucide-react"
 
 import { Button } from "@workspace/ui/components/button"
 import {
@@ -24,22 +30,21 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarTrigger,
-  useSidebar,
 } from "@workspace/ui/components/sidebar"
 
 import { appVersion } from "@/components/app-version"
+import { BottomNav } from "@/components/bottom-nav"
+import { ChangePasswordDialog } from "@/components/change-password-dialog"
 import { Breadcrumbs } from "@/components/page-header"
 import { ErrorState } from "@/components/states"
 import { navItems, navItemFor } from "@/lib/nav"
 import type { SectionHandle } from "@/lib/page"
-import { requireSession } from "@/lib/session"
+import { requireSession, setToken } from "@/lib/session"
 
 import type { Route } from "./+types/layout"
 
@@ -62,6 +67,12 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
 
 export default function PanelLayout({ loaderData }: Route.ComponentProps) {
   const { me, sidebarOpen } = loaderData
+  // A route that asks for the whole content area — the channel workspace —
+  // gets it: no page column, no max-width, no gutters. Everything else keeps
+  // the centered, padded page it has always had.
+  const fullBleed = useMatches().some(
+    (match) => (match.handle as SectionHandle | undefined)?.fullBleed
+  )
 
   return (
     <SidebarProvider defaultOpen={sidebarOpen}>
@@ -77,14 +88,13 @@ export default function PanelLayout({ loaderData }: Route.ComponentProps) {
             <div className="flex flex-col">
               <span className="text-sm font-semibold">تیل‌سینک</span>
               <span className="text-xs text-muted-foreground">
-                {appVersion ? `نسخه v${appVersion}` : "پنل مدیریت"}
+                {appVersion ? `v${appVersion}` : "پنل مدیریت"}
               </span>
             </div>
           </Link>
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
-            <SidebarGroupLabel>پیمایش</SidebarGroupLabel>
             <SidebarMenu>
               {navItems.map((item) => (
                 <SidebarMenuItem key={item.to}>
@@ -103,20 +113,36 @@ export default function PanelLayout({ loaderData }: Route.ComponentProps) {
       </Sidebar>
 
       <div className="flex h-svh min-w-0 flex-1 flex-col">
-        <AppHeader me={me} />
+        <AppHeader />
         {/* The one scroll container on a panel page: the header stays put and
-            the sidebar never moves because the document itself does not scroll. */}
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
-            <Outlet />
-          </div>
+            the sidebar never moves because the document itself does not scroll.
+            The page column is a flex column so a page that fills the viewport —
+            the channel workspace, with panes that scroll on their own — can. */}
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {fullBleed ? (
+            // The whole content area, directly under the breadcrumb bar: the
+            // workspace fills it and scrolls its own panes, so the document
+            // never scrolls and there is no gutter around the work.
+            // Clear of the floating bar below lg: padding rather than a
+            // spacer, so the workspace still exactly fills the space above it.
+            <div className="flex min-h-0 w-full flex-1 flex-col pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-0">
+              <Outlet />
+            </div>
+          ) : (
+            <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 pt-6 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:px-6 lg:px-8 lg:pb-6">
+              <Outlet />
+            </div>
+          )}
         </main>
       </div>
+      {/* Below lg there is no sidebar and no header: the floating bottom
+          navigation is the only chrome and the page gets the whole width. */}
+      <BottomNav access={me.access} />
     </SidebarProvider>
   )
 }
 
-function AppHeader({ me }: { me: { fullname: string; username: string } }) {
+function AppHeader() {
   const matches = useMatches()
   const { pathname } = useLocation()
 
@@ -129,8 +155,9 @@ function AppHeader({ me }: { me: { fullname: string; username: string } }) {
     navItemFor(pathname)?.label
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur sm:px-6 lg:px-8">
-      <SidebarTrigger className="-ms-1" />
+    // Desktop only: below lg the shell has no header and the bottom nav
+    // carries navigation; the breadcrumb has no shelf to sit on there.
+    <header className="sticky top-0 z-30 hidden h-14 items-center gap-3 border-b border-border bg-background/95 px-4 backdrop-blur sm:px-6 lg:flex lg:px-8">
       <Breadcrumbs
         className="hidden sm:block"
         items={[
@@ -138,84 +165,86 @@ function AppHeader({ me }: { me: { fullname: string; username: string } }) {
           { label: section ?? "پنل" },
         ]}
       />
-      <div className="flex-1" />
-      <AccountMenu fullname={me.fullname} username={me.username} compact />
     </header>
   )
 }
 
-// compact: the header's small avatar button; otherwise the sidebar footer's
-// full-width name-and-username button.
+// The sidebar footer's account button: a full-width name-and-username button,
+// the one entry point for the account menu (desktop, lg and up).
 function AccountMenu({
   fullname,
   username,
-  compact = false,
 }: {
   fullname: string
   username: string
-  compact?: boolean
 }) {
   const submit = useSubmit()
-  const { isMobile, setOpenMobile } = useSidebar()
+  const [passwordOpen, setPasswordOpen] = React.useState(false)
 
   const logout = () => {
-    if (isMobile) setOpenMobile(false)
     void submit(null, { method: "post", action: "/logout", navigate: true })
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            aria-label="حساب کاربری"
-            className={
-              compact
-                ? "size-8 rounded-full p-0"
-                : "h-auto w-full justify-between px-2 py-2"
-            }
-          />
-        }
-      >
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">
-            {fullname.slice(0, 1)}
-          </span>
-          <span
-            className={compact ? "hidden" : "flex min-w-0 flex-col items-start"}
-          >
-            <span className="max-w-40 truncate text-sm font-medium">
-              {fullname}
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              aria-label="حساب کاربری"
+              className="h-auto w-full justify-between px-2 py-2"
+            />
+          }
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">
+              {fullname.slice(0, 1)}
             </span>
-            <span
-              className="max-w-40 truncate text-xs text-muted-foreground"
-              dir="ltr"
-            >
-              {username}
+            <span className="flex min-w-0 flex-col items-start">
+              <span className="max-w-40 truncate text-sm font-medium">
+                {fullname}
+              </span>
+              <span
+                className="max-w-40 truncate text-xs text-muted-foreground"
+                dir="ltr"
+              >
+                {username}
+              </span>
             </span>
           </span>
-        </span>
-        {!compact && (
           <ChevronsUpDownIcon className="size-4 text-muted-foreground" />
-        )}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel className="flex flex-col gap-0.5">
-            <span className="text-sm font-medium text-foreground">
-              {fullname}
-            </span>
-            <span dir="ltr">{username}</span>
-          </DropdownMenuLabel>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={logout}>
-          <LogOutIcon />
-          خروج
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium text-foreground">
+                {fullname}
+              </span>
+              <span dir="ltr">{username}</span>
+            </DropdownMenuLabel>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setPasswordOpen(true)}>
+            <KeyRoundIcon />
+            تغییر رمز عبور
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={logout}>
+            <LogOutIcon />
+            خروج
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {/* Outside the menu so closing the menu never closes an open form, and
+          outside the trigger so it cannot unmount with the portal. The API
+          returns a fresh token for this session, so a successful change
+          stores it immediately. */}
+      <ChangePasswordDialog
+        open={passwordOpen}
+        onOpenChange={setPasswordOpen}
+        onSuccess={(result) => setToken(result.access_token)}
+      />
+    </>
   )
 }
 

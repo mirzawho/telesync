@@ -273,8 +273,13 @@ and does not exist in the source yet.
 Per resource (local ids, `allow`/`deny`): view, update, delete — never create
 (creation is global). Deny-by-default: an explicit deny beats the global view,
 without the global view only an explicit allow admits, a write needs the view.
-The operator token (`api.auth_token_env`, loopback only) holds every permission
-and is not an account.
+A kind's manage permission (`channels.create`, `categories.create`,
+`wordpress.create`) also allows update and delete (D62), narrowed to the
+account's **selection** — the picked items of the administrators dialog — which
+is stored as a `view: allow` per picked item and an `update: deny` with a
+`delete: deny` per item left out; with no per-resource row the manage right
+covers every item of the kind. The operator token (`api.auth_token_env`,
+loopback only) holds every permission and is not an account.
 
 **The owner's reported bug:** an account granted one channel could see other
 channels. The documented expectation is absolute — **a user granted channel A
