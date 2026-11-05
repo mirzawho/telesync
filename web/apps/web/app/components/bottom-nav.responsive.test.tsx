@@ -136,6 +136,43 @@ test("active and inactive class sets", () => {
   }
 })
 
+test("hidden: the bar slides away, stays mounted and leaves the tab order", () => {
+  const nav = (hidden: boolean) =>
+    routed(
+      <BottomNav access={ALL} hidden={hidden} />,
+      "/channels/2/messages"
+    ).match(/^<nav[^>]*>/)?.[0] ?? ""
+  const shown = nav(false)
+  const away = nav(true)
+  assert.ok(!tokens(shown.match(/class="([^"]*)"/)![1]).has("opacity-0"))
+  assert.ok(!/\binert\b/.test(shown), "a visible bar is not inert")
+  assert.ok(!/aria-hidden/.test(shown), "a visible bar is exposed")
+  const cls = tokens(away.match(/class="([^"]*)"/)![1])
+  assert.ok(cls.has("opacity-0"))
+  assert.ok(cls.has("translate-y-[calc(100%+2rem)]"))
+  assert.ok(cls.has("pointer-events-none"))
+  assert.ok(cls.has("transition-[translate,opacity]"))
+  assert.match(away, /aria-hidden="true"/)
+  assert.match(away, /\binert\b/)
+  // Still the same links: hiding never unmounts the destinations.
+  assert.equal(away.match(/<a /g)?.length, shown.match(/<a /g)?.length)
+})
+
+test("source: the message timeline hides the bar, the other pages do not", () => {
+  const handleOf = (route: string) =>
+    readFileSync(resolve(appDir, "routes/_panel", route), "utf8")
+  assert.match(handleOf("channel-messages.tsx"), /handle = hiddenNavSection\("/)
+  for (const route of [
+    "dashboard.tsx",
+    "categories.tsx",
+    "channels.tsx",
+    "wordpress.tsx",
+    "administrators.tsx",
+  ]) {
+    assert.ok(!/hiddenNavSection/.test(handleOf(route)), route)
+  }
+})
+
 // Source-level checks: the shell's layout is what removes the drawer and the
 // mobile header, and SSR cannot render the layout without a router session.
 test("source: layout renders no SidebarTrigger, a desktop-only header and the bottom nav", () => {
@@ -147,7 +184,8 @@ test("source: layout renders no SidebarTrigger, a desktop-only header and the bo
     "layout no longer reads the mobile drawer state"
   )
   assert.match(source, /<header[^>]*className="[^"]*hidden[^"]*lg:flex[^"]*"/)
-  assert.match(source, /<BottomNav access=\{me\.access\} \/>/)
+  assert.match(source, /<BottomNav access=\{me\.access\} hidden=\{bottomNavHidden\} \/>/)
+  assert.match(source, /hideBottomNav/)
   assert.match(
     source,
     /pb-\[calc\(4rem\+env\(safe-area-inset-bottom\)\)\] lg:pb-0/

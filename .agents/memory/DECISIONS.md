@@ -1155,3 +1155,38 @@ so is still visible under the global viewing permission (the global cannot be
 omitted while a manage right is granted — `requireViewForManage` demands it),
 but it can never be written. The report tab says "دسترسی به N" for the picked
 count rather than pretending the scope covers records that do not exist yet.
+
+## D65 — A media download is a transfer, not a call: the request budget must not end it
+
+**Decision.** The media route streams on its own context: one that keeps the
+request-scoped values, carries no deadline, and is cancelled when the handler
+returns. `RequestTimeout` continues to bound every other Telegram route and the
+media request's *setup* (the `ResponseHeaderTimeout` on the shared transport),
+but it never bounds the body. The response's write deadline is cleared before
+the first byte, exactly as `rpc.writeMediaStream` already does.
+
+**Why.** D63 already recorded that "a large transfer is legitimate" and that the
+stream client carries "only `ResponseHeaderTimeout` … **and the caller's
+context**". The caller's context turned out to be a 30s request budget
+(`serveTelegram`'s `context.WithTimeout`), and in Go a client request's context
+governs reading the response **body**, not just its headers — so every download
+slower than 30s was aborted mid-stream and, with `Content-Length` already on the
+wire, reached `curl` as `transfer closed with N bytes remaining`. The daemon's
+`WriteTimeout: 120s` cut the same transfer a different way. Both were reproduced
+standalone before being fixed. A download that ends early is now reported through
+`Config.Logf` with the delivered and promised byte counts, because once the
+headers are out a short body cannot be turned into an error — and a short body
+with no error at all (`mediaReader` calling a 0-byte part `io.EOF` short of the
+reported size) is now a failure rather than a quiet, wrong success.
+
+**How to apply.** Only the streaming answer gets this: `Server.media` derives
+`context.WithCancel(context.WithoutCancel(ctx))` and cancels it on return. Do not
+put it in `rpc.Client.Media` or in `serveTelegram` — the first would unbound the
+publish reads that call `MediaStream.ReadAll`, the second every Telegram route.
+`requireChannelView` stays on the bounded context: a permission lookup must never
+become an unbounded call. Note `r.Context()` inside the handler is not the raw
+request context (`serveTelegram` already replaced it), so it is not a shortcut
+for the same thing. A transfer can still end early for reasons in the gotd
+reconnect lifecycle — a part that finds the client detached, a watchdog that
+cancels a generation, a file reference that expires twice — and those are
+reported now rather than fixed here.

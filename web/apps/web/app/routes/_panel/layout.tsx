@@ -42,6 +42,7 @@ import { BottomNav } from "@/components/bottom-nav"
 import { ChangePasswordDialog } from "@/components/change-password-dialog"
 import { Breadcrumbs } from "@/components/page-header"
 import { ErrorState } from "@/components/states"
+import { cn } from "@workspace/ui/lib/utils"
 import { navItems, navItemFor } from "@/lib/nav"
 import type { SectionHandle } from "@/lib/page"
 import { requireSession, setToken } from "@/lib/session"
@@ -72,6 +73,11 @@ export default function PanelLayout({ loaderData }: Route.ComponentProps) {
   // the centered, padded page it has always had.
   const fullBleed = useMatches().some(
     (match) => (match.handle as SectionHandle | undefined)?.fullBleed
+  )
+  // The message timeline is a chat screen: the floating bar would sit over the
+  // newest messages, so it slides out of the way there and back everywhere else.
+  const bottomNavHidden = useMatches().some(
+    (match) => (match.handle as SectionHandle | undefined)?.hideBottomNav
   )
 
   return (
@@ -125,7 +131,14 @@ export default function PanelLayout({ loaderData }: Route.ComponentProps) {
             // never scrolls and there is no gutter around the work.
             // Clear of the floating bar below lg: padding rather than a
             // spacer, so the workspace still exactly fills the space above it.
-            <div className="flex min-h-0 w-full flex-1 flex-col pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-0">
+            // With the bar hidden the workspace takes the whole height.
+            <div
+              className={cn(
+                "flex min-h-0 w-full flex-1 flex-col transition-[padding] duration-300 ease-out",
+                !bottomNavHidden &&
+                  "pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-0"
+              )}
+            >
               <Outlet />
             </div>
           ) : (
@@ -137,7 +150,7 @@ export default function PanelLayout({ loaderData }: Route.ComponentProps) {
       </div>
       {/* Below lg there is no sidebar and no header: the floating bottom
           navigation is the only chrome and the page gets the whole width. */}
-      <BottomNav access={me.access} />
+      <BottomNav access={me.access} hidden={bottomNavHidden} />
     </SidebarProvider>
   )
 }

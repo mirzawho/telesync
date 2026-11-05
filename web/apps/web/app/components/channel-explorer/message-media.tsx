@@ -179,7 +179,7 @@ function ImageMedia({
           alt={media.filename || "تصویر پیام"}
           loading="lazy"
           decoding="async"
-          className="max-h-[28rem] max-w-[min(100%,32rem)] w-auto object-contain"
+          className="w-full object-contain"
         />
       ) : (
         <>
@@ -224,7 +224,7 @@ function VideoMedia({
         preload="metadata"
         poster={undefined}
         aria-label={media.filename || "ویدیوی پیام"}
-        className="max-h-[28rem] max-w-[min(100%,32rem)] w-full"
+        className="w-full"
       />
       {status !== "ready" && (
         <span

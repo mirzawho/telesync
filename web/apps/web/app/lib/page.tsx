@@ -14,6 +14,10 @@ export interface SectionHandle {
   // channel explorer — not for a document page, and it is opt-in so every other
   // route keeps its margins.
   fullBleed?: boolean
+  // hideBottomNav asks the shell to tuck the phone/tablet bottom navigation
+  // away for this route: the message timeline reads edge to edge and the bar
+  // would sit over the newest messages.
+  hideBottomNav?: boolean
 }
 
 export function section(name: string): SectionHandle {
@@ -22,6 +26,10 @@ export function section(name: string): SectionHandle {
 
 export function fullBleedSection(name: string): SectionHandle {
   return { section: name, fullBleed: true }
+}
+
+export function hiddenNavSection(name: string): SectionHandle {
+  return { section: name, fullBleed: true, hideBottomNav: true }
 }
 
 export function pageMeta(name: string) {

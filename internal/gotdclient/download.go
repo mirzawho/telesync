@@ -16,10 +16,17 @@ import (
 
 // mediaPart is how many bytes one upload.getFile request asks for.
 //
-// Telegram caps a request at 1 MiB and wants 4 KiB multiples unless the precise
-// flag is set. 512 KiB is the part size gotd's own downloader uses, and it is
-// small enough that a large attachment never accumulates in memory.
+// Telegram caps a request at 1 MiB and wants a 4 KiB multiple. The precise flag
+// does not relax that for the limit — only an arbitrary offset needs it, which
+// is why a byte range still sets it. 512 KiB is the part size gotd's own
+// downloader asks for and the one Telegram is known to serve, and it is small
+// enough that a large attachment never accumulates in memory.
 const mediaPart = 512 << 10
+
+// chunkAlign is the granularity Telegram accepts a getFile limit in. Every part
+// asked for is a multiple of it, and the bytes a request is given past the slice
+// wanted are dropped rather than requested in a size Telegram would refuse.
+const chunkAlign = 4 << 10
 
 // maxSmallFileBytes bounds the downloads this adapter still buffers whole:
 // custom emoji and channel avatars. Both are small images, and callers want the
@@ -141,10 +148,16 @@ func (r *mediaReader) Read(p []byte) (int, error) {
 		if r.end >= 0 && r.offset >= r.end {
 			return 0, io.EOF
 		}
+		// Telegram serves a getFile only in parts whose limit is a multiple of 4
+		// KiB, so asking for "what is left" — usually not one — is refused
+		// outright: a download whose size is not a chunk multiple never starts,
+		// and a larger one dies on its tail. The part asked for is therefore
+		// always such a multiple, never larger than one part, and the bytes past
+		// the slice are dropped below rather than not requested.
 		want := mediaPart
 		if r.end >= 0 {
-			if left := r.end - r.offset; left < int64(want) {
-				want = int(left)
+			if left := r.end - r.offset; left < mediaPart {
+				want = int((left + chunkAlign - 1) / chunkAlign * chunkAlign)
 			}
 		}
 		part, err := r.fetch(r.ctx, r.offset, want)
@@ -152,7 +165,18 @@ func (r *mediaReader) Read(p []byte) (int, error) {
 			return 0, err
 		}
 		if len(part) == 0 {
+			// With a known end, nothing left is not the end of the attachment:
+			// it is Telegram serving less than it reported, and saying EOF here
+			// would hand the caller a truncated file as a whole one. With no end
+			// there is nothing to be short of, and Telegram stopping is the only
+			// way to learn the attachment is over.
+			if r.end >= 0 {
+				return 0, fmt.Errorf("gotdclient: the attachment ended at %d of %d bytes", r.offset, r.end)
+			}
 			return 0, io.EOF
+		}
+		if left := r.end - r.offset; r.end >= 0 && int64(len(part)) > left {
+			part = part[:left]
 		}
 		r.pending = part
 	}

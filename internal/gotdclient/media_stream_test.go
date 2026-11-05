@@ -1,6 +1,7 @@
 package gotdclient_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"strings"
@@ -23,6 +24,17 @@ func downloadServer(t *testing.T, docBytes []byte, attrs []tg.DocumentAttributeC
 	func(*tgtest.Dispatcher), *requestLog) {
 
 	t.Helper()
+	return downloadServerReporting(t, docBytes, int64(len(docBytes)), attrs)
+}
+
+// downloadServerReporting serves one document whose reported size is not the
+// size of the bytes it holds. The reported size is what the media route
+// announces as Content-Length, so the mismatch is what a caller must not be
+// handed back as a whole attachment.
+func downloadServerReporting(t *testing.T, docBytes []byte, reportedSize int64, attrs []tg.DocumentAttributeClass) (
+	func(*tgtest.Dispatcher), *requestLog) {
+
+	t.Helper()
 	log := &requestLog{}
 	server := func(d *tgtest.Dispatcher) {
 		d.HandleFunc(tg.ChannelsGetMessagesRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
@@ -37,7 +49,7 @@ func downloadServer(t *testing.T, docBytes []byte, attrs []tg.DocumentAttributeC
 						FileReference: []byte{9},
 						DCID:          2,
 						MimeType:      "application/vnd.android.package-archive",
-						Size:          int64(len(docBytes)),
+						Size:          reportedSize,
 						Attributes:    attrs,
 					}},
 				},
@@ -49,6 +61,12 @@ func downloadServer(t *testing.T, docBytes []byte, attrs []tg.DocumentAttributeC
 				return err
 			}
 			log.get(request.Offset, request.Limit)
+			// Telegram refuses a getFile whose limit is not a multiple of 4 KiB
+			// or is larger than 1 MiB. Modelling that is the only way a test can
+			// tell a part Telegram will serve from one it will not.
+			if request.Limit <= 0 || request.Limit > 1024*1024 || request.Limit%(4*1024) != 0 {
+				return server.SendErr(req, tgerr.New(400, "LIMIT_INVALID"))
+			}
 			start := request.Offset
 			if start >= int64(len(docBytes)) {
 				return server.SendResult(req, &tg.UploadFile{Type: &tg.StorageFilePartial{}, Bytes: nil})
@@ -172,8 +190,12 @@ func TestDownloadMediaServesAByteRange(t *testing.T) {
 		if g[0] < 4 {
 			t.Fatalf("downloaded bytes before the requested range: %v", gets)
 		}
-		if g[0]+int64(g[1]) > 4+6 {
-			t.Fatalf("downloaded bytes past the requested range: %v", gets)
+		// Telegram serves no part smaller than one 4 KiB multiple, so reading six
+		// bytes necessarily asks for a whole part. What must not happen is asking
+		// for more than one: that is the line between the granularity Telegram
+		// imposes and dragging the attachment across the wire.
+		if g[1] > 512*1024 {
+			t.Fatalf("asked for more than one part for a six byte range: %v", gets)
 		}
 	}
 }
@@ -333,5 +355,118 @@ func TestDownloadMediaRefreshesAnExpiredFileReference(t *testing.T) {
 	}
 	if seenRefs[0] == seenRefs[1] {
 		t.Fatalf("the retry reused the stale file reference: %q", seenRefs)
+	}
+}
+
+func TestDownloadMediaFailsWhenTelegramSendsFewerBytesThanItReported(t *testing.T) {
+	// The size Telegram reports is the length the media route announces as
+	// Content-Length. When the bytes stop before it, the read must fail rather
+	// than end cleanly: nothing else on the path can tell a whole attachment
+	// from a truncated one, so a quiet end here is a corrupt download served as
+	// if it were complete.
+	docBytes := []byte("only half of it")
+	const reportedSize = 30
+	self := &tg.User{ID: 1, Username: "me"}
+	server, _ := downloadServerReporting(t, docBytes, reportedSize, nil)
+	l, key := startPanelServer(t, self, &panelServer{}, server)
+	m := managerFor(t, l, key)
+	waitForState(t, m, tgapi.StateReady)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	got, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500, AccessHash: 900}, 36, tgapi.MediaSlice{})
+	if err != nil {
+		t.Fatalf("DownloadMedia: %v", err)
+	}
+	defer got.Body.Close()
+	if got.Size != reportedSize {
+		t.Fatalf("size = %d, want the reported %d", got.Size, reportedSize)
+	}
+	if got.Length != reportedSize {
+		t.Fatalf("length = %d, want the reported %d", got.Length, reportedSize)
+	}
+
+	data, readErr := io.ReadAll(got.Body)
+	if readErr == nil {
+		t.Fatalf("reading a short attachment returned %d of %d bytes and no error: "+
+			"it must fail instead of ending cleanly", len(data), reportedSize)
+	}
+}
+
+func TestDownloadMediaStreamsAnUnknownSizeAttachmentToEnd(t *testing.T) {
+	// With no reported size there is no length to be short of, and Telegram
+	// stopping is the only way to learn the attachment is over. That must stay a
+	// clean end: it is the one case where stopping is the success, not the
+	// failure this task is about.
+	docBytes := []byte("no size in the metadata")
+	self := &tg.User{ID: 1, Username: "me"}
+	server, _ := downloadServerReporting(t, docBytes, 0, nil)
+	l, key := startPanelServer(t, self, &panelServer{}, server)
+	m := managerFor(t, l, key)
+	waitForState(t, m, tgapi.StateReady)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	got, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500, AccessHash: 900}, 36, tgapi.MediaSlice{})
+	if err != nil {
+		t.Fatalf("DownloadMedia: %v", err)
+	}
+	defer got.Body.Close()
+	if got.Size != 0 || got.Length != 0 {
+		t.Fatalf("size = %d length = %d, want 0/0: with no reported size nothing was promised",
+			got.Size, got.Length)
+	}
+	data, readErr := io.ReadAll(got.Body)
+	if readErr != nil {
+		t.Fatalf("read an unknown-size attachment: %v", readErr)
+	}
+	if string(data) != string(docBytes) {
+		t.Fatalf("body = %q, want %q", data, docBytes)
+	}
+}
+
+func TestDownloadMediaReadsAnAttachmentWhoseSizeIsNotAChunkMultiple(t *testing.T) {
+	// Telegram serves a getFile only in parts whose limit is a multiple of 4 KiB,
+	// so an attachment whose byte count is not one asks for a limit Telegram will
+	// refuse. A whole file that is not a multiple fails on its first part and the
+	// caller gets nothing; a larger one delivers whole parts and then dies on the
+	// tail. Either way the download stops short of the size it promised.
+	cases := []struct {
+		name string
+		size int
+	}{
+		{name: "a whole file smaller than one part", size: 5000},
+		{name: "a tail after whole parts", size: 600_000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			docBytes := bytes.Repeat([]byte("a"), tc.size)
+			self := &tg.User{ID: 1, Username: "me"}
+			server, _ := downloadServer(t, docBytes, nil)
+			l, key := startPanelServer(t, self, &panelServer{}, server)
+			m := managerFor(t, l, key)
+			waitForState(t, m, tgapi.StateReady)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			got, err := m.DownloadMedia(ctx, tgapi.Channel{ID: 500, AccessHash: 900}, 36, tgapi.MediaSlice{})
+			if err != nil {
+				t.Fatalf("DownloadMedia: %v", err)
+			}
+			defer got.Body.Close()
+			if got.Length != int64(tc.size) {
+				t.Fatalf("length = %d, want %d", got.Length, tc.size)
+			}
+			data, readErr := io.ReadAll(got.Body)
+			if readErr != nil {
+				t.Fatalf("read: %v", readErr)
+			}
+			if len(data) != tc.size {
+				t.Fatalf("read %d of %d bytes: the download stopped short", len(data), tc.size)
+			}
+		})
 	}
 }

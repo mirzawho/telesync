@@ -47,6 +47,11 @@ type fakeWorker struct {
 	mediaType  string
 	mediaSize  int64
 	mediaE     error
+	// mediaBody, when set, is the stream body this worker returns instead of
+	// mediaBytes. It receives the context the gateway passed to Media, so a test
+	// can model a body that stops when that context is done — which is exactly
+	// how the real worker's HTTP body behaves.
+	mediaBody func(ctx context.Context) io.ReadCloser
 
 	lastMediaSlice rpc.MediaSlice
 	message        rpc.MessagePage
@@ -133,7 +138,7 @@ func (f *fakeWorker) CustomEmoji(_ context.Context, documentID int64) (rpc.Media
 	return f.customEmoji, f.customEmojiE
 }
 
-func (f *fakeWorker) Media(_ context.Context, channelID int64, messageID, photoIndex int, slice rpc.MediaSlice) (rpc.MediaStream, error) {
+func (f *fakeWorker) Media(ctx context.Context, channelID int64, messageID, photoIndex int, slice rpc.MediaSlice) (rpc.MediaStream, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -142,6 +147,22 @@ func (f *fakeWorker) Media(_ context.Context, channelID int64, messageID, photoI
 	f.lastMediaSlice = slice
 	if f.mediaE != nil {
 		return rpc.MediaStream{}, f.mediaE
+	}
+
+	// A test that supplies its own body owns the promise too: the size this
+	// worker reports is the length it claims the body will yield, exactly as
+	// the real worker announces Content-Length before the bytes arrive.
+	if f.mediaBody != nil {
+		out := rpc.MediaStream{
+			MimeType: f.mediaType,
+			Filename: f.mediaName,
+			Size:     f.mediaSize,
+		}
+		if f.mediaSize > 0 {
+			out.Length = f.mediaSize
+		}
+		out.Body = f.mediaBody(ctx)
+		return out, nil
 	}
 
 	// Answer the requested slice the way the worker does, so a test can see

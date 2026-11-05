@@ -283,6 +283,12 @@ func (s MediaStream) ReadAll() ([]byte, error) {
 	if len(data) > MaxSendMediaBytes {
 		return nil, ErrMediaTooLarge
 	}
+	// A body that ends before the length it announced is a truncated attachment,
+	// not a smaller one. The bound above is about memory; this is about honesty —
+	// sending it on would publish a corrupt file as if it were whole.
+	if s.Length > 0 && int64(len(data)) != s.Length {
+		return nil, fmt.Errorf("rpc: the attachment ended after %d of %d bytes", len(data), s.Length)
+	}
 	return data, nil
 }
 

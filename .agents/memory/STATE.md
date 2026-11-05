@@ -1,7 +1,7 @@
 # Current state
 
-**Updated:** 2026-11-02 (permission model: the manage right writes inside the
-caller's own selection, D62).
+**Updated:** 2026-11-05 (media downloads are no longer cut off by the request
+budget or the write deadline, and a truncated transfer is now reported).
 
 ## Milestone
 
@@ -36,7 +36,42 @@ Local permission ids are `managed_channels.id`, not Telegram peer ids.
 
 ## Changed since the last snapshot
 
-- Panel responsiveness (2026-11-04): below `lg` (1024px) the shell has no
+- A media download is no longer cut off part-way (2026-11-05). Three defects
+  stacked: `serveTelegram` gave every Telegram route — media included — a
+  `RequestTimeout` context (30s default) that in Go governs the response **body**
+  as well as the headers, so any download slower than 30s was aborted mid-stream;
+  the daemon's `http.Server` `WriteTimeout: 120s` was never cleared for the
+  streaming answer even though the worker clears its own
+  (`rpc.writeMediaStream`, `SetWriteDeadline(time.Time{})`); and both `io.Copy`
+  results were discarded, so the short transfer reached `curl` as
+  `(18) transfer closed with N bytes remaining` with nothing logged.
+  `gateway.media` now streams on a context that outlives the request budget but
+  is still cancelled when the handler returns, clears the write deadline before
+  the first byte, and reports any transfer that delivered fewer bytes than it
+  promised through `Config.Logf`. `gotdclient.mediaReader` no longer calls a
+  0-byte `upload.getFile` part a clean `io.EOF` when a size was reported.
+  Verified: 5 new tests red → green, `go test ./...` green apart from two
+  pre-existing `internal/worker` socket-path failures, `gofmt`/`go vet`/`go
+  build` clean, `docsgen --check` up to date.
+
+  **Live verification then named the real cause, and it was not the deadlines.**
+  `upload.getFile` is served only in parts whose `limit` is a multiple of 4 KiB,
+  and `mediaReader.Read` asked for "what is left" — so a download whose size was
+  not a chunk multiple delivered **zero** bytes, and a larger one died on its
+  tail (three whole 512 KiB parts, then a 184096-byte remainder that is not a
+  multiple of 4096). `mediaReader.Read` now asks for a limit that is always a
+  `chunkAlign` (4 KiB) multiple and never more than `mediaPart`, and drops the
+  bytes a part carries past the slice. `precise` relaxes an arbitrary *offset*,
+  not an unaligned *limit* — `mediaPart`'s comment claimed otherwise and is
+  corrected. The `downloadServer` test double refuses an unaligned limit, which
+  is what made this visible. **Verified**: five tests red (`LIMIT_INVALID`) →
+  green, full suite unchanged otherwise. **Live-verified by the owner on
+  2026-11-05**: rebuilt and reran the original failing download — complete,
+  no truncation. Three further truncation producers in the gotd reconnect
+  lifecycle are named in the handoff and deliberately not fixed — see
+  `.agents/handoffs/media-download-cut-short.md` and D65.
+
+- Panel responsiveness (2026-11-04, bottom nav hidden on the message timeline 2026-11-05): below `lg` (1024px) the shell has no
   sidebar, drawer, hamburger or header — only a floating icon-only
   `BottomNav` (Dashboard → Categories → Channels → WordPress → Administrators,
   permissions from `visibleNavItems`, active pill `bg-muted`). Dashboard stat

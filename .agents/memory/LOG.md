@@ -870,3 +870,67 @@ where it belongs.
   `scripts/woff2-cmap.mjs` (a WOFF2 cmap reader) was started to check the
   bundled Vazirmatn glyphs and is not used by any test yet.
 - Not verified: no browser (Chromium cannot start in this sandbox).
+
+## 2026-11-05 — media downloads were being cut off part-way
+
+- Reported as `curl: (18) transfer closed with 145091 bytes remaining to read`
+  on `GET /api/v1/telegram/official/channels/{id}/messages/{id}/media`. Not an
+  HTTP error: `Content-Length` was announced and the connection closed first.
+- Diagnosis, prepared under `.agents/handoffs/media-download-cut-short.md`
+  (Discover → Plan → Red → Handoff, then implement on the owner's approval).
+  Two mechanisms were reproduced standalone on Go 1.27.3 before any code moved:
+  a request context deadline cut a 20-byte body to 2 bytes with `context deadline
+  exceeded`, and a 100ms `WriteTimeout` cut the same body to 2 bytes with
+  `unexpected EOF` — the exact shape of the report. Clearing the write deadline
+  delivered all 20 bytes.
+- Fixes: `gateway.media` streams on
+  `context.WithCancel(context.WithoutCancel(ctx))` so `RequestTimeout` bounds the
+  setup but not the body, clears the write deadline before the first byte the way
+  `rpc.writeMediaStream` already does, and logs any transfer that delivered fewer
+  bytes than it promised with both counts. `gotdclient.mediaReader` now fails
+  instead of returning `io.EOF` when Telegram sends 0 bytes before the size it
+  reported. Publish paths keep their bound; the HTTP contract is unchanged
+  (`docsgen --check`: 0 created, 0 updated, 0 stale).
+- Tests: five added, red against the old code and green after —
+  `TestMediaDownloadOutlivesTheRequestTimeout`,
+  `TestMediaDownloadOutlivesTheServerWriteTimeout`,
+  `TestMediaDownloadReportsATruncatedStream`,
+  `TestMediaDownloadReportsAShortBodyThatDidNotFail`,
+  `TestDownloadMediaFailsWhenTelegramSendsFewerBytesThanItReported`. One
+  assertion was tightened mid-task (it accepted unrelated digits in the log
+  line) and recorded in the handoff.
+- Verified: `go test ./...` green apart from two pre-existing
+  `internal/worker` socket-path failures (`bind: invalid argument`, the
+  `$TMPDIR` path exceeds macOS's `sockaddr_un` limit — environmental), plus
+  `gofmt`, `go vet`, `go build`, `docsgen --check`, `go test ./internal/apidocs`.
+- **Live verification named the real cause, and it was not the deadlines.** The
+  owner's rerun produced `truncated after 0 of 145091 bytes`, `0 of 114566`,
+  `0 of 138858`, `0 of 184453` and `1572864 of 1756960`. Every figure fits one
+  rule: `upload.getFile` is served only in parts whose `limit` is a multiple of
+  4 KiB, and `mediaReader.Read` asked for "what is left". 145091, 114566,
+  138858, 184453 and the 184096-byte tail of 1756960 are none of them multiples
+  of 4096 — five for five, and 184096 is exactly the count `curl` reported as
+  remaining. gotd's own downloader always asks for `defaultPartSize` (512 KiB)
+  and learns the end from a short chunk; `precise` relaxes an arbitrary offset,
+  not an unaligned limit. Fixed: `mediaReader.Read` asks for a limit that is
+  always a `chunkAlign` (4 KiB) multiple and never more than `mediaPart`, and
+  drops the bytes a part carries past the slice. The `downloadServer` test
+  double now refuses an unaligned limit (`LIMIT_INVALID`), which is what made it
+  visible; `TestDownloadMediaServesAByteRange`'s "only asks for the bytes it
+  needs" assertion is replaced by "never asks for more than one part", since
+  Telegram will not serve a part below 4 KiB. Red: five tests `LIMIT_INVALID`;
+  green after. `gofmt`/`go vet`/`go build`/`docsgen --check` clean.
+- Review named three further truncation producers in the gotd reconnect
+  lifecycle (per-part `apiClient` during a reconnect, watchdog generation
+  cancel, one file reference refresh per stream) that are now logged rather than
+  fixed — see D65 and the handoff.
+- **Owner's live test: the problem is completely solved.** Rebuilt and reran the
+  originally failing download; it completes with no truncation. This is now
+  live-verified, not just tested. Uncommitted at the owner's request.
+- Graph: refreshed with `--code-only` (matches HEAD); the semantic pass over 183
+  non-code files could not run for want of an LLM API key.
+- 2026-11-05: the message timeline (`/channels/:id/messages`) names the route
+  handle `hiddenNavSection`, and the shell slides `BottomNav` down
+  (`translate-y`, `opacity`, 300ms, `motion-reduce` off) instead of unmounting
+  it, with `inert`/`aria-hidden` while away; the full-bleed padding that clears
+  the bar is dropped for that route and animates back on other pages.

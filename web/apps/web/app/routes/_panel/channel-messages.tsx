@@ -1,15 +1,10 @@
-import {
-  redirect,
-  useLocation,
-  useNavigate,
-  useParams,
-} from "react-router"
+import { redirect, useLocation, useNavigate, useParams } from "react-router"
 import { ArrowRightIcon } from "lucide-react"
 
 import { ChannelMessagesPane } from "@/components/channel-explorer/channel-messages-pane"
 import { Button } from "@workspace/ui/components/button"
 import { EmptyState } from "@/components/states"
-import { pageMeta, section } from "@/lib/page"
+import { hiddenNavSection, pageMeta } from "@/lib/page"
 import { ApiError, apiRequest } from "@/lib/api"
 import { LOGIN_REDIRECT_TO, requireSession } from "@/lib/session"
 import { strip, requestURL } from "@/path"
@@ -19,7 +14,9 @@ import type { Route } from "./+types/channel-messages"
 
 export const meta = () => pageMeta("پیام‌های کانال")
 
-export const handle = section("کانال‌ها")
+// The message timeline is a chat screen: the floating navigation would cover
+// the newest messages, so the shell tucks it away here.
+export const handle = hiddenNavSection("کانال‌ها")
 
 type ChannelLookup =
   // clientKey is the record's Telegram client key; empty when the answer did
@@ -55,7 +52,11 @@ async function loadChannel(
         code: "invalid_response",
       }
     }
-    return { state: "ok", channel: data.channel, clientKey: data.client_key ?? "" }
+    return {
+      state: "ok",
+      channel: data.channel,
+      clientKey: data.client_key ?? "",
+    }
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.isAuthLost) throw redirect(authRedirect(url))
@@ -92,7 +93,10 @@ export async function clientLoader({ params, request }: Route.LoaderArgs) {
 
 // This route is the workspace's left pane: it renders into the channel
 // explorer's outlet, beside the channel list, and never into a page of its own.
-export default function ChannelMessages({ loaderData, params }: Route.ComponentProps) {
+export default function ChannelMessages({
+  loaderData,
+  params,
+}: Route.ComponentProps) {
   const { lookup } = loaderData
   const navigate = useNavigate()
   const location = useLocation()

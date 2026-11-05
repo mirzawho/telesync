@@ -736,7 +736,12 @@ func (s *Server) media(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	}
 
 	wanted, kind := parseRange(r.Header.Get("Range"))
-	stream, err := worker.Media(ctx, channelID, messageID, 0, mediaSliceOf(wanted))
+	// A download is a transfer, not a call: the request budget that answers a
+	// listing must not end it mid-body. The fetch is still tied to this handler,
+	// so a caller that walks away stops it.
+	streamCtx, cancelStream := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelStream()
+	stream, err := worker.Media(streamCtx, channelID, messageID, 0, mediaSliceOf(wanted))
 	if err != nil {
 		s.upstreamError(w, key, "media", err, requestID)
 		return
@@ -786,12 +791,33 @@ func (s *Server) media(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	if stream.Length > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(stream.Length, 10))
 	}
+	// A long transfer must outlive the server's per-request write deadline, for
+	// the reason the worker clears its own in rpc.writeMediaStream. Flushing
+	// below does not extend that deadline; only this does.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	w.WriteHeader(status)
 	// The headers go out before the bytes: a player reads the content type and
 	// the range it was given before the attachment starts arriving, and a
 	// download shows its name immediately.
 	http.NewResponseController(w).Flush()
-	_, _ = io.Copy(w, stream.Body)
+	written, copyErr := io.Copy(w, stream.Body)
+	// The status and the length are already on the wire, so a transfer that
+	// stopped early cannot be reported to the caller as an error. It is reported
+	// here instead: fewer bytes than promised is a broken download, and nothing
+	// else on the path says so.
+	switch {
+	case copyErr != nil && stream.Length > 0:
+		s.logf("gateway: client=%s op=media request_id=%s channel=%d message=%d: truncated after %d of %d bytes: %v",
+			key, requestID, channelID, messageID, written, stream.Length, copyErr)
+	case copyErr != nil:
+		// No size was ever reported, so nothing was promised and nothing is
+		// missing from a count — but the transfer is still not whole.
+		s.logf("gateway: client=%s op=media request_id=%s channel=%d message=%d: the transfer stopped after %d bytes: %v",
+			key, requestID, channelID, messageID, written, copyErr)
+	case stream.Length > 0 && written != stream.Length:
+		s.logf("gateway: client=%s op=media request_id=%s channel=%d message=%d: truncated after %d of %d bytes, the body ended early",
+			key, requestID, channelID, messageID, written, stream.Length)
+	}
 }
 
 // customEmoji streams one reaction custom emoji as its bytes.

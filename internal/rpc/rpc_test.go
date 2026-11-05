@@ -1058,3 +1058,45 @@ func TestWorkerErrorsKeepTheirMeaningOnTheWire(t *testing.T) {
 		})
 	}
 }
+
+func TestMediaStreamReadAllRejectsABodyShorterThanItPromised(t *testing.T) {
+	// A caller that turns a stream into one buffer is about to send it on — to
+	// Telegram, to WordPress. A body that ends before the length it announced is
+	// a truncated attachment, and handing it over publishes a corrupt file as if
+	// it were whole.
+	stream := rpc.MediaStream{Length: 10, Body: io.NopCloser(strings.NewReader("0123"))}
+
+	data, err := stream.ReadAll()
+	if err == nil {
+		t.Fatalf("ReadAll accepted %d of the 10 bytes it promised as whole: %q", len(data), data)
+	}
+	if !strings.Contains(err.Error(), "4 of 10 bytes") {
+		t.Fatalf("err = %q, want it to say 4 of 10 bytes", err)
+	}
+}
+
+func TestMediaStreamReadAllAcceptsAWholeBody(t *testing.T) {
+	stream := rpc.MediaStream{Length: 10, Body: io.NopCloser(strings.NewReader("0123456789"))}
+
+	data, err := stream.ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(data) != "0123456789" {
+		t.Fatalf("data = %q, want %q", data, "0123456789")
+	}
+}
+
+func TestMediaStreamReadAllAcceptsAnUnknownLength(t *testing.T) {
+	// With no reported size nothing was promised, and Telegram stopping is the
+	// only way to learn the attachment is over. That must stay a clean read.
+	stream := rpc.MediaStream{Body: io.NopCloser(strings.NewReader("0123"))}
+
+	data, err := stream.ReadAll()
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(data) != "0123" {
+		t.Fatalf("data = %q, want %q", data, "0123")
+	}
+}
