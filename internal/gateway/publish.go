@@ -124,9 +124,11 @@ func (s *Server) publishTelegram(ctx context.Context, w http.ResponseWriter, r *
 		return
 	}
 
-	send, err := s.buildSend(ctx, source, key, worker, req)
+	send, err := s.buildSend(ctx, source, req)
 	if err != nil {
-		s.finishPublish(ctx, operation, channelstore.PublishFailed, "", CodePublishSourceMissing)
+		// Nothing has been sent: the draft failed while it was being prepared,
+		// which is the one stage that is always safe to try again.
+		s.finishPublish(ctx, operation, channelstore.PublishFailed, "", codeOfPublishError(err))
 		s.publishFailure(w, err, requestID)
 		return
 	}
@@ -137,18 +139,33 @@ func (s *Server) publishTelegram(ctx context.Context, w http.ResponseWriter, r *
 		status := channelstore.PublishFailed
 		code := CodePublishFailed
 		var flood interface{ FloodSeconds() int }
+		// A worker answers with a sentinel or with a coded error, and both must
+		// classify the same way: the caller's answer depends on the stage that
+		// failed, not on whether the worker was reached over a socket.
+		sent := sendFailureOf(sendErr)
 		switch {
 		case errors.As(sendErr, &flood):
 			code = CodeRateLimited
-		case errors.Is(sendErr, rpc.ErrSendForbidden):
+		case sent == rpc.CodeSendForbidden:
 			code = CodePublishDenied
-		case errors.Is(sendErr, rpc.ErrSendUnsupported):
+		case sent == rpc.CodeSendUnsupported:
+			// The destination cannot take this content at all. It is not a
+			// source problem: the attachment was read and is in hand.
 			code = CodePublishUnsupported
+		case sent == rpc.CodeMediaTooLarge:
+			code = CodePublishMediaTooLarge
 		case errors.Is(sendErr, rpc.ErrTimeout), errors.Is(sendErr, rpc.ErrUnavailable):
 			status, code = channelstore.PublishUnknown, CodePublishUnknown
+		case send.Media != nil && sent == "":
+			// The attachment was read successfully and the destination would
+			// not take the post carrying it. That is a destination failure and
+			// is named as one, never as an unreadable source. Only an error that
+			// names no stage at all lands here: one that does name a stage is
+			// answered above with the stage it names.
+			code = CodePublishMediaUpload
 		}
 		s.finishPublish(ctx, operation, status, "", code)
-		s.publishFailure(w, &publishError{status: publishStatusOf(sendErr, code), code: code, message: publishMessage(sendErr)}, requestID)
+		s.publishFailure(w, &publishError{status: publishStatusOf(sendErr, code), code: code, message: publishMessage(sendErr, code)}, requestID)
 		return
 	}
 
@@ -234,9 +251,17 @@ func utf16Len(s string) int {
 }
 
 // sourceMessage is the source message read back for one publishing request.
+//
+// worker is the connection that recorded it. The source's attachment is read
+// through this and nothing else: the destination is a different account on a
+// different session, whose peer store has never heard of the source channel and
+// whose Telegram view of the world does not contain the source's file
+// references. Handing the source's channel id or media id to the destination
+// produces a not-found at best and someone else's message at worst.
 type sourceMessage struct {
 	row     channelstore.Channel
 	message rpc.Message
+	worker  Worker
 }
 
 // resolvePublishSource finds the source record and the message on it, and
@@ -273,7 +298,7 @@ func (s *Server) resolvePublishSource(ctx context.Context, a *actor, req publish
 		return sourceMessage{}, &publishError{http.StatusNotFound, CodePublishSourceMissing,
 			"The source message is not available."}
 	}
-	return sourceMessage{row: row, message: page.Messages[0]}, nil
+	return sourceMessage{row: row, message: page.Messages[0], worker: worker}, nil
 }
 
 // resolvePublishDestination checks the destination is one this caller may name
@@ -324,8 +349,13 @@ func (s *Server) publishWorker(key string) (Worker, bool) {
 
 // buildSend assembles the outgoing request from the source message and the
 // caller's edits.
-func (s *Server) buildSend(ctx context.Context, source sourceMessage, key string, worker Worker,
-	req publishRequest) (rpc.SendRequest, error) {
+//
+// It resolves the source attachment before anything is sent, so a draft that
+// needs its attachment is never published as text alone and then discovered to
+// be missing a picture. The bytes are read from the source connection and
+// carried across as content: a file reference from one account is not a
+// capability on another, so nothing about the source's storage is reused.
+func (s *Server) buildSend(ctx context.Context, source sourceMessage, req publishRequest) (rpc.SendRequest, error) {
 
 	send := rpc.SendRequest{
 		ChannelID: mustChannelID(req.Destination.ChannelID),
@@ -346,17 +376,20 @@ func (s *Server) buildSend(ctx context.Context, source sourceMessage, key string
 	if err := namedAttachment(req.Media.AttachmentID, source.message.Media); err != nil {
 		return rpc.SendRequest{}, err
 	}
-	stream, err := worker.Media(ctx, source.row.ChannelID, source.message.ID, largestPhotoSize, rpc.MediaSlice{})
+	stream, err := source.worker.Media(ctx, source.row.ChannelID, source.message.ID, largestPhotoSize, rpc.MediaSlice{})
 	if err != nil {
-		return rpc.SendRequest{}, &publishError{http.StatusInternalServerError, CodePublishPartial,
-			"The source attachment could not be read; publish without media or retry."}
+		return rpc.SendRequest{}, s.sourceMediaFailure(source, err)
 	}
 	// A post is sent as one buffer, so the stream is collected here. This is the
 	// one place that is allowed: answering a reader streams instead.
 	data, err := stream.ReadAll()
 	if err != nil {
-		return rpc.SendRequest{}, &publishError{http.StatusInternalServerError, CodePublishPartial,
-			"The source attachment could not be read; publish without media or retry."}
+		if errors.Is(err, rpc.ErrMediaTooLarge) {
+			s.logSourceMedia(source, err)
+			return rpc.SendRequest{}, &publishError{http.StatusRequestEntityTooLarge, CodePublishMediaTooLarge,
+				"The attachment is too large to send."}
+		}
+		return rpc.SendRequest{}, s.sourceMediaFailure(source, err)
 	}
 	kind := "document"
 	if source.message.Media.Type == "photo" {
@@ -369,6 +402,28 @@ func (s *Server) buildSend(ctx context.Context, source sourceMessage, key string
 		Data:     data,
 	}
 	return send, nil
+}
+
+// sourceMediaFailure is the answer for an attachment the source connection
+// could not read.
+//
+// It is a source failure and only that. The destination is neither named nor
+// blamed: nothing was sent anywhere, and the draft is exactly as the caller
+// left it. The message keeps its original wording because it is the one a
+// caller is told to act on — publish without media, or retry — but it is now
+// only ever produced by a genuine source read.
+func (s *Server) sourceMediaFailure(source sourceMessage, err error) error {
+	s.logSourceMedia(source, err)
+	return &publishError{http.StatusBadGateway, CodePublishSourceMedia,
+		"The source attachment could not be read; publish without media or retry."}
+}
+
+// logSourceMedia records which connection and which message the read failed
+// for, so the request id in the answer can be followed to the failing stage.
+// The bytes and the file reference are never logged.
+func (s *Server) logSourceMedia(source sourceMessage, err error) {
+	s.logf("gateway: source media download failed: client=%s channel=%d message=%d: %v",
+		source.row.ClientKey, source.row.ChannelID, source.message.ID, err)
 }
 
 // sendFileName is the name the outgoing attachment is sent under.
@@ -523,6 +578,17 @@ func (s *Server) finishPublish(ctx context.Context, op *channelstore.PublishOper
 	_ = s.cfg.Publishes.FinishPublishOperation(ctx, op.ID, status, result, errorCode)
 }
 
+// codeOfPublishError is the code a failure is recorded under. An error that is
+// none of the route's own is a store failure, which is what publishFailure
+// answers with.
+func codeOfPublishError(err error) string {
+	var perr *publishError
+	if errors.As(err, &perr) {
+		return perr.code
+	}
+	return CodeStoreError
+}
+
 // statusOf picks the HTTP status for a worker failure.
 func publishStatusOf(err error, code string) int {
 	switch code {
@@ -532,6 +598,12 @@ func publishStatusOf(err error, code string) int {
 		return http.StatusBadRequest
 	case CodePublishSourceMissing, CodePublishDestMissing:
 		return http.StatusNotFound
+	case CodePublishSourceMedia, CodePublishMediaUpload:
+		// The stage is named in the code; the answer is that the other side of
+		// the transfer did not do its part.
+		return http.StatusBadGateway
+	case CodePublishMediaTooLarge:
+		return http.StatusRequestEntityTooLarge
 	case CodeRateLimited:
 		return http.StatusTooManyRequests
 	case CodePublishUnknown:
@@ -564,17 +636,47 @@ func statusForRPCCode(code string) int {
 	return http.StatusInternalServerError
 }
 
-// publishMessage is the caller-facing sentence for a worker failure.
-func publishMessage(err error) string {
+// sendFailureOf is the rpc code a failed send names, whatever shape it arrived
+// in. A worker reached over the socket answers with a sentinel joined to its
+// error; one in this process may answer with the coded error alone. Both mean
+// the same thing to a caller, so both read as the code.
+func sendFailureOf(err error) string {
 	switch {
 	case errors.Is(err, rpc.ErrSendForbidden):
-		return "The destination refused the message: this account may not post there."
+		return rpc.CodeSendForbidden
 	case errors.Is(err, rpc.ErrSendUnsupported):
-		return "This content cannot be sent to that destination."
-	case errors.Is(err, rpc.ErrMessageTooLong):
-		return "The message text is too long to send."
+		return rpc.CodeSendUnsupported
 	case errors.Is(err, rpc.ErrMediaTooLarge):
+		return rpc.CodeMediaTooLarge
+	case errors.Is(err, rpc.ErrMessageTooLong):
+		return rpc.CodeMessageTooLong
+	}
+	var coded *rpc.Error
+	if errors.As(err, &coded) {
+		return coded.Code
+	}
+	return ""
+}
+
+// publishMessage is the caller-facing sentence for a worker failure.
+//
+// The stage the failure happened in is what a caller acts on, so a post that
+// carried an attachment and was refused is described as the destination
+// refusing the attachment — never as the source attachment being unreadable,
+// which is a different failure with a different remedy.
+func publishMessage(err error, code string) string {
+	switch sendFailureOf(err) {
+	case rpc.CodeSendForbidden:
+		return "The destination refused the message: this account may not post there."
+	case rpc.CodeSendUnsupported:
+		return "This content cannot be sent to that destination."
+	case rpc.CodeMessageTooLong:
+		return "The message text is too long to send."
+	case rpc.CodeMediaTooLarge:
 		return "The attachment is too large to send."
+	}
+	if code == CodePublishMediaUpload {
+		return "The destination did not accept the attachment; nothing was published."
 	}
 	var coded *rpc.Error
 	if errors.As(err, &coded) && coded.Message != "" {
@@ -665,7 +767,7 @@ func (s *Server) publishWordPress(w http.ResponseWriter, r *http.Request, siteID
 
 	result, err := s.runWordPressPublish(ctx, a, source, site, password, req)
 	if err != nil {
-		s.finishPublish(ctx, operation, channelstore.PublishFailed, "", CodePublishFailed)
+		s.finishPublish(ctx, operation, channelstore.PublishFailed, "", codeOfPublishError(err))
 		s.publishFailure(w, err, requestID)
 		return
 	}
@@ -760,22 +862,30 @@ func (s *Server) runWordPressPublish(ctx context.Context, a *actor, source sourc
 		if err := namedAttachment(req.Media.AttachmentID, source.message.Media); err != nil {
 			return nil, err
 		}
-		stream, err := s.publishWorkerFor(source.row.ClientKey).Media(ctx, source.row.ChannelID, source.message.ID,
+		// The attachment is read through the connection that recorded the source
+		// message, exactly as the Telegram route reads it. A WordPress site is
+		// not a Telegram client and holds no Telegram session at all.
+		stream, err := source.worker.Media(ctx, source.row.ChannelID, source.message.ID,
 			largestPhotoSize, rpc.MediaSlice{})
 		if err != nil {
-			return nil, &publishError{http.StatusInternalServerError, CodePublishPartial,
-				"The source attachment could not be read; publish without media or retry."}
+			return nil, s.sourceMediaFailure(source, err)
 		}
 		data, err := stream.ReadAll()
 		if err != nil {
-			return nil, &publishError{http.StatusInternalServerError, CodePublishPartial,
-				"The source attachment could not be read; publish without media or retry."}
+			if errors.Is(err, rpc.ErrMediaTooLarge) {
+				s.logSourceMedia(source, err)
+				return nil, &publishError{http.StatusRequestEntityTooLarge, CodePublishMediaTooLarge,
+					"The attachment is too large to send."}
+			}
+			return nil, s.sourceMediaFailure(source, err)
 		}
 		uploaded, err := client.UploadMedia(ctx, site.URL, site.Username, password,
 			sendFileName(source.message.Media), stream.MimeType, data)
 		if err != nil {
-			// An upload that failed is not reported as published media.
-			return nil, &publishError{http.StatusBadGateway, CodePublishFailed,
+			// An upload that failed is not reported as published media, and it
+			// is not reported as an unreadable source either: the bytes arrived
+			// and the site refused them.
+			return nil, &publishError{http.StatusBadGateway, CodePublishMediaUpload,
 				"The attachment could not be uploaded to the WordPress site; the post was not published."}
 		}
 		if uploaded.ID > 0 {
@@ -811,12 +921,6 @@ func (s *Server) runWordPressPublish(ctx context.Context, a *actor, source sourc
 		result["media"] = map[string]any{"attachment_id": featured}
 	}
 	return result, nil
-}
-
-// publishWorkerFor resolves the worker of one client key for a media read.
-func (s *Server) publishWorkerFor(key string) Worker {
-	worker, _ := s.publishWorker(key)
-	return worker
 }
 
 // mapWordPressPublishError turns a client failure into the route's answer.

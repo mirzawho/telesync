@@ -67,6 +67,9 @@ type fakeWorker struct {
 	// lastMediaIndex is the attachment position the gateway asked for, which is
 	// how a test sees that the chosen attachment was the one read.
 	lastMediaIndex int
+	// mediaCalls counts attachment reads alone, so a test can tell "this worker
+	// was asked for media" from "this worker was called".
+	mediaCalls int
 
 	lastMessageChannel int64
 	lastMessageID      int
@@ -142,6 +145,7 @@ func (f *fakeWorker) Media(ctx context.Context, channelID int64, messageID, phot
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	f.mediaCalls++
 	f.lastMediaChannel, f.lastMediaMessage = channelID, messageID
 	f.lastMediaIndex = photoIndex
 	f.lastMediaSlice = slice

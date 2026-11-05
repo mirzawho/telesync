@@ -153,6 +153,14 @@ const (
 	CodePublishUnknown       = "publish_outcome_unknown"
 	CodePublishFailed        = "publish_failed"
 	CodePublishPartial       = "publish_partial_failure"
+	// CodePublishSourceMedia is the source attachment failing to be read. It is
+	// its own stage: nothing was sent anywhere, so the draft is intact and the
+	// caller may drop the attachment and publish the text alone.
+	CodePublishSourceMedia = "publish_source_media_unavailable"
+	// CodePublishMediaUpload is the destination refusing a post that carried an
+	// attachment which had already been read successfully. The opposite stage
+	// from the one above, and never interchangeable with it.
+	CodePublishMediaUpload   = "publish_media_upload_failed"
 	CodePublishWordPressAuth = "publish_wordpress_auth_failed"
 
 	CodePublishWordPressForbidden    = "publish_wordpress_forbidden"

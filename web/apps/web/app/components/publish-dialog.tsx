@@ -47,6 +47,7 @@ import {
   type WorkspaceLayout,
 } from "@/lib/publish-draft"
 import { getToken } from "@/lib/session"
+import { publishErrorText } from "@/lib/publish-errors"
 import type { Entity, MessageMedia, TelegramServer, WordPressSite } from "@/lib/types"
 
 interface MessageLike {
@@ -83,6 +84,22 @@ export interface DestinationResult {
   label: string
   ok: boolean
   detail?: string
+  // requestId is the id the API gave the attempt. It is shown so a reader can
+  // report a problem, and carries nothing but that id.
+  requestId?: string
+}
+
+// explainFailure is the sentence a reader is shown for a failed call.
+//
+// It is the category's own Persian wording, never the backend's English: the
+// API's `code` is the contract and its message is not. The request id travels
+// beside it as a separate fact, so a reader can report the failure without the
+// message carrying anything internal.
+function explainFailure(err: unknown, fallback: string): { detail: string; requestId?: string } {
+  if (err instanceof ApiError) {
+    return { detail: publishErrorText(err.code, err.message), requestId: err.requestId }
+  }
+  return { detail: fallback }
 }
 
 // CONCURRENCY bounds how many Telegram sends run at once. The backend takes one
@@ -337,8 +354,8 @@ export function PublishDialog({
     setActionError(null)
     setResults([])
     try {
-      const outcome = await publish(state, source, (label, ok, detail) =>
-        setResults((prev) => [...prev, { label, ok, detail }]),
+      const outcome = await publish(state, source, (result) =>
+        setResults((prev) => [...prev, result]),
       )
       setResults(outcome.results)
 
@@ -363,7 +380,7 @@ export function PublishDialog({
       )
     } catch (err) {
       setStatus("failure")
-      setActionError(err instanceof ApiError ? err.message : "ارسال ناموفق بود.")
+      setActionError(explainFailure(err, "ارسال ناموفق بود.").detail)
     }
   }, [publishing, draft.state, source, toast, onSuccess, onOpenChange])
 
@@ -464,7 +481,7 @@ interface PublishOutcome {
 async function publish(
   state: PublishDraftState,
   source: PublishSource,
-  onResult: (label: string, ok: boolean, detail?: string) => void,
+  onResult: (result: DestinationResult) => void,
 ): Promise<PublishOutcome> {
   const token = getToken()
 
@@ -477,12 +494,12 @@ async function publish(
         body,
         headers: { "Idempotency-Key": `pub-wp-${siteId}-${source.localChannelId}-${source.messageId}-${fingerprint(body)}` },
       })
-      onResult("وردپرس", true)
+      onResult({ label: "وردپرس", ok: true })
       return { status: "success", results: [{ label: "وردپرس", ok: true }] }
     } catch (err) {
-      const detail = err instanceof ApiError ? err.message : "انتشار ناموفق بود."
-      onResult("وردپرس", false, detail)
-      return { status: "failure", results: [{ label: "وردپرس", ok: false, detail }] }
+      const { detail, requestId } = explainFailure(err, "انتشار ناموفق بود.")
+      onResult({ label: "وردپرس", ok: false, detail, requestId })
+      return { status: "failure", results: [{ label: "وردپرس", ok: false, detail, requestId }] }
     }
   }
 
@@ -509,11 +526,11 @@ async function publish(
           },
         })
         results[index] = { label, ok: true }
-        onResult(label, true)
+        onResult({ label, ok: true })
       } catch (err) {
-        const detail = err instanceof ApiError ? err.message : "ارسال ناموفق بود."
-        results[index] = { label, ok: false, detail }
-        onResult(label, false, detail)
+        const { detail, requestId } = explainFailure(err, "ارسال ناموفق بود.")
+        results[index] = { label, ok: false, detail, requestId }
+        onResult({ label, ok: false, detail, requestId })
       }
     }
   }
@@ -557,6 +574,11 @@ function PublishReport({
                 <span className="font-medium">{result.label}</span>
                 {result.detail && (
                   <span className="text-muted-foreground"> — {result.detail}</span>
+                )}
+                {result.requestId && (
+                  <span className="block text-[0.65rem] text-muted-foreground/70" dir="ltr">
+                    کد پیگیری: {result.requestId}
+                  </span>
                 )}
                 <span className="sr-only">{result.ok ? " موفق" : " ناموفق"}</span>
               </span>

@@ -241,6 +241,51 @@ test("media are listed as attached and can be detached", () => {
   assert.match(out, /حذف پیوست/)
 })
 
+// The reported bug: the dialog drew "دریافت عکس ناموفق بود" the moment it opened,
+// before any request had been made — the attachment was rendered as
+// status="ready" with no URL, which the media card draws as a failure. Opening
+// the dialog must never claim a fetch failed.
+test("the dialog never reports the source picture as unread before it is fetched", () => {
+  const out = html(
+    <DesktopPublishingWorkspace
+      state={telegramState()}
+      options={OPTIONS}
+      onChange={noop}
+    />
+  )
+  assert.doesNotMatch(out, /ناموفق بود/, "nothing has been fetched yet, so nothing has failed")
+  assert.doesNotMatch(out, /در دسترس نیست/)
+})
+
+// The picture is fetched for the outgoing draft, so what the dialog shows is
+// that it is arriving — and it arrives through the source connection's own
+// media route, which is what attachment.url already is.
+test("the source picture is fetched from the connection that owns the source message", () => {
+  const s = telegramState()
+  const out = html(
+    <DesktopPublishingWorkspace state={s} options={OPTIONS} onChange={noop} />
+  )
+  assert.match(out, /در حال دریافت/, "the attachment must be shown as arriving")
+  const url = s.source.attachments[0]?.url ?? ""
+  assert.match(url, /\/telegram\/[^/]+\/channels\/\d+\/messages\/\d+\/media/,
+    "the media route must name the source connection")
+})
+
+// Picking another destination is a statement about where the post goes. It must
+// not re-point the source picture at the destination, whose connection cannot
+// read the source message at all.
+test("changing the destination leaves the source attachment's own url alone", () => {
+  const before = telegramState()
+  const beforeURL = before.source.attachments[0]?.url
+
+  setClientKey(before, "official")
+  assert.equal(
+    before.source.attachments[0]?.url,
+    beforeURL,
+    "choosing another server must not change where the source picture is read from",
+  )
+})
+
 test("the message editor shows the composed outgoing text, not the raw source", () => {
   const s = telegramState()
   const out = html(

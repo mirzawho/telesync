@@ -11,7 +11,7 @@ import { Separator } from "@workspace/ui/components/separator"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { faDigits } from "@/components/persian-digits"
-import { MediaAttachmentCard } from "@/components/message-card"
+import { SourceAttachmentMedia } from "@/components/publish/source-attachment-media"
 import type { PublishingOptions } from "@/components/publish/publish-options"
 import { mediaTitle } from "@/lib/media-view"
 import { fetchMedia, releaseMedia } from "@/lib/message-media"
@@ -87,7 +87,7 @@ function TelegramPostPreview({
           <div className="flex flex-col gap-3">
             {media.map((attachment) => (
               <div key={attachment.id} data-testid="preview-media">
-                <MediaAttachmentCard media={toMessageMedia(attachment)} status="ready" url="" />
+                <SourceAttachmentMedia attachment={attachment} attached />
               </div>
             ))}
             {outgoing.text.trim().length > 0 && (

@@ -4,16 +4,15 @@
 // the shared draft. Both edit that draft and nothing else — the source message
 // they were seeded from is never written back to.
 
-import { ImageIcon, XIcon } from "lucide-react"
+import { ImageIcon } from "lucide-react"
 import * as React from "react"
 
-import { Badge } from "@workspace/ui/components/badge"
 import { Input } from "@workspace/ui/components/input"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { faDigits } from "@/components/persian-digits"
-import { MediaAttachmentCard } from "@/components/message-card"
 import { ChipInput, Field, SearchableCheckList } from "@/components/publish/publish-primitives"
+import { SourceAttachmentMedia } from "@/components/publish/source-attachment-media"
 import { Textarea } from "@workspace/ui/components/textarea"
 import type { PublishingOptions } from "@/components/publish/publish-options"
 import type { ApplyChange } from "@/components/publish/destination-panel"
@@ -159,6 +158,11 @@ function MediaAttachmentEditor({
   onChange: ApplyChange
 }) {
   const { source } = state
+  // A retry asks for the same attachment again. It is counted per attachment
+  // rather than stored as a flag so a second retry is a second request even
+  // after a failure and a retry have already been seen.
+  const [retries, setRetries] = React.useState<Record<string, number>>({})
+  const retry = (id: string) => setRetries((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }))
   if (source.attachments.length === 0) return null
   const byId = new Map(state.telegram.attachments.map((a) => [a.id, a.attached]))
 
@@ -169,23 +173,14 @@ function MediaAttachmentEditor({
         {source.attachments.map((attachment) => {
           const attached = byId.get(attachment.id) ?? false
           return (
-            <li key={attachment.id} className="flex flex-col gap-2">
-              <div className={cn(!attached && "opacity-60")}>
-                <MediaAttachmentCard media={toMessageMedia(attachment)} status="ready" url="" />
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant={attached ? "success" : "muted"}>
-                  {attached ? "پیوست‌شده" : "جدا شده"}
-                </Badge>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded-lg border border-input px-2.5 py-1 text-xs hover:bg-accent"
-                  onClick={() => onChange((s) => toggleAttachment(s, attachment.id))}
-                >
-                  <XIcon className="size-3" aria-hidden="true" />
-                  {attached ? "حذف پیوست" : "پیوست دوباره"}
-                </button>
-              </div>
+            <li key={attachment.id} className={cn(!attached && "opacity-60")}>
+              <SourceAttachmentMedia
+                attachment={attachment}
+                attached={attached}
+                retry={retries[attachment.id] ?? 0}
+                onRetry={() => retry(attachment.id)}
+                onToggle={() => onChange((s) => toggleAttachment(s, attachment.id))}
+              />
             </li>
           )
         })}

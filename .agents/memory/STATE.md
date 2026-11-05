@@ -1,7 +1,8 @@
 # Current state
 
-**Updated:** 2026-11-05 (media downloads are no longer cut off by the request
-budget or the write deadline, and a truncated transfer is now reported).
+**Updated:** 2026-11-05 (publishing a source message's media to another
+connection now reads the source through the source connection and shows the
+attachment in the dialog; see D66).
 
 ## Milestone
 
@@ -35,6 +36,49 @@ Local permission ids are `managed_channels.id`, not Telegram peer ids.
   write; cross-system operations report partial failure.
 
 ## Changed since the last snapshot
+
+- Telegram-to-other-connection media publishing is fixed (2026-11-05, D66). Two
+  independent defects presented as one symptom — the dialog said `دریافت عکس
+  ناموفق بود` and the publish returned `publish_partial_failure` / "The source
+  attachment could not be read".
+  **Backend:** `gateway.buildSend` fetched the source attachment through the
+  `worker` it was handed, which `serveTelegram` resolves from the URL path — the
+  **destination** connection. Publishing to `cat` therefore asked `cat` to read
+  a channel id that only exists in the source account's peer store
+  (`worker.channelByID` → `rpc.ErrChannelNotFound`), and the gateway collapsed
+  that into `publish_partial_failure`. `resolvePublishSource` already resolved
+  the source worker to read the message and then threw it away; `sourceMessage`
+  now carries it and both the Telegram and the WordPress route read through it
+  (`publishWorkerFor`, which returned a nil `Worker` for an unknown key, is
+  gone). Two stages now have two codes and are never interchangeable:
+  `publish_source_media_unavailable` (502, nothing sent, retry or
+  `media.mode:"omit"`) and `publish_media_upload_failed` (502, the attachment
+  was read and the destination refused the post). `rpc.Err*` sentinels and bare
+  `*rpc.Error` codes classify identically (`sendFailureOf`); an unclassified
+  failure of a send that carried media is a destination failure, never a source
+  one. A source read failure is logged with `client=`, `channel=`, `message=`.
+  **Frontend:** the dialog rendered `MediaAttachmentCard` with `status="ready"
+  url=""`, which the card draws as `دریافت {label} ناموفق بود` — no request was
+  ever made. New `lib/media-blob-cache.ts` (one shared download and one
+  refcounted object URL per attachment; a failure is never cached) and
+  `components/publish/source-attachment-media.tsx` (fetches through the panel's
+  bearer credential, shows loading/picture/gone/failed, and on failure offers
+  `تلاش مجدد` and `حذف پیوست` while the attachment stays attached). The editor
+  and the live preview share it. `lib/publish-errors.ts` maps API codes to
+  Persian sentences, so the backend's English never reaches the interface, and
+  the request id is shown per destination as `کد پیگیری`.
+  **Verified here:** 14 new gateway tests red → green (the red reproduced the
+  production error verbatim), `go test ./...` green apart from the two known
+  `internal/worker` socket-bind failures, `gofmt`/`go vet`/`go build` clean,
+  `docsgen --check` up to date after `publishing.md` gained a "Failure stages"
+  section, `go test ./internal/apidocs` green, and the web suites 21+19+109+85+49
+  = 283 green with `npm run typecheck` and `npm run build` clean.
+  **Not verified:** anything against a live Telegram account or the `cat`
+  backend — this checkout has no daemon configuration, no Telegram credentials
+  and no custom-backend endpoint, and none may be invented. The publishing
+  dialog was not opened in a browser. Real file-reference expiry, DC migration
+  and a real cross-account upload remain exercised only through the fake
+  workers.
 
 - A media download is no longer cut off part-way (2026-11-05). Three defects
   stacked: `serveTelegram` gave every Telegram route — media included — a
@@ -129,10 +173,13 @@ claim live success from unit tests.
 
 ## Next live step
 
-From an unrestricted shell, build the binary/panel, configure and authorize the
-custom destination client, run the daemon, create an administrator, then verify
-health, channel reads, Telegram publishing, WordPress publishing, and idempotent
-retry. Use real configured values; never invent endpoints or credentials.
+`docs/VERIFYING-MEDIA-PUBLISH.md` is the runbook: build, configure both clients,
+authenticate, run, then eight scenarios with an observable pass/fail per step —
+preview, Telegram→`cat` publish with media, destination switching, explicit
+detach, an unreadable source, a real destination failure, partial success and
+retry, and file-reference refresh. Use real configured values; never invent
+endpoints or credentials. Anything not run is recorded as **not exercised**,
+never as passed.
 
 ## Topic index
 

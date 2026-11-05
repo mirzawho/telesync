@@ -934,3 +934,26 @@ where it belongs.
   (`translate-y`, `opacity`, 300ms, `motion-reduce` off) instead of unmounting
   it, with `inert`/`aria-hidden` while away; the full-bleed padding that clears
   the bar is dropped for that route and animates back on other pages.
+- 2026-11-05: Telegram-to-other-connection media publishing fixed (D66). Reported
+  as one bug — the publish dialog showed `دریافت عکس ناموفق بود` and the publish
+  returned `publish_partial_failure` / "The source attachment could not be read" —
+  but the two had unrelated causes. The dialog drew
+  `MediaAttachmentCard status="ready" url=""`, which the card renders in its
+  failure branch, so a fetch that was never attempted was shown as one that
+  failed; the WordPress path fetched and the Telegram path did not. The publish
+  read the source attachment through `buildSend`'s `worker` parameter, which
+  `serveTelegram` resolves from the URL path key — the **destination** connection
+  the caller chose. The red tests reproduced the production error verbatim with
+  `official` as the source and `cat` as the destination. Fixed by carrying the
+  source worker in `sourceMessage` (it was already resolved in
+  `resolvePublishSource` and discarded) and reading through it on both routes;
+  `publishWorkerFor`, which returned a nil `Worker` for an unknown key, is gone.
+  New `publish_source_media_unavailable` / `publish_media_upload_failed` codes
+  separate the two stages; `sendFailureOf` classifies a bare `*rpc.Error` and a
+  `rpc.Err*` sentinel the same way. Frontend: `lib/media-blob-cache.ts` (one
+  shared download and one refcounted object URL per attachment, never caching a
+  failure), `components/publish/source-attachment-media.tsx` (loading / picture /
+  gone / failed with `تلاش مجدد` and `حذف پیوست`, attachment stays attached),
+  `lib/publish-errors.ts` (codes → Persian, the backend's English never shown).
+  14 gateway tests red → green; web suites 283 green. Not live-verified: no
+  daemon configuration, Telegram credentials or `cat` endpoint in this checkout.

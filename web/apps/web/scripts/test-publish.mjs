@@ -19,7 +19,10 @@ const outDir = join(appDir, ".test-out")
 
 const tests = [
   join(appDir, "app/lib/publish-draft.test.ts"),
+  join(appDir, "app/lib/publish-errors.test.ts"),
+  join(appDir, "app/lib/media-blob-cache.test.ts"),
   join(appDir, "app/components/publish/publish-workspace.test.tsx"),
+  join(appDir, "app/components/publish/source-attachment-media.test.tsx"),
 ]
 
 try {

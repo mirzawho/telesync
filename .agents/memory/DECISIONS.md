@@ -1190,3 +1190,39 @@ for the same thing. A transfer can still end early for reasons in the gotd
 reconnect lifecycle — a part that finds the client detached, a watchdog that
 cancels a generation, a file reference that expires twice — and those are
 reported now rather than fixed here.
+
+## D66 — A source attachment is read through the source connection, never the destination
+
+A publish carries media across two different Telegram accounts. The bytes are
+read through the connection that **recorded the source message** and sent
+through the connection named in the request path. The two never share a
+session, a peer store, an access hash or a file reference, and one is never
+substituted for the other: an unknown source connection is `503`, not a
+fallback.
+
+**Why.** `gateway.buildSend` fetched the source attachment through the
+`worker` it was handed, which `serveTelegram` resolves from the URL path —
+the **destination** the caller chose. Publishing a source photo to the custom
+`cat` backend therefore asked `cat` to read a channel id that exists only in the
+source account's peer store, which answered `rpc.ErrChannelNotFound`; the
+gateway collapsed that into `publish_partial_failure` and "The source
+attachment could not be read". The WordPress route was already doing the right
+thing (`publishWorkerFor(source.row.ClientKey)`), so the two routes disagreed,
+and `publishWorkerFor` returned a nil `Worker` for an unconfigured key.
+
+`resolvePublishSource` already resolved the source worker to read the message
+and then discarded it. `sourceMessage` now carries it, so the ownership is in
+the type rather than in a convention the next caller has to remember.
+
+**How to apply.** `sourceMessage.worker` is the only worker that may be asked
+for `source.*` bytes; the destination worker is only ever asked to `SendMessage`.
+Never decode `rpc.Media.ID` to find a client — it is `"channel:message"`, opaque
+and only compared against the source's own id. Nothing about the source's
+storage is reused on the destination: the bytes cross as content and are
+uploaded under the destination's own session. The same rule covers WordPress,
+whose "destination" holds no Telegram session at all.
+
+Two stages, two codes, never interchangeable: `publish_source_media_unavailable`
+(nothing was sent anywhere; retry or `media.mode: "omit"`) and
+`publish_media_upload_failed` (the attachment was read and the destination
+would not take it). See `docs/api/manual/components/publishing.md`.
