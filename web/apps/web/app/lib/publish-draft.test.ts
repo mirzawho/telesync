@@ -5,10 +5,14 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 
 import {
+  addLink,
   buildTelegramPayloads,
   buildWordPressPayload,
   canAdvance,
   composeTelegramOutgoing,
+  composeWordPressContent,
+  deleteLink,
+  editLink,
   emptyTelegramDraft,
   emptyWordPressDraft,
   initDraftState,
@@ -19,6 +23,8 @@ import {
   setPlatform,
   setSite,
   setSlug,
+  setTelegramText,
+  setWordPressContent,
   setWordPressTitle,
   suggestSlug,
   suggestTitle,
@@ -523,4 +529,217 @@ test("the empty drafts are what a fresh dialog starts from", () => {
   assert.equal(wp.platform, "wordpress")
   assert.deepEqual(wp.categoryIds, [])
   assert.equal(wp.slugManuallyEdited, false)
+})
+
+// ---------------------------------------------------------------------------
+// Links
+// ---------------------------------------------------------------------------
+
+// A link is the one token that keeps a target: its anchor text sits in the body
+// where the message put it, and the list carries the URL the text cannot say.
+function linkSource(): PublishSource {
+  const text = "read our report and see https://example.com/x"
+  const anchor = "report"
+  const bare = "https://example.com/x"
+  return {
+    localChannelId: 7,
+    messageId: 42,
+    text,
+    // Spans are written where the text actually puts them, never hand-counted.
+    entities: [
+      { type: "text_url", offset: text.indexOf(anchor), length: anchor.length, url: "https://r.example.com" },
+      { type: "url", offset: text.indexOf(bare), length: bare.length },
+    ],
+    attachments: [],
+  }
+}
+
+test("the source message's links are lifted into the draft", () => {
+  const s = initDraftState(linkSource())
+  assert.deepEqual(
+    s.links.map((l) => [l.anchorText, l.url]),
+    [
+      ["report", "https://r.example.com"],
+      ["https://example.com/x", "https://example.com/x"],
+    ],
+  )
+  // The anchor text stays where the message put it.
+  assert.equal(s.telegram.text, "read our report and see https://example.com/x")
+})
+
+// Only a link the user adds is placed at the end. One that came from the
+// message keeps its place in the sentence.
+test("a link the user adds goes to the end of the message", () => {
+  const s = initDraftState(linkSource())
+  addLink(s, { anchorText: "بیشتر", url: "https://more.example.com" })
+  assert.equal(s.telegram.text, "read our report and see https://example.com/x\nبیشتر")
+  const added = s.links[s.links.length - 1]
+  assert.equal(added.anchorText, "بیشتر")
+  assert.equal(added.url, "https://more.example.com")
+})
+
+test("adding to an empty message writes just the anchor text", () => {
+  const s = initDraftState({ localChannelId: 7, messageId: 42, text: "", entities: [], attachments: [] })
+  addLink(s, { anchorText: "https://example.com", url: "https://example.com" })
+  assert.equal(s.telegram.text, "https://example.com")
+  assert.equal(s.links.length, 1)
+})
+
+test("editing a link's anchor text rewrites it in the body", () => {
+  const s = initDraftState(linkSource())
+  editLink(s, s.links[0].id, { anchorText: "گزارش" })
+  assert.equal(s.telegram.text, "read our گزارش and see https://example.com/x")
+  assert.equal(s.links[0].anchorText, "گزارش")
+  // The second link is untouched.
+  assert.equal(s.links[1].anchorText, "https://example.com/x")
+})
+
+test("editing a link's target leaves the body alone", () => {
+  const s = initDraftState(linkSource())
+  const before = s.telegram.text
+  editLink(s, s.links[0].id, { url: "https://other.example.com" })
+  assert.equal(s.telegram.text, before)
+  assert.equal(s.links[0].url, "https://other.example.com")
+})
+
+test("deleting a link takes its anchor text out of the body", () => {
+  const s = initDraftState(linkSource())
+  deleteLink(s, s.links[1].id)
+  assert.equal(s.telegram.text, "read our report and see ")
+  assert.equal(s.links.length, 1)
+})
+
+// The two bodies are two renderings of one message, so a link goes only when
+// neither of them shows its words any more. Erasing it from the post must not
+// take it out of the article.
+test("a link is dropped only when neither body shows its words", () => {
+  const s = initDraftState(linkSource())
+  setTelegramText(s, "read our report")
+  assert.deepEqual(
+    s.links.map((l) => l.anchorText),
+    ["report", "https://example.com/x"],
+  )
+  setWordPressContent(s, "read our report")
+  assert.deepEqual(
+    s.links.map((l) => l.anchorText),
+    ["report"],
+  )
+})
+
+// Rewriting the message must not lose a target the words still carry.
+test("a link whose anchor text survives a body edit keeps its target", () => {
+  const s = initDraftState(linkSource())
+  setTelegramText(s, "کاملًا بازنویسی شد report")
+  assert.deepEqual(
+    s.links.map((l) => [l.anchorText, l.url]),
+    [
+      ["report", "https://r.example.com"],
+      ["https://example.com/x", "https://example.com/x"],
+    ],
+  )
+  // The one whose words the rewrites took out of both bodies goes with it;
+  // "report" is still in the message, so it stays.
+  setWordPressContent(s, "کاملًا بازنویسی شد")
+  assert.deepEqual(
+    s.links.map((l) => [l.anchorText, l.url]),
+    [["report", "https://r.example.com"]],
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Links in the article
+// ---------------------------------------------------------------------------
+
+// The article keeps the link's words in the sentence and gains the target: the
+// words are wrapped in the anchor they belong to, and nothing else in the body
+// is touched.
+test("the article's HTML links the words to their target", () => {
+  const s = initDraftState(linkSource())
+  const html = composeWordPressContent(s)
+  assert.match(html, /<a href="https:\/\/r\.example\.com">report<\/a>/)
+  // The rest of the body is left exactly as it was written.
+  assert.match(html, /^read our <a /)
+})
+
+test("an added link reaches the end of the article too", () => {
+  const s = initDraftState(linkSource())
+  addLink(s, { anchorText: "بیشتر", url: "https://more.example.com" })
+  assert.match(s.wordpress.content, /\nبیشتر$/)
+  assert.match(composeWordPressContent(s), /<a href="https:\/\/more\.example\.com">بیشتر<\/a>$/)
+})
+
+test("deleting a link takes its words out of the article too", () => {
+  const s = initDraftState(linkSource())
+  deleteLink(s, s.links[0].id)
+  assert.doesNotMatch(s.wordpress.content, /report/)
+  assert.doesNotMatch(composeWordPressContent(s), /r\.example\.com/)
+})
+
+test("a link's target cannot break out of the anchor it is written into", () => {
+  const s = initDraftState({ localChannelId: 7, messageId: 42, text: "متن", entities: [], attachments: [] })
+  addLink(s, { anchorText: "بیشتر", url: `https://x.example.com" onmouseover="alert(1)` })
+  const html = composeWordPressContent(s)
+  assert.match(html, /href="https:\/\/x\.example\.com&quot; onmouseover=&quot;alert\(1\)"/)
+  assert.doesNotMatch(html, /onmouseover="alert/)
+})
+
+test("the outgoing message links the anchor text to its target", () => {
+  const s = initDraftState(linkSource())
+  const out = composeTelegramOutgoing(s)
+  const link = out.entities.find((e) => e.type === "text_url")
+  assert.ok(link, "a text_url entity must go out")
+  assert.equal(out.text.slice(link!.offset, link!.offset + link!.length), "report")
+  assert.equal(link!.url, "https://r.example.com")
+})
+
+test("an edited target is what is sent, not the source's", () => {
+  const s = initDraftState(linkSource())
+  editLink(s, s.links[0].id, { url: "https://new.example.com" })
+  const out = composeTelegramOutgoing(s)
+  const link = out.entities.find((e) => e.type === "text_url")
+  assert.equal(link?.url, "https://new.example.com")
+})
+
+test("a bare link is sent as a url entity and never twice", () => {
+  const s = initDraftState(linkSource())
+  const out = composeTelegramOutgoing(s)
+  const over = out.entities.filter(
+    (e) => e.type === "url" || e.type === "text_url",
+  )
+  // Two links, so exactly two link spans — the lexer's own url span must not
+  // be added on top of the one the link list already owns.
+  assert.equal(over.length, 2)
+})
+
+test("an added link is linked wherever it landed in the body", () => {
+  const s = initDraftState({ localChannelId: 7, messageId: 42, text: "متن", entities: [], attachments: [] })
+  addLink(s, { anchorText: "بیشتر", url: "https://more.example.com" })
+  const out = composeTelegramOutgoing(s)
+  const link = out.entities.find((e) => e.type === "text_url")
+  assert.ok(link)
+  assert.equal(out.text.slice(link!.offset, link!.offset + link!.length), "بیشتر")
+})
+
+test("a link with no target is an error, not a silent send", () => {
+  const s = initDraftState({ localChannelId: 7, messageId: 42, text: "متن", entities: [], attachments: [] })
+  s.links = [{ id: "link-1", anchorText: "بیشتر", url: "" }]
+  const out = validate(s)
+  assert.equal(out.valid, false)
+  assert.ok(out.errors.links, "a link with no url must be reported")
+})
+
+// The request is what actually goes out, so the target has to survive all the
+// way into it: a link whose target is dropped on the way is a link that is not
+// a link any more.
+test("the request body carries the link's target", () => {
+  const s = initDraftState(linkSource())
+  editLink(s, s.links[0].id, { anchorText: "گزارش", url: "https://new.example.com" })
+  const [body] = buildTelegramPayloads({
+    ...s,
+    telegram: { ...s.telegram, clientKey: "cat", channelIds: ["5"] },
+  })
+  const link = body.content.entities.find((e) => e.type === "text_url")
+  assert.ok(link, "the request must carry a text_url entity")
+  assert.equal(link.url, "https://new.example.com")
+  assert.equal(body.content.text.slice(link.offset, link.offset + link.length), "گزارش")
 })

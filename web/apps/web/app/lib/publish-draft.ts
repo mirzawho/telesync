@@ -79,6 +79,26 @@ export interface AttachmentState {
   attached: boolean
 }
 
+/**
+ * LinkItem is one link of the outgoing message.
+ *
+ * It is the only token that carries a target, so it keeps both sides of one:
+ * the `anchorText` that is drawn in the body and the `url` it points at. The
+ * anchor text is ordinary text and stays where the message put it — a link is
+ * not lifted out of the body the way a hashtag is.
+ *
+ * There is one list for the whole draft, not one per platform: a link the
+ * source message carried is a link of the message, and the Telegram post and
+ * the WordPress article are two ways of sending it. Both bodies keep the anchor
+ * text and both are rewritten through this list.
+ */
+export interface LinkItem {
+  // id is stable within one draft, and is what the editor's rows reference.
+  id: string
+  anchorText: string
+  url: string
+}
+
 export interface TelegramPublishDraft {
   platform: "telegram"
   // clientKey is the Telegram connection's real key, never its display label.
@@ -123,6 +143,9 @@ export interface PublishDraftState {
   // Both drafts are kept, so switching platforms never discards an edit.
   telegram: TelegramPublishDraft
   wordpress: WordPressPublishDraft
+  // links are the draft's links, shared by both bodies: the anchor text sits
+  // in each of them and the target is sent with it.
+  links: LinkItem[]
   // sourceEntities are the source's formatting spans, remapped onto the
   // extracted body. They are only sent while the body is still the source's.
   sourceEntities: Entity[]
@@ -199,6 +222,7 @@ export function initDraftState(input: PublishSource): PublishDraftState {
       content: source.text,
       featuredMediaId: firstImage ? firstImage.id : null,
     },
+    links: parsed.links.map((l, i) => ({ id: `link-${i + 1}`, ...l })),
     sourceEntities: parsed.entities,
     baselineText: parsed.main,
     touched: {},
@@ -208,6 +232,95 @@ export function initDraftState(input: PublishSource): PublishDraftState {
 /** marks one field as reached, so its message may be shown beside it. */
 function touch(state: PublishDraftState, ...fields: ValidationField[]): void {
   for (const field of fields) state.touched = { ...state.touched, [field]: true }
+}
+
+// ---------------------------------------------------------------------------
+// Links
+// ---------------------------------------------------------------------------
+
+/** LocatedLink is a link together with the span its anchor text covers. */
+export interface LocatedLink extends LinkItem {
+  start: number
+  end: number
+}
+
+/**
+ * locateLinks finds each link's anchor text in the body.
+ *
+ * Links are matched in the order they were listed, each one after the previous
+ * one ends, so two links that share an anchor text are not confused and a link
+ * is never moved onto the wrong words. A link whose anchor text is no longer in
+ * the body is simply not there: the list follows the text, never the other way
+ * round.
+ */
+export function locateLinks(text: string, links: readonly LinkItem[]): LocatedLink[] {
+  const out: LocatedLink[] = []
+  let cursor = 0
+  for (const link of links) {
+    if (!link.anchorText) continue
+    const at = text.indexOf(link.anchorText, cursor)
+    if (at < 0) continue
+    out.push({ ...link, start: at, end: at + link.anchorText.length })
+    cursor = at + link.anchorText.length
+  }
+  return out
+}
+
+/**
+ * reconcileLinks is the list that matches the bodies the user has just typed.
+ *
+ * A link survives while its anchor text is still in **either** body: the
+ * Telegram post and the WordPress article are two renderings of one message,
+ * and dropping a link because the article was rewritten would take it out of
+ * the post too. A bare URL either body now contains becomes a link of its own,
+ * so the list never shows fewer links than the message carries.
+ */
+function reconcileLinks(texts: readonly string[], links: readonly LinkItem[]): LinkItem[] {
+  // A link survives while either body still shows its anchor text.
+  const alive: LinkItem[] = []
+  for (const link of links) {
+    const gone = texts.every((t) => t.indexOf(link.anchorText) < 0)
+    if (!gone) alive.push({ id: link.id, anchorText: link.anchorText, url: link.url })
+  }
+
+  // A bare URL that no link already covers becomes a link of its own.
+  const extra: LinkItem[] = []
+  for (const text of texts) {
+    for (const m of text.matchAll(/https?:\/\/[^\s>]+/gi)) {
+      const start = m.index!
+      const end = start + m[0].length
+      const covered = [...alive, ...extra].some((l) => {
+        const at = text.indexOf(l.anchorText)
+        return at >= 0 && start < at + l.anchorText.length && end > at
+      })
+      if (covered) continue
+      extra.push({ id: "", anchorText: m[0], url: m[0] })
+    }
+  }
+
+  // A surviving link keeps its id, so a row the user is looking at is never
+  // renamed underneath them. A link the text just gained is appended, which is
+  // where it sits in the body too.
+  const out = [...alive, ...extra]
+  const used = new Set(out.map((l) => l.id))
+  return out.map((l) => {
+    if (l.id) return l
+    let n = 0
+    while (used.has(`link-${++n}`)) {
+      // the first id that is not already taken
+    }
+    used.add(`link-${n}`)
+    return { ...l, id: `link-${n}` }
+  })
+}
+
+function nextLinkId(links: readonly LinkItem[]): string {
+  let n = 0
+  const used = new Set(links.map((l) => l.id))
+  while (used.has(`link-${++n}`)) {
+    // the first id that is not already taken
+  }
+  return `link-${n}`
 }
 
 // ---------------------------------------------------------------------------
@@ -239,9 +352,102 @@ export function setChannelIds(state: PublishDraftState, channelIds: string[]): P
   return state
 }
 
+/**
+ * setTelegramText records a body the user typed.
+ *
+ * The link list follows it. A link whose anchor text is gone from the body goes
+ * with it — its target belonged to words that are no longer there — and a bare
+ * URL the text gained becomes a link of its own.
+ */
 export function setTelegramText(state: PublishDraftState, text: string): PublishDraftState {
   state.telegram = { ...state.telegram, text }
-  touch(state, "content")
+  state.links = reconcileLinks([text, state.wordpress.content], state.links)
+  touch(state, "content", "links")
+  return state
+}
+
+/**
+ * addLink appends a link to the message.
+ *
+ * A link the user adds is placed at the end of the message, on its own line: it
+ * is appended, never spliced into the middle of a sentence, and a line of its
+ * own is what keeps it from merging into the text or the URL just before it.
+ */
+export function addLink(
+  state: PublishDraftState,
+  link: { anchorText: string; url: string },
+): PublishDraftState {
+  const anchorText = link.anchorText.trim()
+  const url = link.url.trim()
+  if (!anchorText || !url) return state
+  state.telegram = { ...state.telegram, text: appendAnchor(state.telegram.text, anchorText) }
+  state.wordpress = { ...state.wordpress, content: appendAnchor(state.wordpress.content, anchorText) }
+  state.links = [...state.links, { id: nextLinkId(state.links), anchorText, url }]
+  touch(state, "content", "links")
+  return state
+}
+
+/** appendAnchor writes a link's words at the end of a body, on their own line. */
+function appendAnchor(body: string, anchorText: string): string {
+  const text = body.replace(/[ \t\r\n]+$/, "")
+  return text.length > 0 ? `${text}\n${anchorText}` : anchorText
+}
+
+/**
+ * editLink changes one link's anchor text or its target.
+ *
+ * Renaming the anchor text rewrites it in the body at the span this link
+ * already covers, so a link is never re-pointed at different words. Changing
+ * the target leaves the text alone.
+ */
+export function editLink(
+  state: PublishDraftState,
+  id: string,
+  patch: { anchorText?: string; url?: string },
+): PublishDraftState {
+  const target = state.links.find((l) => l.id === id)
+  if (!target) return state
+  const anchorText = patch.anchorText ?? target.anchorText
+  const url = patch.url ?? target.url
+  if (anchorText === target.anchorText) {
+    state.links = state.links.map((l) => (l.id === id ? { ...l, anchorText, url } : l))
+    touch(state, "links")
+    return state
+  }
+  // The rename is written into whichever body carries this link's words, and
+  // into both when both do: the two renderings of the message stay the same
+  // message.
+  const rename = (text: string): string => {
+    const at = locateLinks(text, state.links).find((l) => l.id === id)
+    return at ? text.slice(0, at.start) + anchorText + text.slice(at.end) : text
+  }
+  state.telegram = { ...state.telegram, text: rename(state.telegram.text) }
+  state.wordpress = { ...state.wordpress, content: rename(state.wordpress.content) }
+  state.links = state.links.map((l) => (l.id === id ? { ...l, anchorText, url } : l))
+  touch(state, "content", "links")
+  return state
+}
+
+/**
+ * deleteLink takes a link out of the message.
+ *
+ * Its anchor text goes with it: a phrase that was only ever the words a link
+ * was drawn on is left meaningless by leaving it behind, and a URL the user
+ * deleted is not kept in the text as a stray one.
+ */
+export function deleteLink(state: PublishDraftState, id: string): PublishDraftState {
+  if (!state.links.some((l) => l.id === id)) return state
+  const remove = (text: string): string => {
+    const at = locateLinks(text, state.links).find((l) => l.id === id)
+    if (!at) return text
+    let end = at.end
+    if (text[end] === " ") end += 1
+    return text.slice(0, at.start) + text.slice(end)
+  }
+  state.telegram = { ...state.telegram, text: remove(state.telegram.text) }
+  state.wordpress = { ...state.wordpress, content: remove(state.wordpress.content) }
+  state.links = state.links.filter((l) => l.id !== id)
+  touch(state, "content", "links")
   return state
 }
 
@@ -282,7 +488,8 @@ export function setWordPressTitle(state: PublishDraftState, title: string): Publ
 
 export function setWordPressContent(state: PublishDraftState, content: string): PublishDraftState {
   state.wordpress = { ...state.wordpress, content }
-  touch(state, "content")
+  state.links = reconcileLinks([state.telegram.text, content], state.links)
+  touch(state, "content", "links")
   return state
 }
 
@@ -406,10 +613,36 @@ export function composeTelegramOutgoing(state: PublishDraftState): ComposedConte
   const bodyEdited = draft.text !== state.baselineText
   const carried = bodyEdited ? [] : state.sourceEntities
   const composed = compose(draft.text, draft.hashtags, draft.mentions, carried)
-  return {
-    text: composed.text,
-    entities: mergeEntities(composed.entities, lexEntities(composed.text)),
+
+  // The link list is the only thing that knows a link's target, so it writes
+  // the link spans and every other source of them stands down. Otherwise the
+  // source's stale target, or the lexer's bare URL, would sit on the same words
+  // as the one the user edited.
+  const links = linkEntities(composed.text, state.links)
+  const claimed = new Set(links.map((e) => `${e.offset}:${e.length}`))
+  const base = mergeEntities(composed.entities, lexEntities(composed.text)).filter(
+    (e) => (e.type !== "url" && e.type !== "text_url") || !claimed.has(`${e.offset}:${e.length}`),
+  )
+  return { text: composed.text, entities: mergeEntities(base, links) }
+}
+
+/**
+ * linkEntities writes the outgoing span of every link the body still carries.
+ *
+ * A link whose anchor text is the URL itself is Telegram's plain `url`; one
+ * drawn on other words is a `text_url`, which is the only entity that can say
+ * what those words point at.
+ */
+function linkEntities(text: string, links: readonly LinkItem[]): Entity[] {
+  const out: Entity[] = []
+  for (const l of locateLinks(text, links)) {
+    out.push(
+      l.anchorText === l.url
+        ? { type: "url", offset: l.start, length: l.end - l.start }
+        : { type: "text_url", offset: l.start, length: l.end - l.start, url: l.url },
+    )
   }
+  return out
 }
 
 /** attachedMedia lists the source attachments that go out with the message. */
@@ -452,7 +685,7 @@ export function suggestSlug(title: string): string {
 // Validation
 // ---------------------------------------------------------------------------
 
-export type ValidationField = "destination" | "content" | "title" | "featured"
+export type ValidationField = "destination" | "content" | "title" | "featured" | "links"
 
 export interface DraftValidation {
   valid: boolean
@@ -489,6 +722,10 @@ export function validate(state: PublishDraftState, options: ValidateOptions = {}
       all.content = "متن پیام یا یک پیوست لازم است."
     } else if (composed.text.length > TELEGRAM_TEXT_LIMIT) {
       all.content = `متن پیام بیش از ${TELEGRAM_TEXT_LIMIT} نویسه است.`
+    }
+    const broken = state.links.find((l) => !l.url.trim() || !l.anchorText.trim())
+    if (broken) {
+      all.links = "هر لینک به متن پیوند و نشانی نیاز دارد."
     }
   } else {
     const draft = state.wordpress
@@ -606,6 +843,37 @@ function mediaFor(attached: SourceAttachment[]): { mode: "preserve_source" | "om
   return { mode: "preserve_source" as const, attachment_id: chosen.mediaId }
 }
 
+/**
+ * composeWordPressContent is the article's HTML.
+ *
+ * The article body keeps each link's words where the sentence put them, and
+ * only the target is added here: the words are wrapped in the anchor they
+ * belong to. Everything else in the body is left byte-for-byte as the user
+ * wrote it, so markup they typed themselves is never reinterpreted or escaped.
+ */
+export function composeWordPressContent(state: PublishDraftState): string {
+  const content = state.wordpress.content
+  let out = ""
+  let cursor = 0
+  for (const l of locateLinks(content, state.links)) {
+    out += content.slice(cursor, l.start)
+    out += `<a href="${escapeAttribute(l.url)}">${escapeText(l.anchorText)}</a>`
+    cursor = l.end
+  }
+  return out + content.slice(cursor)
+}
+
+// escapeAttribute and escapeText are the only two places a link's own values
+// reach the HTML, so a target or a label the user typed cannot close the tag it
+// is written into.
+function escapeAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+function escapeText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
 /** buildWordPressPayload is the one request that creates the article. */
 export function buildWordPressPayload(state: PublishDraftState): WordPressPublishBody {
   const draft = state.wordpress
@@ -618,7 +886,7 @@ export function buildWordPressPayload(state: PublishDraftState): WordPressPublis
     post: {
       title: draft.title,
       slug: draft.slug,
-      content: draft.content,
+      content: composeWordPressContent(state),
       status: "publish",
       categories: [...draft.categoryIds],
       tag_ids: [...draft.tagIds],

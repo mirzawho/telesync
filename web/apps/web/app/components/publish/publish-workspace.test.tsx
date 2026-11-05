@@ -16,6 +16,7 @@ import {
   LivePreviewPanel,
 } from "@/components/publish/publish-workspace"
 import {
+  addLink,
   initDraftState,
   setClientKey,
   setPlatform,
@@ -296,6 +297,73 @@ test("the message editor shows the composed outgoing text, not the raw source", 
   assert.match(out, /منشن‌ها/)
   assert.match(out, /#فناوری/)
   assert.match(out, /@examplechannel/)
+})
+
+// The links are the third managed field, and they are the one that is already
+// in the message: the row shows the words the link is drawn on beside what
+// those words point at, so both halves of a link are visible at once.
+test("the links are listed beside the hashtags and the mentions", () => {
+  const s = telegramState()
+  addLink(s, { anchorText: "گزارش", url: "https://r.example.com" })
+  const out = html(
+    <DesktopPublishingWorkspace state={s} options={OPTIONS} onChange={noop} />
+  )
+  assert.match(out, /هشتگ‌ها/)
+  assert.match(out, /منشن‌ها/)
+  assert.match(out, /لینک‌ها/)
+  assert.match(out, /گزارش/)
+  assert.match(out, /https:\/\/r\.example\.com/)
+})
+
+test("every link row says what its delete button removes", () => {
+  const s = telegramState()
+  addLink(s, { anchorText: "گزارش", url: "https://r.example.com" })
+  const out = html(
+    <DesktopPublishingWorkspace state={s} options={OPTIONS} onChange={noop} />
+  )
+  assert.match(out, /aria-label="حذف لینک/)
+})
+
+test("the row that adds a link is ready only with both a text and a target", () => {
+  const s = telegramState()
+  const out = html(
+    <DesktopPublishingWorkspace state={s} options={OPTIONS} onChange={noop} />
+  )
+  // Nothing typed yet, so it cannot be submitted.
+  assert.match(out, /disabled/)
+  assert.match(out, /متن پیوند تازه/)
+  assert.match(out, /نشانی پیوند تازه/)
+})
+
+test("the mobile wizard's content step carries the links too", () => {
+  const s = telegramState()
+  addLink(s, { anchorText: "گزارش", url: "https://r.example.com" })
+  const out = html(
+    <MobilePublishingWizard
+      step={2}
+      onStep={noop}
+      state={s}
+      options={OPTIONS}
+      onChange={noop}
+    />
+  )
+  assert.match(out, /لینک‌ها/)
+  assert.match(out, /https:\/\/r\.example\.com/)
+})
+
+// The article carries the same links as the message, so it manages the same
+// list — one list for the draft, not one per platform.
+test("the article editor manages the same links", () => {
+  const s = telegramState()
+  setPlatform(s, "wordpress")
+  setSite(s, 3)
+  addLink(s, { anchorText: "گزارش", url: "https://r.example.com" })
+  const out = html(
+    <DesktopPublishingWorkspace state={s} options={OPTIONS} onChange={noop} />
+  )
+  assert.match(out, /لینک‌ها/)
+  assert.match(out, /گزارش/)
+  assert.match(out, /https:\/\/r\.example\.com/)
 })
 
 test("the article editor marks its required fields", () => {

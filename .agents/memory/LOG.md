@@ -957,3 +957,62 @@ where it belongs.
   `lib/publish-errors.ts` (codes → Persian, the backend's English never shown).
   14 gateway tests red → green; web suites 283 green. Not live-verified: no
   daemon configuration, Telegram credentials or `cat` endpoint in this checkout.
+
+2026-11-05 — the publishing dialog gained a third managed field: **links**,
+beside the hashtags and the mentions. Requested as "extract the links of the
+message with their anchor text and their link, in a list I can edit, delete and
+add to; one I add goes to the end of the message".
+
+The design decision worth keeping: a link is **not** lifted out of the body the
+way a hashtag is. A hashtag is a standalone token, so `parse` removes it and
+`compose` appends the chips at the end. A link's anchor text is a word of a
+sentence — "read our report" depends on "report" staying where it is — so
+`ParsedContent.links` reports the links while their text stays in `main`. Only a
+link the user adds is appended, on its own line, so it can never merge into the
+text or the URL before it.
+
+`LinkItem { id, anchorText, url }` is the model; `locateLinks(text, links)` is
+the one function that says where each anchor text sits, matching links in listed
+order so two links sharing an anchor text are never confused. `addLink`,
+`editLink` and `deleteLink` rewrite the body through it — renaming a link
+rewrites its own span, deleting takes the anchor text with it, and editing the
+target leaves the text alone. `setTelegramText` reconciles the list with the
+body: a link whose anchor text is gone goes with it, and a bare URL the text
+gained becomes a link of its own, so the list never shows fewer links than the
+message carries. Rows commit on blur, not per keystroke, so the body is never
+rewritten under a half-typed word.
+
+Outgoing: `composeTelegramOutgoing` writes the link spans from the list and
+every other source of them stands down. A link whose anchor text is the URL is
+Telegram's `url`; one drawn on other words is `text_url` carrying `url`. **No
+backend change was needed** — `rpc.Entity` already carries `url` and
+`internal/gotdclient/inputEntity` already maps `text_url` to
+`tg.MessageEntityTextURL`, so the target survives the whole way to Telegram.
+
+VERIFIED: `npm test` green — 306 tests across the five runners (content 26,
+media 19, panel 109, publish 103 incl. 12 new link tests, administrators 49);
+`npm run typecheck` clean. No Go change, so no Go run was needed. NOT verified:
+the interface in a browser (the preview tool still cannot start the panel) and
+the links arriving on Telegram from a live send.
+
+2026-11-05 — follow-up: the links carry into the WordPress article as well.
+
+The list moved off the Telegram draft onto `PublishDraftState.links`: one draft,
+one list, and the post and the article are two renderings of the same message.
+Both bodies keep the anchor text, both are rewritten by `addLink` (appended at
+the end of each), `editLink` and `deleteLink`, and `reconcileLinks` now drops a
+link only when **neither** body shows its words — erasing a URL from the post
+must not take it out of the article.
+
+`composeWordPressContent` is what turns the body into the request's
+`post.content`: it wraps each located anchor in `<a href="…">` and leaves
+everything else byte-for-byte as the user wrote it. Only the link's own two
+values are escaped (`escapeAttribute`/`escapeText`), so a target or a label
+cannot close the tag it is written into and markup the user typed themselves is
+never reinterpreted. The wire name is unchanged (`post.content`), so no API docs
+changed; the value now matches what WordPress's content field has always
+expected.
+
+VERIFIED: `npm test` 311 green (content 26, media 19, panel 109, publish 108
+including the new article-link tests, administrators 49); `npm run typecheck`
+clean. NOT verified: in a browser, and a live WordPress publish with links.

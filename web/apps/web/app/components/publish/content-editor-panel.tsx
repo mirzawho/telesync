@@ -11,6 +11,7 @@ import { Input } from "@workspace/ui/components/input"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { faDigits } from "@/components/persian-digits"
+import { LinkList } from "@/components/publish/link-list"
 import { ChipInput, Field, SearchableCheckList } from "@/components/publish/publish-primitives"
 import { SourceAttachmentMedia } from "@/components/publish/source-attachment-media"
 import { Textarea } from "@workspace/ui/components/textarea"
@@ -19,6 +20,9 @@ import type { ApplyChange } from "@/components/publish/destination-panel"
 import { formatSize, mediaTitle } from "@/lib/media-view"
 import { fetchMedia, releaseMedia } from "@/lib/message-media"
 import {
+  addLink,
+  deleteLink,
+  editLink,
   setCategoryIds,
   setFeaturedMediaId,
   setHashtags,
@@ -96,7 +100,7 @@ function TelegramMessageEditor({
         label="متن پیام"
         htmlFor="publish-text"
         error={errors?.content}
-        hint="هشتگ‌ها و منشن‌ها در انتهای پیام اضافه می‌شوند."
+        hint="هشتگ‌ها و منشن‌ها در انتهای پیام اضافه می‌شوند؛ لینک‌ها در جای خود می‌مانند."
       >
         <Textarea
           id="publish-text"
@@ -134,6 +138,19 @@ function TelegramMessageEditor({
           emptyLabel="منشنی اضافه نشده است."
           removeLabel={(v) => `حذف @${v.replace(/^@/, "")}`}
           onChange={(next) => onChange((s) => setMentions(s, next))}
+        />
+      </Field>
+
+      <Field
+        label="لینک‌ها"
+        error={errors?.links}
+        hint="لینک‌های پیام با متن پیوند و نشانی‌شان اینجا فهرست شده‌اند. لینکی که خودتان اضافه کنید به انتهای پیام می‌رود."
+      >
+        <LinkList
+          links={state.links}
+          onAdd={(link) => onChange((s) => addLink(s, link))}
+          onEdit={(id, patch) => onChange((s) => editLink(s, id, patch))}
+          onDelete={(id) => onChange((s) => deleteLink(s, id))}
         />
       </Field>
 
@@ -263,6 +280,7 @@ function WordPressArticleEditor({
         htmlFor="publish-content"
         required
         error={errors?.content}
+        hint="هر لینکِ این فهرست در متن مقاله به همان نشانی پیوند می‌خورد."
       >
         <Textarea
           id="publish-content"
@@ -274,6 +292,19 @@ function WordPressArticleEditor({
           onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
             onChange((s) => setWordPressContent(s, e.target.value))
           }
+        />
+      </Field>
+
+      <Field
+        label="لینک‌ها"
+        error={errors?.links}
+        hint="همان فهرست لینک‌های پیام است: لینکی که اینجا اضافه کنید به انتهای مقاله هم می‌رود."
+      >
+        <LinkList
+          links={state.links}
+          onAdd={(link) => onChange((s) => addLink(s, link))}
+          onEdit={(id, patch) => onChange((s) => editLink(s, id, patch))}
+          onDelete={(id) => onChange((s) => deleteLink(s, id))}
         />
       </Field>
 

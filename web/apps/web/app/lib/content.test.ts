@@ -142,3 +142,52 @@ test("editing the text and recomposing never duplicates tokens", () => {
   const again = compose(second.main, second.hashtags, second.mentions, second.entities)
   assert.equal(again.text, edited.text)
 })
+
+// ---------------------------------------------------------------------------
+// Links
+// ---------------------------------------------------------------------------
+
+// A link is the one token that carries a target. Its anchor text is ordinary
+// text that stays in the body where the message put it — lifting it out would
+// pull "read more" to the end of the sentence it belongs to.
+test("parse reports a text_link with its anchor text and target", () => {
+  const text = "read our report"
+  const links = parse(text, [{ type: "text_url", offset: 9, length: 6, url: "https://r.example.com" }]).links
+  assert.equal(links.length, 1)
+  assert.equal(links[0].anchorText, "report")
+  assert.equal(links[0].url, "https://r.example.com")
+})
+
+test("parse reports a bare url as a link whose anchor text is the url", () => {
+  const text = "see https://example.com/x now"
+  const bare = "https://example.com/x"
+  const links = parse(text, [{ type: "url", offset: text.indexOf(bare), length: bare.length }]).links
+  assert.equal(links.length, 1)
+  assert.equal(links[0].anchorText, "https://example.com/x")
+  assert.equal(links[0].url, "https://example.com/x")
+})
+
+test("a link's anchor text stays in the body", () => {
+  const text = "read our report"
+  const out = parse(text, [{ type: "text_url", offset: 9, length: 6, url: "https://r.example.com" }])
+  assert.equal(out.main, "read our report")
+  assert.equal(out.links.length, 1)
+})
+
+test("parse finds a bare url in a message that carries no entities", () => {
+  const links = parse("go to https://example.com/a and see").links
+  assert.equal(links.length, 1)
+  assert.equal(links[0].url, "https://example.com/a")
+})
+
+test("parse keeps every link of a message in reading order", () => {
+  const text = "a b c"
+  const links = parse(text, [
+    { type: "text_url", offset: 0, length: 1, url: "https://one.example.com" },
+    { type: "text_url", offset: 4, length: 1, url: "https://two.example.com" },
+  ]).links
+  assert.deepEqual(
+    links.map((l) => l.url),
+    ["https://one.example.com", "https://two.example.com"],
+  )
+})

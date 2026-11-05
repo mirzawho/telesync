@@ -10,6 +10,17 @@ import type { Entity } from "@/lib/types"
 // and is re-exported here because the composing code is what consumes it.
 export type { Entity }
 
+/**
+ * ParsedLink is one link of a message: the text it is drawn on, and its target.
+ *
+ * A bare URL is a link whose anchor text is the URL itself, so both shapes of
+ * Telegram's link entities — `url` and `text_url` — are one thing here.
+ */
+export interface ParsedLink {
+  anchorText: string
+  url: string
+}
+
 export interface ParsedContent {
   /** The whole source text, untouched. */
   original: string
@@ -19,6 +30,15 @@ export interface ParsedContent {
   hashtags: string[]
   /** Mentions with their leading '@'. */
   mentions: string[]
+  /**
+   * The message's links, in the order they appear.
+   *
+   * Unlike a hashtag or a mention a link is **not** lifted out of the body: its
+   * anchor text is a word of the sentence it belongs to, and pulling it out
+   * would leave "read our" behind. The text stays where it is and this list
+   * carries the target the text cannot say.
+   */
+  links: ParsedLink[]
   /** Formatting spans kept after extraction, remapped onto main. */
   entities: Entity[]
 }
@@ -31,6 +51,9 @@ export interface ComposedContent {
 }
 
 const HASHTAG_RE = /(?:^|[^\p{L}\p{N}_#])((?:#)[\p{L}\p{N}_]+)/gu
+// LINK_RE is the text's own evidence of a link. It is the same pattern
+// lexEntities uses, so the two never disagree about where one ends.
+const LINK_RE = /https?:\/\/[^\s>]+/gi
 const MENTION_RE = /(?:^|[^\p{L}\p{N}_@])((?:@)[\p{L}\p{N}_]+)/gu
 
 function isInsideURL(text: string, index: number): boolean {
@@ -86,6 +109,23 @@ export function parse(text: string, entities: Entity[] = []): ParsedContent {
     }
   }
 
+  // The links are read but never removed from the text, so their spans are
+  // collected separately from the tokens above.
+  const linkSpans: { start: number; end: number; url: string }[] = []
+  const hasLinkEntities = entities.some((e) => e.type === "url" || e.type === "text_url")
+  if (hasLinkEntities) {
+    for (const e of entities) {
+      if (e.type !== "url" && e.type !== "text_url") continue
+      const raw = text.slice(e.offset, e.offset + e.length)
+      if (!raw) continue
+      linkSpans.push({ start: e.offset, end: e.offset + e.length, url: e.url ?? raw })
+    }
+  } else {
+    for (const m of text.matchAll(LINK_RE)) {
+      linkSpans.push({ start: m.index!, end: m.index! + m[0].length, url: m[0] })
+    }
+  }
+
   tokens.sort((a, b) => a.start - b.start)
 
   // Remove the tokens from the text, keeping the rest exactly as it was, and
@@ -124,6 +164,9 @@ export function parse(text: string, entities: Entity[] = []): ParsedContent {
     main,
     hashtags: tokens.filter((t) => t.kind === "hashtag").map((t) => t.value),
     mentions: tokens.filter((t) => t.kind === "mention").map((t) => t.value),
+    links: linkSpans
+      .sort((a, b) => a.start - b.start)
+      .map((l) => ({ anchorText: text.slice(l.start, l.end), url: l.url })),
     entities: kept,
   }
 }

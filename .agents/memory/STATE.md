@@ -517,3 +517,38 @@ WordPress behaviour, unchanged by this work.
 taken username, a refused URL — was computed, passed to `FieldError`, and
 dropped on the floor. Every form in the panel already gates `FieldError` on its
 own error, so this only makes intended messages visible.
+
+## Links in the publishing dialog (2026-11-05)
+
+The Telegram editor has three managed fields now: hashtags, mentions and
+**links**. A link keeps its anchor text **in the body** where the message put
+it — it is not lifted out like a hashtag, because the anchor text is a word of
+the sentence. Only a link the user adds is appended, on its own line.
+
+`lib/content.ts` `parse` reports `ParsedLink { anchorText, url }` from `url` and
+`text_url` entities (or, with no entities, from the text's own URLs) without
+removing them from `main`. `lib/publish-draft.ts` holds `LinkItem`, `locateLinks`
+(matches anchors in listed order, so duplicate anchor texts are never confused),
+`addLink`/`editLink`/`deleteLink`, and a `setTelegramText` that reconciles the
+list with the body. `link-list.tsx` is the field's UI; rows commit on blur.
+
+Outgoing entities come from the list: `url` when the anchor text is the URL,
+`text_url` carrying `url` otherwise, and the source's spans and the lexer both
+stand down over those spans. **No backend change was needed** — `rpc.Entity.URL`
+and `inputEntity`'s `text_url` case already carry the target to Telegram.
+
+The list is **shared by both platforms** and lives on `PublishDraftState.links`,
+not on the Telegram draft: a link is a link of the message, and the post and the
+article are two ways of sending it. Both bodies keep the anchor text;
+`addLink`/`editLink`/`deleteLink` rewrite both, and `reconcileLinks` drops a link
+only when **neither** body shows its words any more. `composeWordPressContent`
+wraps each anchor in `<a href>` at request time and leaves the rest of the body
+byte-for-byte as written, escaping only the link's own values. `LinkList` is
+offered in both editors.
+
+VERIFIED: `npm test` 311 green (content 26, media 19, panel 109, publish 108,
+administrators 49), `npm run typecheck` clean. NOT verified: in a browser (the
+preview tool cannot start the panel — `.claude/launch.json`'s `panel` entry has
+a `url` with a path, and this sandbox cannot bind a port), and a live send with
+links. Out of scope: links in the WordPress article body, which is HTML the user
+writes separately.
