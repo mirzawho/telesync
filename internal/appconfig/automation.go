@@ -88,13 +88,18 @@ type WebhookConfig struct {
 type AIConfig struct {
 	Enabled bool
 	BaseURL string
-	// APIKeyEnv names the variable holding the key, following the same rule as
-	// a client's app_hash_env: the file names the variable, never the secret.
+	// APIKeyEnv names the variable holding the key. Exactly one of it and a
+	// literal api_key is set, the same rule api.jwt.secret,
+	// api.wordpress.encryption_key and a client's app_hash follow.
 	APIKeyEnv string
 	// APIKey is the resolved key. Never printed, never marshalled.
-	APIKey  string `json:"-"`
-	Model   string
-	Timeout time.Duration
+	APIKey string `json:"-"`
+	// APIKeyInFile is true when the key came from automation.ai.api_key rather
+	// than from a variable, so a diagnostic can say where it came from without
+	// ever saying what it is.
+	APIKeyInFile bool
+	Model        string
+	Timeout      time.Duration
 	// MaxOutputTokens and MaxInputChars bound one request.
 	MaxOutputTokens int
 	MaxInputChars   int
@@ -137,17 +142,17 @@ type rawWebhooks struct {
 }
 
 type rawAI struct {
-	Enabled               bool   `json:"enabled"`
-	BaseURL               string `json:"base_url"`
-	APIKeyEnv             string `json:"api_key_env"`
-	APIKey                string `json:"api_key"`
-	Model                 string `json:"model"`
-	Timeout               string `json:"timeout"`
-	MaxOutputTokens       *int   `json:"max_output_tokens"`
-	MaxInputChars         *int   `json:"max_input_chars"`
-	MaxConcurrentRequests *int   `json:"max_concurrent_requests"`
-	MaxImages             *int   `json:"max_images"`
-	MaxImageBytes         *int64 `json:"max_image_bytes"`
+	Enabled               bool    `json:"enabled"`
+	BaseURL               string  `json:"base_url"`
+	APIKeyEnv             string  `json:"api_key_env"`
+	APIKey                *string `json:"api_key"`
+	Model                 string  `json:"model"`
+	Timeout               string  `json:"timeout"`
+	MaxOutputTokens       *int    `json:"max_output_tokens"`
+	MaxInputChars         *int    `json:"max_input_chars"`
+	MaxConcurrentRequests *int    `json:"max_concurrent_requests"`
+	MaxImages             *int    `json:"max_images"`
+	MaxImageBytes         *int64  `json:"max_image_bytes"`
 }
 
 // resolve fills in defaults and reports every problem it finds, so one run of
@@ -237,14 +242,23 @@ func (raw rawAutomation) resolve(base AutomationConfig, lookup func(string) stri
 		out.AI.MaxImageBytes = *raw.AI.MaxImageBytes
 	}
 
-	// A key named in the file is an operator's own choice, but it is still
-	// refused: the file is configuration, not a credential store, and the
-	// error never echoes the value back.
-	if strings.TrimSpace(raw.AI.APIKey) != "" {
-		fail("automation.ai.api_key must not hold a secret; use automation.ai.api_key_env to name a variable")
-	}
+	// Exactly one key source: a literal api_key, or the name of the variable
+	// holding it. Both is ambiguous, neither is unusable — the same rule
+	// api.jwt.secret, api.wordpress.encryption_key and a client's app_hash
+	// follow. Whichever it came from, the resolved value is never printed and
+	// never marshalled.
 	out.AI.APIKeyEnv = strings.TrimSpace(raw.AI.APIKeyEnv)
-	if out.AI.APIKeyEnv != "" {
+	literalKey := ""
+	if raw.AI.APIKey != nil {
+		literalKey = strings.TrimSpace(*raw.AI.APIKey)
+	}
+	switch {
+	case literalKey != "" && out.AI.APIKeyEnv != "":
+		fail("automation.ai: set either api_key or api_key_env, not both")
+	case literalKey != "":
+		out.AI.APIKey = literalKey
+		out.AI.APIKeyInFile = true
+	case out.AI.APIKeyEnv != "":
 		out.AI.APIKey = strings.TrimSpace(lookup(out.AI.APIKeyEnv))
 	}
 
@@ -255,11 +269,12 @@ func (raw rawAutomation) resolve(base AutomationConfig, lookup func(string) stri
 		if out.AI.Model == "" {
 			fail("automation.ai.model is required when automation.ai.enabled is true")
 		}
-		switch {
-		case out.AI.APIKeyEnv == "":
-			fail("automation.ai.api_key_env is required when automation.ai.enabled is true")
-		case out.AI.APIKey == "":
-			fail("automation.ai.api_key_env names %s, which is not set", out.AI.APIKeyEnv)
+		if out.AI.APIKey == "" {
+			if out.AI.APIKeyEnv != "" {
+				fail("automation.ai.api_key_env names %s, which is not set", out.AI.APIKeyEnv)
+			} else {
+				fail("automation.ai: api_key (a literal key) or api_key_env (the name of the variable holding it) is required when automation.ai.enabled is true")
+			}
 		}
 	}
 	return out, problems

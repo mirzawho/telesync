@@ -21,6 +21,7 @@ import (
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/automation/webhooks"
 	"github.com/mirza/telesync/internal/channelstore"
+	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/secrets"
 )
 
@@ -937,10 +938,14 @@ func TestRetryDeliveryReusesTheRowAndReschedulesIt(t *testing.T) {
 	}
 }
 
-func TestServiceRefusesToCreateOrEnableAWebhookWithoutAPublicBaseURL(t *testing.T) {
+// An origin is optional. Without one the payload names the media path rather
+// than an absolute address, and the receiver prefixes whatever origin it knows
+// this installation by. Refusing the webhook instead would stop someone using
+// everything else it does over one link they were perfectly happy to build.
+func TestAnOriginlessDeploymentStillCreatesAndSendsAWebhook(t *testing.T) {
 	store := newFakeStore()
 	svc, err := webhooks.New(webhooks.Config{
-		// No public base URL: receivers could not open the media links.
+		// No public base URL at all.
 		BasePath:  "/admin",
 		Webhooks:  appconfig.WebhookConfig{Timeout: time.Second, MaxAttempts: 5, MaxResponseBytes: 1024, MaxConcurrentDeliveries: 1},
 		Store:     store,
@@ -950,49 +955,49 @@ func TestServiceRefusesToCreateOrEnableAWebhookWithoutAPublicBaseURL(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.CreateWebhook(context.Background(), automation.WebhookInput{
+
+	created, err := svc.CreateWebhook(context.Background(), automation.WebhookInput{
 		Name: "feed", Enabled: true, URL: "https://receiver.example.com/hook",
 		Method: "POST", AuthMode: webhooks.AuthNone, CreatedBy: 1,
 	})
-	if !errors.Is(err, automation.ErrBaseURL) {
-		t.Fatalf("err = %v, want automation.ErrBaseURL", err)
+	if err != nil {
+		t.Fatalf("CreateWebhook with no origin: %v", err)
 	}
-	if !strings.Contains(err.Error(), "api.public_base_url") {
-		t.Fatalf("err = %q, want it to name api.public_base_url", err)
+	if !created.Enabled {
+		t.Fatal("the webhook was stored disabled although it was asked for enabled")
 	}
-	// Creation is refused whatever the enabled flag says: there would be no
-	// honest media address to put in any payload this webhook sends.
-	if _, err := svc.CreateWebhook(context.Background(), automation.WebhookInput{
-		Name: "feed", Enabled: false, URL: "https://receiver.example.com/hook",
+	if _, _, err := svc.UpdateWebhook(context.Background(), created.ID, automation.WebhookInput{
+		Name: "feed", Enabled: true, URL: "https://receiver.example.com/hook",
 		Method: "POST", AuthMode: webhooks.AuthNone, CreatedBy: 1,
-	}); !errors.Is(err, automation.ErrBaseURL) {
-		t.Fatalf("disabled create err = %v, want automation.ErrBaseURL", err)
+	}); err != nil {
+		t.Fatalf("enabling with no origin: %v", err)
 	}
 
-	// Once one exists, enabling it without an origin is refused the same way.
-	ready, err := webhooks.New(webhooks.Config{
-		PublicBaseURL: "https://telesync.example.com",
-		BasePath:      "/admin",
-		Webhooks:      appconfig.WebhookConfig{Timeout: time.Second, MaxAttempts: 5, MaxResponseBytes: 1024, MaxConcurrentDeliveries: 1},
-		Store:         store,
-		Secrets:       testOpener(t),
-		Transport:     &scriptedTransport{},
-	})
+	// The payload names the path and invents no address.
+	media := &rpc.Media{ID: "1:91", Type: "photo", Size: 4}
+	env, err := webhooks.NewBuilder("", "/admin").Build(messageEvent(media))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Build with no origin: %v", err)
 	}
-	disabled, err := ready.CreateWebhook(context.Background(), automation.WebhookInput{
-		Name: "feed", Enabled: false, URL: "https://receiver.example.com/hook",
-		Method: "POST", AuthMode: webhooks.AuthNone, CreatedBy: 1,
-	})
+	wantPath := "/admin/api/v1/telegram/client-a/channels/-1001234/messages/91/media"
+	if env.Data.Message.Media == nil || env.Data.Message.Media.Path != wantPath {
+		t.Fatalf("path = %+v, want %q", env.Data.Message.Media, wantPath)
+	}
+	if env.Data.Message.Media.URL != "" {
+		t.Fatalf("url = %q, want none invented", env.Data.Message.Media.URL)
+	}
+
+	// Naming an origin adds the absolute address alongside the same path.
+	full, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(media))
 	if err != nil {
-		t.Fatalf("CreateWebhook: %v", err)
+		t.Fatalf("Build with an origin: %v", err)
 	}
-	if _, _, err := svc.UpdateWebhook(context.Background(), disabled.ID, automation.WebhookInput{
-		Name: "feed", Enabled: true, URL: "https://receiver.example.com/hook",
-		Method: "POST", AuthMode: webhooks.AuthNone, CreatedBy: 1,
-	}); !errors.Is(err, automation.ErrBaseURL) {
-		t.Fatalf("enabling err = %v, want automation.ErrBaseURL", err)
+	wantURL := "https://telesync.example.com" + wantPath
+	if full.Data.Message.Media.URL != wantURL {
+		t.Fatalf("url = %q, want %q", full.Data.Message.Media.URL, wantURL)
+	}
+	if full.Data.Message.Media.Path != wantPath {
+		t.Fatalf("path = %q, want %q", full.Data.Message.Media.Path, wantPath)
 	}
 }
 

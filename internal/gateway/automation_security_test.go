@@ -245,54 +245,48 @@ func TestAutomationRefusesAReservedAuthenticationHeader(t *testing.T) {
 
 // TestAutomationNeedsAPublicBaseURL is the rule that keeps a payload honest: no
 // origin, no webhook that would have to send a link nobody can open.
-func TestAutomationNeedsAPublicBaseURL(t *testing.T) {
+// api.public_base_url is optional. Without it a webhook is still created and
+// enabled — its payloads carry the media path instead of an absolute address,
+// and a receiver builds the address from the origin it already knows. Refusing
+// the webhook would stop someone using everything else it does over one link
+// they were happy to construct themselves.
+func TestAutomationWorksWithoutAPublicBaseURL(t *testing.T) {
 	e := newAutoEnv(t)
 	source := e.channelWithID(t, 1001)
 	e.grantChannelView(t, e.defaults, source)
 
-	// A webhook is made while the deployment still names an origin, then the
-	// origin is taken away — the deployment is rewired exactly as it would be
-	// after the setting is cleared.
+	// Take the origin away before anything exists, exactly as a deployment that
+	// never set one is configured.
+	e.publicBaseURL = ""
+	e.rewire(t)
+
 	rec := e.call(t, defaultCaller, http.MethodPost, autoAPI+"/webhooks", autoJSON(t, map[string]any{
 		"name": "Originless", "url": autoWebhookURL, "method": "POST",
-		"auth_mode": "none", "enabled": false, "source_channel_ids": []int64{source},
+		"auth_mode": "none", "enabled": true, "source_channel_ids": []int64{source},
 	}))
 	autoCreated(t, rec)
 	var created autoWebhookBody
 	autoDecode(t, rec, &created)
-	id := created.Webhook.ID
-
-	e.publicBaseURL = ""
-	e.rewire(t)
-	at := autoAPI + "/webhooks/" + strconv.FormatInt(id, 10)
-
-	// Enabling it is refused, with the code that names the setting.
-	rec = e.call(t, defaultCaller, http.MethodPatch, at, autoJSON(t, map[string]any{"enabled": true}))
-	autoFail(t, rec, http.StatusBadRequest, gateway.CodeAutomationBaseURLRequired)
-
-	// And a brand new one is refused outright, enabled or not: every payload it
-	// would send needs an address a receiver can open.
-	for _, enabled := range []bool{true, false} {
-		rec = e.call(t, defaultCaller, http.MethodPost, autoAPI+"/webhooks", autoJSON(t, map[string]any{
-			"name": "No origin", "url": autoWebhookURL, "method": "POST",
-			"auth_mode": "none", "enabled": enabled, "source_channel_ids": []int64{source},
-		}))
-		autoFail(t, rec, http.StatusBadRequest, gateway.CodeAutomationBaseURLRequired)
+	if !created.Webhook.Enabled {
+		t.Error("a webhook asked for enabled was stored disabled without an origin")
 	}
+	at := autoAPI + "/webhooks/" + strconv.FormatInt(created.Webhook.ID, 10)
 
-	// The one that already exists is untouched and still readable.
+	// Turning it off and on again is allowed too.
+	rec = e.call(t, defaultCaller, http.MethodPatch, at, autoJSON(t, map[string]any{"enabled": false}))
+	autoOK(t, rec)
+	rec = e.call(t, defaultCaller, http.MethodPatch, at, autoJSON(t, map[string]any{"enabled": true}))
+	autoOK(t, rec)
+
 	rec = e.call(t, defaultCaller, http.MethodGet, at, "")
 	autoOK(t, rec)
 	var one autoWebhookBody
 	autoDecode(t, rec, &one)
-	if one.Webhook.Enabled {
-		t.Error("a refused enable left the webhook enabled")
+	if !one.Webhook.Enabled {
+		t.Error("the enable did not survive a reload")
 	}
 }
 
-// TestAutomationRefusesASecondWorkflowForOneChannel: the schema allows one
-// workflow per source channel and the API says so with a conflict rather than a
-// database error.
 func TestAutomationRefusesASecondWorkflowForOneChannel(t *testing.T) {
 	e := newAutoEnv(t)
 	source := e.channelWithID(t, 1001)

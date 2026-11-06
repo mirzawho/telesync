@@ -101,13 +101,12 @@ func (s *Service) GetWebhook(ctx context.Context, id int64) (automation.Webhook,
 // CreateWebhook stores one webhook and its source channels.
 //
 // in.Secret is write-only: the plaintext is sealed here and never kept. A
-// deployment that has not named api.public_base_url gets no webhook at all,
-// enabled or not, because every payload this webhook would send needs an
-// address a receiver can open.
+// deployment that has not named api.public_base_url is not refused: the payload
+// then carries the media path rather than an absolute address, and the receiver
+// prefixes the origin it already knows. Refusing the webhook instead would stop
+// someone using it for everything else it does over one link they were happy to
+// build themselves.
 func (s *Service) CreateWebhook(ctx context.Context, in automation.WebhookInput) (automation.Webhook, error) {
-	if err := s.requireBaseURL(); err != nil {
-		return automation.Webhook{}, err
-	}
 	box, err := s.seal(in)
 	if err != nil {
 		return automation.Webhook{}, err
@@ -135,11 +134,6 @@ func (s *Service) UpdateWebhook(ctx context.Context, id int64, in automation.Web
 		return automation.Webhook{}, false, err
 	}
 	rec.ID = id
-	if rec.Enabled {
-		if err := s.requireBaseURL(); err != nil {
-			return automation.Webhook{}, false, err
-		}
-	}
 	existing, found, err := s.store.GetWebhook(ctx, id)
 	if err != nil {
 		return automation.Webhook{}, false, err
@@ -393,16 +387,6 @@ func testDelivery(wh automation.Webhook, att automation.WebhookAttempt, status s
 			BodyTruncated: att.RequestBodyTruncated,
 		},
 	}
-}
-
-// requireBaseURL refuses configuration that would produce a payload naming an
-// address nobody can open.
-func (s *Service) requireBaseURL() error {
-	if strings.TrimSpace(s.cfg.PublicBaseURL) == "" {
-		return fmt.Errorf("%w: set api.public_base_url before creating or enabling a webhook, so receivers can open the media links its payloads carry",
-			automation.ErrBaseURL)
-	}
-	return nil
 }
 
 // seal turns a write-only plaintext secret into the sealed box the store keeps.

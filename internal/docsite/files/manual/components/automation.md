@@ -111,14 +111,21 @@ A webhook never uploads attachments, never base64-encodes them, never sends
 multipart and never embeds binary in the JSON. The payload carries the media's
 type, filename, MIME type, size and a URL to the existing media endpoint.
 
-That URL is absolute and is built from the configured public origin
-(`api.public_base_url`), the path the panel and its API are mounted under, the
-API's own namespace, and the media endpoint the channel messages API already
-reports. With the panel mounted at `/admin` and the origin
-`https://telesync.example`, a message in channel `123456789` is linked as
+The address comes in two fields. `path` is always present and is the media
+endpoint's path from the root: the panel's mount, the API's own namespace, and
+the endpoint the channel messages API already reports. With the panel mounted
+at `/admin`, a message in channel `123456789` is linked as
+`/admin/api/v1/telegram/official/channels/123456789/messages/36/media`.
+
+`url` is that same address made absolute, and it appears **only** when
+`api.public_base_url` names the origin: with it set to `https://telesync.example`
+the link becomes
 `https://telesync.example/admin/api/v1/telegram/official/channels/123456789/messages/36/media`.
-If no origin is configured the API refuses to create or enable a webhook rather
-than send a link that could not be opened.
+The setting is optional — without it the API still creates and enables a
+webhook, and the payload simply carries `path` so a receiver can prefix the
+origin it already knows. An address is never invented: a payload either names a
+real absolute URL or gives the path to build one, never something that looks
+absolute and cannot be opened.
 
 The media endpoint is **authenticated**. A webhook secret is not an API access
 token and the two are deliberately separate: the receiver needs a Telesync API

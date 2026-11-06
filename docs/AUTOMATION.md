@@ -161,8 +161,15 @@ event `id` is stable and derived, so a receiver can use it as an idempotency
 key.
 
 **Media is a link, never a file.** No uploads, no base64, no multipart, no
-binary in the JSON. The payload carries type, filename, MIME type, size and a
-URL to the existing media endpoint, resolved against `api.public_base_url`.
+binary in the JSON. The payload carries type, filename, MIME type, size and an
+address for the existing media endpoint.
+
+The address comes in two forms. `path` is always present and is the endpoint's
+path from the root, for example `/admin/api/v1/telegram/…/media` — prefix the
+origin you already know this installation by. `url` is the same address made
+absolute, and appears **only** when `api.public_base_url` is set. It is never
+invented: a payload either names a real absolute address or gives you the path
+to build one, never something that looks absolute and cannot be opened.
 
 That endpoint is authenticated. A webhook secret is not an API credential and
 the two are kept separate on purpose: a receiver that needs the attachment must
@@ -228,8 +235,20 @@ run is then `published_with_fallback` rather than a success.
 Images are excluded from AI input by default. That is independent of publishing:
 an image kept away from the model still reaches the destination.
 
-Configuration is server-side under `automation.ai`, with the key named by
-`automation.ai.api_key_env` in the environment. There is no key management UI.
+Configuration is server-side under `automation.ai`. The key has two homes and
+exactly one may be used — the same rule `api.jwt.secret`,
+`api.wordpress.encryption_key` and a client's `app_hash` follow:
+
+| Field | What it holds |
+| --- | --- |
+| `api_key_env` | the **name** of an environment variable holding the key |
+| `api_key` | the key itself, in the configuration file |
+
+The variable is the better habit: the file is often committed or copied. The
+literal is there because sometimes the file is the only place an operator has.
+Whichever is used, the resolved key is never printed, never logged and never
+marshalled back out, and no refusal ever echoes it. Setting both is refused as
+ambiguous. There is no key management UI.
 
 ## When something is wrong
 
@@ -240,7 +259,7 @@ Configuration is server-side under `automation.ai`, with the key named by
 | A delivery keeps failing | its attempt history: the real request, the real response, the real status |
 | A workflow published to some destinations only | the run is `partially_published` and the per-destination records say which |
 | A workflow says `workflow_author_missing` | it was created without an owning account and cannot publish |
-| A webhook cannot be enabled | `api.public_base_url` is not set, so receivers could not open the media links |
+| Media links reach a receiver as a bare path | `api.public_base_url` is not set, so the payload carries `path` rather than an absolute `url` |
 | Media links 404 for a receiver | the receiver needs a Telesync API credential; the webhook secret is not one |
 | Messages are missing after a restart | the queue's high-water mark and the gap record; recovery is bounded, not unlimited |
 

@@ -79,6 +79,13 @@ type Media struct {
 	MimeType string `json:"mime_type,omitempty"`
 	Size     int64  `json:"size,omitempty"`
 	URL      string `json:"url,omitempty"`
+	// Path is where the media endpoint lives on this installation, from its
+	// root: "/admin/api/v1/telegram/…/media". It is always present whenever the
+	// bytes are fetchable at all, so a receiver can build its own address by
+	// prefixing the origin it already knows. URL is only present when the
+	// deployment named one in api.public_base_url — an address is never
+	// invented, and never left looking absolute when it is not.
+	Path string `json:"path,omitempty"`
 }
 
 // Builder turns one stored message event into the envelope a webhook receives.
@@ -140,8 +147,9 @@ func (b *Builder) Build(event automation.MessageEvent) (Envelope, error) {
 	return env, nil
 }
 
-// mediaOf renders one attachment's metadata, with an absolute URL only when the
-// media endpoint can actually serve it.
+// mediaOf renders one attachment's metadata. The path is always there whenever
+// the bytes are fetchable; the absolute URL is added only when the deployment
+// named an origin to build it from.
 func (b *Builder) mediaOf(event automation.MessageEvent) (*Media, error) {
 	src := event.Payload.Message.Media
 	if src == nil {
@@ -155,10 +163,19 @@ func (b *Builder) mediaOf(event automation.MessageEvent) (*Media, error) {
 		MimeType: src.MimeType,
 		Size:     src.Size,
 	}
-	// Only an attachment whose bytes the media route can fetch gets a URL. This
-	// is the same test the channel messages API applies, so the two agree about
-	// what is downloadable.
+	// Only an attachment whose bytes the media route can fetch gets an address.
+	// This is the same test the channel messages API applies, so the two agree
+	// about what is downloadable.
 	if !mediaHasBytes(src.Type) || strings.TrimSpace(event.Payload.MediaURLPath) == "" {
+		return out, nil
+	}
+	out.Path = automation.APIMount(b.basePath) + event.Payload.MediaURLPath
+
+	// With no origin named there is no honest absolute address to send, so none
+	// is invented: the receiver gets the path and prefixes whatever origin it
+	// already knows this installation by. Naming one that is malformed is still
+	// an error — that is a configuration mistake, not an absence.
+	if strings.TrimSpace(b.publicBaseURL) == "" {
 		return out, nil
 	}
 	absolute, err := MediaURL(b.publicBaseURL, b.basePath, event.Payload.MediaURLPath)

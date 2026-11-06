@@ -1019,7 +1019,8 @@ const errorExplanations: Record<string, string> = {
     "مجوز دسترسی به کانال مبدأ را ندارید.",
   automation_destination_forbidden:
     "مجوز انتشار در یکی از مقاصد انتخاب‌شده را ندارید.",
-  automation_unavailable: "سرویس اتوماسیون در دسترس نیست.",
+  automation_unavailable:
+    "اتوماسیون در پیکربندی این سرویس روشن نیست. در فایل پیکربندی «automation.enabled» را true کنید و سرویس را دوباره راه بیندازید.",
   not_found: "موردی با این شناسه پیدا نشد.",
   forbidden: "شما مجوز این عمل را ندارید.",
   method_not_allowed: "این عملیات روی این رکورد مجاز نیست.",

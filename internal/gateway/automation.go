@@ -289,7 +289,8 @@ func (s *Server) methodNotAllowed(w http.ResponseWriter, allow, requestID string
 
 func (s *Server) automationUnavailable(w http.ResponseWriter, requestID string) {
 	s.fail(w, http.StatusServiceUnavailable, CodeAutomationUnavailable,
-		"The automation subsystem is not configured for this deployment.", requestID)
+		"The automation subsystem is switched off. Set \"automation\": {\"enabled\": true} "+
+			"in the configuration file and restart the daemon.", requestID)
 }
 
 // --- webhooks ---
@@ -498,12 +499,6 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request, requestID
 	if !s.webhookSourcesAllowed(w, r, requestID, in.SourceChannelIDs) {
 		return
 	}
-	if s.cfg.PublicBaseURL == "" && in.Enabled {
-		s.fail(w, http.StatusBadRequest, CodeAutomationBaseURLRequired,
-			"api.public_base_url must name the externally reachable origin before a webhook can be enabled, "+
-				"because receivers need an absolute media URL.", requestID)
-		return
-	}
 	hook, err := s.cfg.AutomationWebhooks.CreateWebhook(r.Context(), in)
 	if err != nil {
 		s.automationWriteError(w, "create_webhook", err, requestID)
@@ -546,13 +541,6 @@ func (s *Server) updateWebhook(w http.ResponseWriter, r *http.Request, requestID
 	}
 	in := webhookInputOf(req, seed)
 	if !s.webhookSourcesAllowed(w, r, requestID, in.SourceChannelIDs) {
-		return
-	}
-	enabling := in.Enabled && !existing.Enabled
-	if s.cfg.PublicBaseURL == "" && enabling {
-		s.fail(w, http.StatusBadRequest, CodeAutomationBaseURLRequired,
-			"api.public_base_url must name the externally reachable origin before a webhook can be enabled, "+
-				"because receivers need an absolute media URL.", requestID)
 		return
 	}
 	hook, found, err := s.cfg.AutomationWebhooks.UpdateWebhook(r.Context(), id, in)
