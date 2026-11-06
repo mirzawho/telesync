@@ -252,9 +252,15 @@ func (raw rawAutomation) resolve(base AutomationConfig, lookup func(string) stri
 	if raw.AI.APIKey != nil {
 		literalKey = strings.TrimSpace(*raw.AI.APIKey)
 	}
+	// Both sources at once is a refusal and the only thing worth saying about
+	// the key: complaining on top of it that the named variable happens to be
+	// unset would send someone looking for the wrong problem, when the fix is
+	// simply to delete one of the two lines.
+	keyAmbiguous := false
 	switch {
 	case literalKey != "" && out.AI.APIKeyEnv != "":
 		fail("automation.ai: set either api_key or api_key_env, not both")
+		keyAmbiguous = true
 	case literalKey != "":
 		out.AI.APIKey = literalKey
 		out.AI.APIKeyInFile = true
@@ -269,7 +275,7 @@ func (raw rawAutomation) resolve(base AutomationConfig, lookup func(string) stri
 		if out.AI.Model == "" {
 			fail("automation.ai.model is required when automation.ai.enabled is true")
 		}
-		if out.AI.APIKey == "" {
+		if out.AI.APIKey == "" && !keyAmbiguous {
 			if out.AI.APIKeyEnv != "" {
 				fail("automation.ai.api_key_env names %s, which is not set", out.AI.APIKeyEnv)
 			} else {

@@ -183,3 +183,25 @@ func TestAnAIKeyIsNeverMarshalledWithTheConfiguration(t *testing.T) {
 		t.Fatalf("the key was marshalled: %s", out)
 	}
 }
+
+// An ambiguous key is the only thing worth reporting about the key. Adding
+// "and that variable is not set" on top of it sends someone looking for the
+// wrong problem when the fix is to delete one of the two lines.
+func TestAnAmbiguousAIKeyDoesNotAlsoComplainThatTheVariableIsUnset(t *testing.T) {
+	path := aiConfig(t, `{"enabled": true, "ai": `+ai(`"api_key": "literal-key"`, `"api_key_env": "NEVER_SET"`)+`}`, nil)
+	_, err := appconfig.Load(path, lookup)
+	if err == nil {
+		t.Fatal("both sources were accepted")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "not both") {
+		t.Fatalf("the ambiguity is not named: %v", err)
+	}
+	if strings.Contains(msg, "is not set") {
+		t.Fatalf("the refusal also blames the variable, which is not the problem: %v", err)
+	}
+	// And it is one complaint about the key, not two.
+	if strings.Count(msg, "api_key") < 2 {
+		t.Fatalf("the refusal does not name both sources: %v", err)
+	}
+}
