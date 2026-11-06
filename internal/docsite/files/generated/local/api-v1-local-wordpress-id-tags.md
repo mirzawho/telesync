@@ -7,20 +7,13 @@
 
 | Method | Path | Auth conditions | Success |
 | --- | --- | --- | --- |
-| GET | `/api/v1/local/wordpress/{id}/tags` | 2 | `200` |
+| GET | `/api/v1/local/wordpress/{id}/tags` | — | `200` |
 
 ## GET
 
 - **Handler:** `Server.wordPressTerms` (wordpress.go)
 - **Success:** `writeJSON` with `envelope{ Data: map[string]any{ "terms": terms, "page": map[string]any{ "page": result.Page, "per_page": result.PerPage, "total": result.Total, "total_pages": result.TotalPages, "has_more": result.Page < result.TotalPages, }, }, Meta: metaFor(requestID, s.cfg.Now()), }`, status `StatusOK (200)`
 - **Documentation:** [wordpress](../../manual/components/wordpress.md)
-
-### Authorization conditions in the source
-
-- `authr.Allowed(kind, action, localID)  (access.go:visible)`
-- `authr.CanList(kind)  (access.go:visible)`
-
-What these mean for who may call the route is in the authentication paragraph; the conditions are checked, not interpreted.
 
 ### Responses observed with an invalid probe value
 

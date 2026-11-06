@@ -129,10 +129,11 @@
     "a.auth.CanList(channelstore.KindCategory)  (auth.go:me)",
     "a.auth.CanList(channelstore.KindChannel)  (auth.go:me)",
     "a.auth.CanList(channelstore.KindUser)  (auth.go:me)",
+    "a.auth.Global(channelstore.PermissionAutomationView)  (auth.go:me)",
     "a.auth.Global(channelstore.PermissionContentPublish)  (auth.go:me)",
     "a.auth.Global(channelstore.PermissionServersView)  (auth.go:me)"
    ],
-   "credential_count": 5,
+   "credential_count": 6,
    "probe": [
     {
      "caller": "anonymous",
@@ -173,7 +174,8 @@
         "categories": true,
         "users": true,
         "servers": true,
-        "content": true
+        "content": true,
+        "automation": true
        }
       },
       "meta": {
@@ -216,7 +218,8 @@
         "categories": false,
         "users": false,
         "servers": false,
-        "content": false
+        "content": false,
+        "automation": false
        }
       },
       "meta": {
@@ -243,6 +246,7 @@
        "updated_at": "2026-10-25T10:00:00Z",
        "permissions": {
         "global": [
+         "automation.view",
          "categories.create",
          "categories.view",
          "channels.create",
@@ -251,8 +255,10 @@
          "servers.view",
          "users.manage",
          "users.view",
+         "webhooks.manage",
          "wordpress.create",
-         "wordpress.view"
+         "wordpress.view",
+         "workflows.manage"
         ],
         "channels": [],
         "categories": [],
@@ -263,7 +269,8 @@
         "categories": true,
         "users": true,
         "servers": true,
-        "content": true
+        "content": true,
+        "automation": true
        }
       },
       "meta": {
@@ -292,7 +299,8 @@
         "categories": true,
         "users": true,
         "servers": true,
-        "content": true
+        "content": true,
+        "automation": true
        }
       },
       "meta": {
@@ -319,7 +327,8 @@
         "categories": true,
         "users": true,
         "servers": true,
-        "content": true
+        "content": true,
+        "automation": true
        }
       },
       "meta": {
@@ -424,6 +433,1838 @@
      }
     }
    ]
+  },
+  {
+   "pattern": "/api/v1/local/automation",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/automation",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "status": {
+        "enabled": true,
+        "workers": 2,
+        "pending_jobs": 0,
+        "retry_backlog": 0,
+        "processing": 0,
+        "failed_recent": 0,
+        "recent_failures": []
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/automation",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/automation",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "status": {
+        "enabled": true,
+        "workers": 2,
+        "pending_jobs": 0,
+        "retry_backlog": 0,
+        "processing": 0,
+        "failed_recent": 0,
+        "recent_failures": []
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "status": {
+        "enabled": true,
+        "workers": 2,
+        "pending_jobs": 0,
+        "retry_backlog": 0,
+        "processing": 0,
+        "failed_recent": 0,
+        "recent_failures": []
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/status",
+   "method": "GET",
+   "handler": "automationStatus",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"status\": view}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/automation/status",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/status",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "status": {
+        "enabled": true,
+        "workers": 2,
+        "pending_jobs": 0,
+        "retry_backlog": 0,
+        "processing": 0,
+        "failed_recent": 0,
+        "recent_failures": []
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/automation/status",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/automation/status",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "status": {
+        "enabled": true,
+        "workers": 2,
+        "pending_jobs": 0,
+        "retry_backlog": 0,
+        "processing": 0,
+        "failed_recent": 0,
+        "recent_failures": []
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/status",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "status": {
+        "enabled": true,
+        "workers": 2,
+        "pending_jobs": 0,
+        "retry_backlog": 0,
+        "processing": 0,
+        "failed_recent": 0,
+        "recent_failures": []
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/webhooks",
+   "method": "GET",
+   "handler": "listWebhooks",
+   "file": "automation.go",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/automation/webhooks",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/webhooks",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "webhooks": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 0,
+       "total_pages": 0
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/automation/webhooks",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/automation/webhooks",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "webhooks": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 0,
+       "total_pages": 0
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/webhooks",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "webhooks": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 0,
+       "total_pages": 0
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/webhooks",
+   "method": "POST",
+   "handler": "createWebhook",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"webhook\": webhookViewOf(hook)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusCreated",
+   "status": 201,
+   "request_type": "webhookRequest",
+   "request_schema": "schemas/webhookrequest.json",
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionWebhooksManage)  (automation.go:createWebhook)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/local/automation/webhooks",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/automation/webhooks",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/local/automation/webhooks",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/local/automation/webhooks",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/automation/webhooks",
+     "status": 201,
+     "json": true,
+     "body": {
+      "data": {
+       "webhook": {
+        "id": 1,
+        "name": "Documented webhook",
+        "description": "Sends new messages to an external API",
+        "enabled": false,
+        "url": "https://example.com/telesync/incoming",
+        "method": "POST",
+        "auth_mode": "hmac",
+        "auth_header": "",
+        "has_secret": true,
+        "timeout_ms": 15000,
+        "max_attempts": 5,
+        "source_channel_ids": [
+         1
+        ],
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/webhooks/{id}",
+   "method": "DELETE",
+   "handler": "deleteWebhook",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"deleted\": true}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionWebhooksManage)  (automation.go:deleteWebhook)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "DELETE /api/v1/local/automation/webhooks/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/automation/webhooks/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "DELETE /api/v1/local/automation/webhooks/not-an-id",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "DELETE /api/v1/local/automation/webhooks/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/automation/webhooks/1",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "deleted": true
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/webhooks/{id}",
+   "method": "GET",
+   "handler": "getWebhook",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"webhook\": webhookViewOf(hook)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/automation/webhooks/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/webhooks/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/automation/webhooks/not-an-id",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/automation/webhooks/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/webhooks/1",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "webhook": {
+        "id": 1,
+        "name": "Documented webhook",
+        "description": "Sends new messages to an external API",
+        "enabled": false,
+        "url": "https://example.com/telesync/incoming",
+        "method": "POST",
+        "auth_mode": "hmac",
+        "auth_header": "",
+        "has_secret": true,
+        "timeout_ms": 15000,
+        "max_attempts": 5,
+        "source_channel_ids": [
+         1
+        ],
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/webhooks/{id}",
+   "method": "PATCH",
+   "handler": "updateWebhook",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"webhook\": webhookViewOf(hook)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "request_type": "webhookRequest",
+   "request_schema": "schemas/webhookrequest.json",
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionWebhooksManage)  (automation.go:updateWebhook)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "PATCH /api/v1/local/automation/webhooks/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PATCH /api/v1/local/automation/webhooks/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "PATCH /api/v1/local/automation/webhooks/not-an-id",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "PATCH /api/v1/local/automation/webhooks/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "PATCH /api/v1/local/automation/webhooks/1",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "webhook": {
+        "id": 1,
+        "name": "Documented webhook (renamed)",
+        "description": "Sends new messages to an external API",
+        "enabled": false,
+        "url": "https://example.com/telesync/incoming",
+        "method": "POST",
+        "auth_mode": "hmac",
+        "auth_header": "",
+        "has_secret": true,
+        "timeout_ms": 15000,
+        "max_attempts": 5,
+        "source_channel_ids": [
+         1
+        ],
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z"
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/webhooks/{id}/deliveries",
+   "method": "GET",
+   "handler": "listDeliveries",
+   "file": "automation.go",
+   "line": 0,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/automation/webhooks/not-an-id/deliveries",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/webhooks/not-an-id/deliveries",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/automation/webhooks/not-an-id/deliveries",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/automation/webhooks/not-an-id/deliveries",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/webhooks/1/deliveries",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "deliveries": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 0,
+       "total_pages": 0
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/webhooks/{id}/deliveries/{delivery_id}",
+   "method": "GET",
+   "handler": "getDelivery",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"delivery\": deliveryViewOf(delivery)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2
+  },
+  {
+   "pattern": "/api/v1/local/automation/webhooks/{id}/deliveries/{delivery_id}/retry",
+   "method": "POST",
+   "handler": "retryDelivery",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"delivery\": deliveryViewOf(delivery)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2
+  },
+  {
+   "pattern": "/api/v1/local/automation/webhooks/{id}/test",
+   "method": "POST",
+   "handler": "testWebhook",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"delivery\": deliveryViewOf(result.Delivery)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionWebhooksManage)  (automation.go:testWebhook)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/local/automation/webhooks/not-an-id/test",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/automation/webhooks/not-an-id/test",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/local/automation/webhooks/not-an-id/test",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/local/automation/webhooks/not-an-id/test",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/automation/webhooks/1/test",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "delivery": {
+        "id": 0,
+        "webhook_id": 1,
+        "event_id": "",
+        "status": "succeeded",
+        "attempt_count": 1,
+        "next_attempt_at": null,
+        "last_http_status": 0,
+        "last_error": "",
+        "created_at": "0001-01-01T00:00:00Z",
+        "updated_at": "0001-01-01T00:00:00Z",
+        "completed_at": null,
+        "request": {
+         "method": "POST",
+         "url": "https://example.com/telesync/incoming",
+         "headers": {
+          "Content-Type": "application/json",
+          "User-Agent": "telesync-webhooks/1",
+          "Webhook-Id": "wbd_test_1",
+          "Webhook-Signature": "v1,JQns/C5k+MSQN/V+0rXe9smF48cgeo8RTUbWvznbeJw=",
+          "Webhook-Timestamp": "1792922400"
+         },
+         "body": "{\"specversion\":\"1.0\",\"id\":\"evt_test\",\"source\":\"telesync/telegram/channels/0\",\"type\":\"telesync.webhook.test\",\"time\":\"2026-01-01T00:00:00Z\",\"datacontenttype\":\"application/json\",\"data\":{\"source\":{\"managed_channel_id\":0,\"client_key\":\"\",\"telegram_channel_id\":0},\"message\":{\"id\":0,\"date\":\"2026-01-01T00:00:00Z\",\"text\":\"This is a test delivery from Telesync. It carries no channel content.\",\"views\":null,\"reactions\":[],\"entities\":[]}}}",
+         "body_truncated": false
+        },
+        "attempts": [
+         {
+          "id": 0,
+          "attempt_number": 1,
+          "request_method": "POST",
+          "request_url": "https://example.com/telesync/incoming",
+          "request_headers": {
+           "Content-Type": "application/json",
+           "User-Agent": "telesync-webhooks/1",
+           "Webhook-Id": "wbd_test_1",
+           "Webhook-Signature": "v1,JQns/C5k+MSQN/V+0rXe9smF48cgeo8RTUbWvznbeJw=",
+           "Webhook-Timestamp": "1792922400"
+          },
+          "request_body": "{\"specversion\":\"1.0\",\"id\":\"evt_test\",\"source\":\"telesync/telegram/channels/0\",\"type\":\"telesync.webhook.test\",\"time\":\"2026-01-01T00:00:00Z\",\"datacontenttype\":\"application/json\",\"data\":{\"source\":{\"managed_channel_id\":0,\"client_key\":\"\",\"telegram_channel_id\":0},\"message\":{\"id\":0,\"date\":\"2026-01-01T00:00:00Z\",\"text\":\"This is a test delivery from Telesync. It carries no channel content.\",\"views\":null,\"reactions\":[],\"entities\":[]}}}",
+          "request_body_truncated": false,
+          "response_status": 200,
+          "response_headers": {
+           "Content-Type": "application/json"
+          },
+          "response_body": "{\"received\":true}",
+          "response_body_truncated": false,
+          "response_bytes": 17,
+          "duration_ms": 0,
+          "error_code": "",
+          "error_message": "",
+          "started_at": "2026-10-25T10:00:00Z",
+          "finished_at": "2026-10-25T10:00:00Z"
+         }
+        ]
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/workflows",
+   "method": "GET",
+   "handler": "listWorkflows",
+   "file": "automation.go",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/automation/workflows",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/workflows",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "workflows": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 0,
+       "total_pages": 0
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/automation/workflows",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/automation/workflows",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "workflows": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 0,
+       "total_pages": 0
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/workflows",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "workflows": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 0,
+       "total_pages": 0
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/workflows",
+   "method": "POST",
+   "handler": "createWorkflow",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"workflow\": s.workflowViewResolved(r.Context(), wf)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusCreated",
+   "status": 201,
+   "request_type": "workflowRequest",
+   "request_schema": "schemas/workflowrequest.json",
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionWorkflowsManage)  (automation.go:createWorkflow)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/local/automation/workflows",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/automation/workflows",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/local/automation/workflows",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/local/automation/workflows",
+     "status": 415,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "the body must be application/json.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/local/automation/workflows",
+     "status": 201,
+     "json": true,
+     "body": {
+      "data": {
+       "workflow": {
+        "id": 1,
+        "managed_channel_id": 1,
+        "enabled": false,
+        "ai_enabled": false,
+        "ai_prompt": "",
+        "ai_send_images": false,
+        "ai_publish_on_failure": false,
+        "config_revision": 1,
+        "destinations": [],
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z",
+        "channel": {
+         "id": 1,
+         "client_key": "doc-client",
+         "telegram_channel_id": 1,
+         "title": "Documented channel",
+         "username": ""
+        }
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/workflows/{id}",
+   "method": "DELETE",
+   "handler": "deleteWorkflow",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"deleted\": true}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionWorkflowsManage)  (automation.go:deleteWorkflow)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "DELETE /api/v1/local/automation/workflows/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/automation/workflows/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "DELETE /api/v1/local/automation/workflows/not-an-id",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "DELETE /api/v1/local/automation/workflows/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/local/automation/workflows/1",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "deleted": true
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/workflows/{id}",
+   "method": "GET",
+   "handler": "getWorkflow",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"workflow\": s.workflowViewResolved(r.Context(), wf)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/automation/workflows/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/workflows/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/automation/workflows/not-an-id",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/automation/workflows/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/workflows/1",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "workflow": {
+        "id": 1,
+        "managed_channel_id": 1,
+        "enabled": false,
+        "ai_enabled": false,
+        "ai_prompt": "",
+        "ai_send_images": false,
+        "ai_publish_on_failure": false,
+        "config_revision": 1,
+        "destinations": [],
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z",
+        "channel": {
+         "id": 1,
+         "client_key": "doc-client",
+         "telegram_channel_id": 1,
+         "title": "Documented channel",
+         "username": ""
+        }
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/workflows/{id}",
+   "method": "PATCH",
+   "handler": "updateWorkflow",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"workflow\": s.workflowViewResolved(r.Context(), wf)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "request_type": "workflowRequest",
+   "request_schema": "schemas/workflowrequest.json",
+   "credentials": [
+    "actorAuth(r).Global(channelstore.PermissionWorkflowsManage)  (automation.go:updateWorkflow)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "PATCH /api/v1/local/automation/workflows/not-an-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PATCH /api/v1/local/automation/workflows/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "PATCH /api/v1/local/automation/workflows/not-an-id",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "PATCH /api/v1/local/automation/workflows/not-an-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "PATCH /api/v1/local/automation/workflows/1",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "workflow": {
+        "id": 1,
+        "managed_channel_id": 1,
+        "enabled": false,
+        "ai_enabled": true,
+        "ai_prompt": "",
+        "ai_send_images": false,
+        "ai_publish_on_failure": false,
+        "config_revision": 2,
+        "destinations": [],
+        "created_at": "2026-10-25T10:00:00Z",
+        "updated_at": "2026-10-25T10:00:00Z",
+        "channel": {
+         "id": 1,
+         "client_key": "doc-client",
+         "telegram_channel_id": 1,
+         "title": "Documented channel",
+         "username": ""
+        }
+       }
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/workflows/{id}/runs",
+   "method": "GET",
+   "handler": "listRuns",
+   "file": "automation.go",
+   "line": 0,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/local/automation/workflows/not-an-id/runs",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/workflows/not-an-id/runs",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/local/automation/workflows/not-an-id/runs",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/local/automation/workflows/not-an-id/runs",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "id must be a positive integer.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/local/automation/workflows/1/runs",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "runs": []
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "has_more": false,
+       "page": 1,
+       "per_page": 20,
+       "request_id": "docsgen",
+       "total": 0,
+       "total_pages": 0
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/local/automation/workflows/{id}/runs/{run_id}",
+   "method": "GET",
+   "handler": "getRun",
+   "file": "automation.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"run\": runViewOf(run)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2
   },
   {
    "pattern": "/api/v1/local/categories",
@@ -3514,11 +5355,7 @@
    "response": "envelope{ Data: map[string]any{ \"terms\": terms, \"page\": map[string]any{ \"page\": result.Page, \"per_page\": result.PerPage, \"total\": result.Total, \"total_pages\": result.TotalPages, \"has_more\": result.Page \u003c result.TotalPages, }, }, Meta: metaFor(requestID, s.cfg.Now()), }",
    "status_name": "StatusOK",
    "status": 200,
-   "credentials": [
-    "authr.Allowed(kind, action, localID)  (access.go:visible)",
-    "authr.CanList(kind)  (access.go:visible)"
-   ],
-   "credential_count": 2,
+   "credential_count": 0,
    "probe": [
     {
      "caller": "anonymous",
@@ -3600,14 +5437,10 @@
    "response": "answer",
    "status_name": "StatusOK",
    "status": 200,
-   "request_type": "wpPostRequest",
-   "request_schema": "schemas/wppostrequest.json",
    "credentials": [
-    "a.auth.Global(channelstore.PermissionContentPublish)  (publish.go:publishWordPress)",
-    "authr.Allowed(kind, action, localID)  (access.go:visible)",
-    "authr.CanList(kind)  (access.go:visible)"
+    "a.auth.Global(channelstore.PermissionContentPublish)  (publish.go:publishWordPress)"
    ],
-   "credential_count": 3,
+   "credential_count": 1,
    "probe": [
     {
      "caller": "anonymous",
@@ -3689,11 +5522,7 @@
    "response": "envelope{ Data: map[string]any{ \"terms\": terms, \"page\": map[string]any{ \"page\": result.Page, \"per_page\": result.PerPage, \"total\": result.Total, \"total_pages\": result.TotalPages, \"has_more\": result.Page \u003c result.TotalPages, }, }, Meta: metaFor(requestID, s.cfg.Now()), }",
    "status_name": "StatusOK",
    "status": 200,
-   "credentials": [
-    "authr.Allowed(kind, action, localID)  (access.go:visible)",
-    "authr.CanList(kind)  (access.go:visible)"
-   ],
-   "credential_count": 2,
+   "credential_count": 0,
    "probe": [
     {
      "caller": "anonymous",
@@ -5408,14 +7237,10 @@
    "response": "answer",
    "status_name": "StatusOK",
    "status": 200,
-   "request_type": "publishRequest",
-   "request_schema": "schemas/publishrequest.json",
    "credentials": [
-    "a.auth.Global(channelstore.PermissionContentPublish)  (publish.go:publishTelegram)",
-    "authr.Allowed(kind, action, localID)  (access.go:visible)",
-    "authr.CanList(kind)  (access.go:visible)"
+    "a.auth.Global(channelstore.PermissionContentPublish)  (publish.go:publishTelegram)"
    ],
-   "credential_count": 3,
+   "credential_count": 1,
    "probe": [
     {
      "caller": "anonymous",
@@ -6070,33 +7895,6 @@
     "wordpress_permissions"
    ]
   },
-  "publishRequest": {
-   "go_type": "publishRequest",
-   "properties": {
-    "source": {
-     "go_type": "struct { LocalChannelID int64 `json:\"local_channel_id\"` MessageID int `json:\"message_id\"` }"
-    },
-    "destination": {
-     "go_type": "struct { ChannelID string `json:\"channel_id\"` }"
-    },
-    "content": {
-     "go_type": "struct { Text string `json:\"text\"` Entities []rpc.Entity `json:\"entities\"` }"
-    },
-    "media": {
-     "go_type": "struct { Mode string `json:\"mode\"` AttachmentID string `json:\"attachment_id,omitempty\"` }"
-    },
-    "options": {
-     "go_type": "struct { Silent bool `json:\"silent\"` DisableWebPagePreview bool `json:\"disable_web_page_preview\"` }"
-    }
-   },
-   "required": [
-    "content",
-    "destination",
-    "media",
-    "options",
-    "source"
-   ]
-  },
   "updateUserRequest": {
    "go_type": "updateUserRequest",
    "properties": {
@@ -6126,6 +7924,80 @@
     "is_active",
     "password",
     "username"
+   ]
+  },
+  "webhookRequest": {
+   "go_type": "webhookRequest",
+   "properties": {
+    "name": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "description": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "enabled": {
+     "go_type": "*bool",
+     "nullable": true,
+     "type": "boolean"
+    },
+    "url": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "method": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "auth_mode": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "auth_header": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "secret": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "timeout_ms": {
+     "go_type": "*int64",
+     "nullable": true,
+     "type": "integer"
+    },
+    "max_attempts": {
+     "go_type": "*int",
+     "nullable": true,
+     "type": "integer"
+    },
+    "source_channel_ids": {
+     "$ref": "#/components/schemas/int64",
+     "go_type": "[]int64",
+     "items": "int64",
+     "type": "array"
+    }
+   },
+   "required": [
+    "auth_header",
+    "auth_mode",
+    "description",
+    "enabled",
+    "max_attempts",
+    "method",
+    "name",
+    "secret",
+    "source_channel_ids",
+    "timeout_ms",
+    "url"
    ]
   },
   "wordpressPermissionsEntry": {
@@ -6191,31 +8063,70 @@
     "username"
    ]
   },
-  "wpPostRequest": {
-   "go_type": "wpPostRequest",
+  "workflowRequest": {
+   "go_type": "workflowRequest",
    "properties": {
-    "source": {
-     "go_type": "struct { LocalChannelID int64 `json:\"local_channel_id\"` MessageID int `json:\"message_id\"` }"
+    "managed_channel_id": {
+     "go_type": "*int64",
+     "nullable": true,
+     "type": "integer"
     },
-    "post": {
-     "go_type": "struct { Title string `json:\"title\"` Slug string `json:\"slug\"` Content string `json:\"content\"` Status string `json:\"status\"` Tags []string `json:\"tags\"` TagIDs []int `json:\"tag_ids\"` CategoryIDs []int `json:\"categories\"` }"
+    "enabled": {
+     "go_type": "*bool",
+     "nullable": true,
+     "type": "boolean"
     },
-    "media": {
-     "go_type": "struct { Mode string `json:\"mode\"` AttachmentID string `json:\"attachment_id,omitempty\"` }"
+    "ai_enabled": {
+     "go_type": "*bool",
+     "nullable": true,
+     "type": "boolean"
     },
-    "options": {
-     "go_type": "struct { CommentStatus string `json:\"comment_status\"` }"
+    "ai_prompt": {
+     "go_type": "*string",
+     "nullable": true,
+     "type": "string"
+    },
+    "ai_send_images": {
+     "go_type": "*bool",
+     "nullable": true,
+     "type": "boolean"
+    },
+    "ai_publish_on_failure": {
+     "go_type": "*bool",
+     "nullable": true,
+     "type": "boolean"
+    },
+    "destinations": {
+     "go_type": "*[]workflowDestinationRequest",
+     "nullable": true
     }
    },
    "required": [
-    "media",
-    "options",
-    "post",
-    "source"
+    "ai_enabled",
+    "ai_prompt",
+    "ai_publish_on_failure",
+    "ai_send_images",
+    "destinations",
+    "enabled",
+    "managed_channel_id"
    ]
   }
  },
- "permissions": null,
+ "permissions": [
+  "automation.view",
+  "categories.create",
+  "categories.view",
+  "channels.create",
+  "channels.view",
+  "content.publish",
+  "servers.view",
+  "users.manage",
+  "users.view",
+  "webhooks.manage",
+  "wordpress.create",
+  "wordpress.view",
+  "workflows.manage"
+ ],
  "unresolved": [
   {
    "route": "DELETE /api/v1/local/categories/{id}",
@@ -6226,10 +8137,78 @@
    ]
   },
   {
+   "route": "GET /api/v1/local/automation/status",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "automationStatus (automation.go)",
+    "probe: anonymous → unauthorized, operator → 200, limited user → forbidden, administrator → 200"
+   ]
+  },
+  {
+   "route": "GET /api/v1/local/automation/webhooks",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "listWebhooks (automation.go)",
+    "probe: anonymous → unauthorized, operator → 200, limited user → forbidden, administrator → 200"
+   ]
+  },
+  {
+   "route": "GET /api/v1/local/automation/webhooks",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "listWebhooks (automation.go)"
+   ]
+  },
+  {
+   "route": "GET /api/v1/local/automation/webhooks/{id}/deliveries",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "listDeliveries (automation.go)"
+   ]
+  },
+  {
+   "route": "GET /api/v1/local/automation/workflows",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "listWorkflows (automation.go)",
+    "probe: anonymous → unauthorized, operator → 200, limited user → forbidden, administrator → 200"
+   ]
+  },
+  {
+   "route": "GET /api/v1/local/automation/workflows",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "listWorkflows (automation.go)"
+   ]
+  },
+  {
+   "route": "GET /api/v1/local/automation/workflows/{id}/runs",
+   "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
+   "evidence": [
+    "listRuns (automation.go)"
+   ]
+  },
+  {
    "route": "GET /api/v1/local/channels/{id}/avatar",
    "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
    "evidence": [
     "localChannelAvatar (local_channels.go)"
+   ]
+  },
+  {
+   "route": "GET /api/v1/local/wordpress/{id}/categories",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "wordPressTerms (wordpress.go)",
+    "probe: anonymous → unauthorized, operator → invalid_input, limited user → invalid_input, administrator → invalid_input"
+   ]
+  },
+  {
+   "route": "GET /api/v1/local/wordpress/{id}/tags",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "wordPressTerms (wordpress.go)",
+    "probe: anonymous → unauthorized, operator → invalid_input, limited user → invalid_input, administrator → invalid_input"
    ]
   },
   {

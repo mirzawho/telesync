@@ -354,7 +354,7 @@ test("the password dialog keeps its own loading wording", () => {
 
 // --- permissions ---
 
-test("permissions open on exactly six tabs, in the order the product asks for", () => {
+test("permissions open on exactly seven tabs, in the order the product asks for", () => {
   assert.deepEqual(
     permissionsTabs.map((tab) => tab.label),
     [
@@ -363,6 +363,7 @@ test("permissions open on exactly six tabs, in the order the product asks for", 
       "کانال‌ها",
       "سایت‌های وردپرسی",
       "مدیرها",
+      "اتوماسیون",
       "عمومی",
     ]
   )
@@ -528,4 +529,34 @@ test("the permissions dialog keeps its own loading wording", () => {
     />
   )
   assert.match(out, /در حال ذخیره/)
+})
+
+// The automation rights have to be grantable from this dialog, not merely
+// known to the backend: an administrator who cannot grant them cannot
+// legitimately obtain them.
+test("the automation tab exposes every automation permission", () => {
+  const draft = {
+    globals: [] as never[],
+    channelIDs: [] as number[],
+    categoryIDs: [] as number[],
+    siteIDs: [] as number[],
+    sitesEditable: true,
+  }
+  const out = html(
+    <AdministratorPermissionsContent
+      user={USER}
+      draft={draft}
+      loaded={LOADED}
+      catalog={{}}
+      tab="automation"
+      pending={false}
+      onClose={noop}
+      onDraftChange={noop}
+      onSave={noop}
+    />
+  )
+  assert.match(out, /مشاهده اتوماسیون/)
+  assert.match(out, /مدیریت وب‌هوک‌ها/)
+  assert.match(out, /مدیریت ورک‌فلوها/)
+  assert.equal((out.match(/type="checkbox"/g) ?? []).length, 3)
 })

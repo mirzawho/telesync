@@ -58,6 +58,24 @@ try {
 if (!existsSync(indexPath)) {
   ensurePage()
 }
+// typeTransform is what this node needs to import a .ts module.
+//
+// Node 22 has to be told to transform types and rejects the import without the
+// flag; Node 23.6 and later strip types by default and have removed the flag
+// entirely, so passing it is a "bad option" error that stops the build. The two
+// behaviours cannot be told apart from a version number alone, so the running
+// node is asked instead of guessed at.
+function typeTransform() {
+  try {
+    execFileSync(process.execPath, ["--experimental-transform-types", "-e", ""], {
+      stdio: "pipe",
+    })
+    return ["--experimental-transform-types"]
+  } catch {
+    return []
+  }
+}
+
 // ensurePage leaves a page from the build alone, and writes one when the
 // build left none.
 function ensurePage() {
@@ -65,7 +83,7 @@ function ensurePage() {
   if (!existsSync(join(builtDir, ".vite", "manifest.json"))) return false
   const page = pathToFileURL(join(appDir, "spa-prerender.ts")).href
   execFileSync(process.execPath, [
-    "--experimental-transform-types",
+    ...typeTransform(),
     "-e",
     `const { writeSpaPage } = await import(${JSON.stringify(page)}); await writeSpaPage(${JSON.stringify(appDir)})`,
   ], { stdio: "inherit" })

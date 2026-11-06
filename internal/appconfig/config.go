@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -88,6 +89,11 @@ type APIConfig struct {
 	AuthToken    string `json:"-"`
 	// ListenHost is the interface address from listen_addr.
 	ListenHost string
+	// PublicBaseURL is the externally reachable origin of this installation,
+	// used to turn relative API paths (the media endpoint, above all) into
+	// absolute URLs for webhook receivers. It is empty when the operator has
+	// not declared one, and no route invents an address in that case.
+	PublicBaseURL string
 	// JWT is the user login configuration.
 	JWT JWTConfig
 	// WordPress is the WordPress site management configuration.
@@ -214,7 +220,10 @@ type Client struct {
 type Config struct {
 	API     APIConfig
 	Runtime RuntimeConfig
-	Clients []Client
+	// Automation is the background automation subsystem: event ingestion, the
+	// durable job queue, webhooks, workflows and AI polishing.
+	Automation AutomationConfig
+	Clients    []Client
 }
 
 // Loopback reports whether the API listens on a loopback address only.
@@ -323,15 +332,17 @@ func (c Config) Describe() []string {
 }
 
 type rawConfig struct {
-	API     rawAPI      `json:"api"`
-	Runtime rawRuntime  `json:"runtime"`
-	Clients []rawClient `json:"clients"`
+	API        rawAPI        `json:"api"`
+	Runtime    rawRuntime    `json:"runtime"`
+	Automation rawAutomation `json:"automation"`
+	Clients    []rawClient   `json:"clients"`
 }
 
 type rawAPI struct {
 	ListenAddr     string          `json:"listen_addr"`
 	RequestTimeout string          `json:"request_timeout"`
 	AuthTokenEnv   string          `json:"auth_token_env"`
+	PublicBaseURL  string          `json:"public_base_url"`
 	JWT            rawJWTAPI       `json:"jwt"`
 	WordPress      rawWordPressAPI `json:"wordpress"`
 	DocsDir        string          `json:"docs_dir"`
@@ -810,6 +821,33 @@ func build(raw rawConfig, baseDir string, lookup func(string) string) (Config, e
 
 		cfg.Clients = append(cfg.Clients, cl)
 	}
+
+	// --- public base URL ---
+	// The origin an outsider reaches this installation at. Nothing invents an
+	// address when it is absent: a webhook that would have to carry a media URL
+	// is refused at configuration time instead of being sent a link that cannot
+	// be opened.
+	cfg.API.PublicBaseURL = strings.TrimSuffix(strings.TrimSpace(raw.API.PublicBaseURL), "/")
+	if cfg.API.PublicBaseURL != "" {
+		u, err := url.Parse(cfg.API.PublicBaseURL)
+		switch {
+		case err != nil:
+			fail("api.public_base_url %q is not a valid URL", raw.API.PublicBaseURL)
+		case u.Scheme != "http" && u.Scheme != "https":
+			fail("api.public_base_url %q must be an http or https URL", raw.API.PublicBaseURL)
+		case u.Host == "":
+			fail("api.public_base_url %q must name a host", raw.API.PublicBaseURL)
+		case u.User != nil:
+			fail("api.public_base_url %q must not carry credentials", raw.API.PublicBaseURL)
+		case u.RawQuery != "" || u.Fragment != "":
+			fail("api.public_base_url %q must not carry a query or fragment", raw.API.PublicBaseURL)
+		}
+	}
+
+	// --- automation ---
+	automation, automationProblems := raw.Automation.resolve(AutomationConfig{}, lookup)
+	problems = append(problems, automationProblems...)
+	cfg.Automation = automation
 
 	if len(problems) > 0 {
 		return Config{}, fmt.Errorf("configuration is invalid: %s", strings.Join(problems, "; "))

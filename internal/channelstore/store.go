@@ -682,6 +682,19 @@ func boolInt(v bool) int {
 	return 0
 }
 
+// nullableUserID is the owning account of a record, or NULL.
+//
+// The operator token is a credential and not an account, so it has no user id.
+// Recording that as 0 would be a foreign key to an account that does not
+// exist; recording it as NULL says the truth: this record has no owning
+// account, and no account's deletion will take it with it.
+func nullableUserID(id int64) any {
+	if id <= 0 {
+		return nil
+	}
+	return id
+}
+
 func nullableInt(p *int) any {
 	if p == nil {
 		return nil

@@ -78,6 +78,28 @@ var gatewayRoutes = []Route{
 	{Pattern: "/api/v1/local/users/{id}/permissions", Methods: []string{http.MethodGet, http.MethodPut}},
 
 	{Pattern: "/api/v1/local/stats/dashboard", Methods: []string{http.MethodGet}},
+
+	// Background automation: webhook configuration and delivery history, and
+	// workflow configuration and run history. The two histories are nested
+	// under the resource they belong to, so a delivery cannot be fetched
+	// through a webhook the caller may not see. The namespace root answers the
+	// same status as its /status route, so a client that addresses the area
+	// itself is not left with a 404.
+	{Pattern: "/api/v1/local/automation", Methods: []string{http.MethodGet}},
+	{Pattern: "/api/v1/local/automation/status", Methods: []string{http.MethodGet}},
+	{Pattern: "/api/v1/local/automation/webhooks", Methods: []string{http.MethodGet, http.MethodPost}},
+	{Pattern: "/api/v1/local/automation/webhooks/{id}", Methods: []string{http.MethodGet, http.MethodPatch, http.MethodDelete}},
+	{Pattern: "/api/v1/local/automation/webhooks/{id}/test", Methods: []string{http.MethodPost}},
+	{Pattern: "/api/v1/local/automation/webhooks/{id}/deliveries", Methods: []string{http.MethodGet}},
+	{Pattern: "/api/v1/local/automation/webhooks/{id}/deliveries/{delivery_id}", Methods: []string{http.MethodGet},
+		Skip: "a delivery exists only after a real message has been processed, so a probe has no concrete id to name"},
+	{Pattern: "/api/v1/local/automation/webhooks/{id}/deliveries/{delivery_id}/retry", Methods: []string{http.MethodPost},
+		Skip: "a delivery exists only after a real message has been processed, so a probe has no concrete id to name"},
+	{Pattern: "/api/v1/local/automation/workflows", Methods: []string{http.MethodGet, http.MethodPost}},
+	{Pattern: "/api/v1/local/automation/workflows/{id}", Methods: []string{http.MethodGet, http.MethodPatch, http.MethodDelete}},
+	{Pattern: "/api/v1/local/automation/workflows/{id}/runs", Methods: []string{http.MethodGet}},
+	{Pattern: "/api/v1/local/automation/workflows/{id}/runs/{run_id}", Methods: []string{http.MethodGet},
+		Skip: "a run exists only after a real message has been processed, so a probe has no concrete id to name"},
 }
 
 // Prober sends requests to the gateway the way the checks do.

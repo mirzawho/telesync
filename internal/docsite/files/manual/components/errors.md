@@ -54,6 +54,9 @@ unsupported method answers `405` with `Allow: GET` even for a path that is not a
 route. A `429` is the only response that sets `Retry-After`, from Telegram's own
 flood wait.
 
+Publishing has its own codes, named after the stage that failed rather than the
+status it answered with; they are listed in [publishing](publishing.md#failure-stages).
+
 ## Details never returned
 
 Error messages carry no API hash, phone number, login code, 2FA password,

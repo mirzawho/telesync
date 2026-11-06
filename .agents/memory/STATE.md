@@ -1,16 +1,20 @@
 # Current state
 
-**Updated:** 2026-11-05 (publishing a source message's media to another
-connection now reads the source through the source connection and shows the
-attachment in the dialog; see D66).
+**Updated:** 2026-11-06 (v0.0.3 is integrated and verified end to end: the
+automation UI is reachable in the served panel, the MTProto listener feeds the
+durable event store through a private ingest socket, and background jobs run
+after an observed message; the panel bundle must be rebuilt — `node
+web/scripts/build-panel.mjs` — before any binary serves it).
 
 ## Milestone
 
 Telesync is a multi-client MTProto runtime with a supervised worker per client,
 JSON HTTP API v1, SQLite channel/category/user/site inventory, permissions, and
 an embedded `/admin` panel. The product path is acquire → manage → read → select
-→ prepare → publish. Telegram and WordPress publishing is implemented, but not
-live-verified; the exact product matrix remains in `PROJECT_BRIEF.md` §9.
+→ prepare → publish. v0.0.3 adds react: incoming channel messages become
+durable events that drive webhooks and per-channel workflows in the background.
+Telegram and WordPress publishing is implemented, but not live-verified; the
+exact product matrix remains in `PROJECT_BRIEF.md` §9.
 
 ## Topology and ownership
 
@@ -36,6 +40,49 @@ Local permission ids are `managed_channels.id`, not Telegram peer ids.
   write; cross-system operations report partial failure.
 
 ## Changed since the last snapshot
+
+- **v0.0.3 integration (2026-11-06).** The release is now connected end to end.
+  **Why the UI had been invisible:** `internal/panel/files` is embedded into the
+  binary at build time and had been built before the automation UI existed, and
+  the source is uncommitted in this worktree so `main` and every CI image lacked
+  it. Rebuilt with `node web/scripts/build-panel.mjs`.
+  **Listener:** `internal/profile/profile.go:180`'s no-op `UpdateHandler` is a
+  seam now filled by gotd's `updates.Manager`; a worker sends one bounded
+  observation per new channel message over a private `automation.sock` to the
+  daemon, which persists it and fans out to the queue. gotd advances its
+  counters only after the handler returns and the handler returns only after the
+  event is committed, so state can never run ahead of the store.
+  **Verified in a real browser** against a running daemon: sidebar entry,
+  overview, webhook list, create form at `/automation/webhooks/new`, workflow
+  list, and the mobile overflow with Automation active on nested routes.
+  **Not verified:** no live Telegram, WordPress, AI provider or webhook
+  receiver; no credentials in this checkout.
+
+- **v0.0.3 background automation (2026-11-06).** A shared event ingestion path
+  turns new channel messages into durable events that two independent consumers
+  act on: webhooks (HTTP delivery with full request/response history) and
+  workflows (automatic publishing through the v0.0.2 publisher, optionally
+  polished by an OpenAI-compatible model first).
+  **Backend:** migrations 8–15 add `automation_events` (+ sources),
+  `automation_jobs`, `automation_checkpoints` / `automation_update_states` /
+  `automation_channel_pts` / `automation_peer_hashes`, `webhooks` (+ sources),
+  `webhook_deliveries` (+ attempts), `workflows` (+ destinations),
+  `workflow_runs` (+ publications) and `automation_outbound_messages`.
+  `internal/automation` holds the shared contracts and seven packages:
+  `events`, `queue`, `recovery`, `webhooks`, `workflows`, `publishing`, `ai`.
+  The v0.0.2 publishing pipeline moved into `internal/automation/publishing` so
+  the route and a background job call the same code; `internal/gateway/publish.go`
+  keeps only the HTTP shape.
+  **Frontend:** an `اتوماسیون` area with two sections (webhooks, workflows),
+  delivery history with request/response/attempt tabs, a workflow editor and a
+  run history, all Persian RTL and permission-gated.
+  **Verification:** `gofmt`, `go vet`, `go test ./...` (except
+  `internal/worker`'s socket tests, which fail on this machine's Unix-socket
+  path length and are untouched by this release), `go build ./...`,
+  `docsgen --check`, `go test ./internal/apidocs`, `npm run typecheck` and
+  `npm test` (426 assertions) were all run and green.
+  **Not verified:** nothing was sent to Telegram, WordPress, an AI provider or a
+  real webhook receiver; no browser session was available.
 
 - Telegram-to-other-connection media publishing is fixed (2026-11-05, D66). Two
   independent defects presented as one symptom — the dialog said `دریافت عکس

@@ -48,6 +48,9 @@ export const globalPermissionLabels: Record<GlobalPermission, string> = {
   "wordpress.create": "مدیریت سایت‌های وردپرسی",
   "servers.view": "مشاهده وضعیت سرورهای تلگرامی",
   "content.publish": "ارسال و انتشار محتوا",
+  "automation.view": "مشاهده اتوماسیون",
+  "webhooks.manage": "مدیریت وب‌هوک‌ها",
+  "workflows.manage": "مدیریت ورک‌فلوها",
 }
 
 // A managing permission needs its viewing permission; the API refuses a set
@@ -59,6 +62,8 @@ export const manageNeedsView: Partial<
   "channels.create": "channels.view",
   "categories.create": "categories.view",
   "wordpress.create": "wordpress.view",
+  "webhooks.manage": "automation.view",
+  "workflows.manage": "automation.view",
 }
 
 // withViewDependencies adds the view permission a managing permission needs.
@@ -373,7 +378,7 @@ export interface ReportLine {
 }
 
 export interface ReportGroup {
-  key: "categories" | "channels" | "wordpress" | "users" | "general"
+  key: "categories" | "channels" | "wordpress" | "users" | "automation" | "general"
   title: string
   lines: ReportLine[]
   // The resources this group reaches: null for a group with no resource scope,
@@ -468,6 +473,32 @@ export function buildReport(
         key: "users.manage",
         label: globalPermissionLabels["users.manage"],
         state: holdsGlobal(draft, "users.manage") ? "allowed" : "denied",
+      },
+    ],
+    scope: null,
+  })
+
+  groups.push({
+    key: "automation",
+    title: "اتوماسیون",
+    // Reported, and kept across saves, though this dialog has no editor for
+    // them: like content.publish below, a save must never drop a permission it
+    // was not asked about.
+    lines: [
+      {
+        key: "automation.view",
+        label: globalPermissionLabels["automation.view"],
+        state: holdsGlobal(draft, "automation.view") ? "allowed" : "denied",
+      },
+      {
+        key: "webhooks.manage",
+        label: globalPermissionLabels["webhooks.manage"],
+        state: holdsGlobal(draft, "webhooks.manage") ? "allowed" : "denied",
+      },
+      {
+        key: "workflows.manage",
+        label: globalPermissionLabels["workflows.manage"],
+        state: holdsGlobal(draft, "workflows.manage") ? "allowed" : "denied",
       },
     ],
     scope: null,

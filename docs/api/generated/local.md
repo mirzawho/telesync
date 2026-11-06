@@ -9,6 +9,24 @@
 
 | Method | Path | Source | Success | Responses observed | Document |
 | --- | --- | --- | --- | --- | --- |
+| GET | `/api/v1/local/automation` | `Server.` | — | 5 | [api-v1-local-automation](local/api-v1-local-automation.md) |
+| GET | `/api/v1/local/automation/status` | `Server.automationStatus` | `200` | 5 | [api-v1-local-automation-status](local/api-v1-local-automation-status.md) |
+| GET | `/api/v1/local/automation/webhooks` | `Server.listWebhooks` | — | 5 | [api-v1-local-automation-webhooks](local/api-v1-local-automation-webhooks.md) |
+| POST | `/api/v1/local/automation/webhooks` | `Server.createWebhook` | `201` | 5 | [api-v1-local-automation-webhooks](local/api-v1-local-automation-webhooks.md) |
+| DELETE | `/api/v1/local/automation/webhooks/{id}` | `Server.deleteWebhook` | `200` | 5 | [api-v1-local-automation-webhooks-id](local/api-v1-local-automation-webhooks-id.md) |
+| GET | `/api/v1/local/automation/webhooks/{id}` | `Server.getWebhook` | `200` | 5 | [api-v1-local-automation-webhooks-id](local/api-v1-local-automation-webhooks-id.md) |
+| PATCH | `/api/v1/local/automation/webhooks/{id}` | `Server.updateWebhook` | `200` | 5 | [api-v1-local-automation-webhooks-id](local/api-v1-local-automation-webhooks-id.md) |
+| GET | `/api/v1/local/automation/webhooks/{id}/deliveries` | `Server.listDeliveries` | — | 5 | [api-v1-local-automation-webhooks-id-deliveries](local/api-v1-local-automation-webhooks-id-deliveries.md) |
+| GET | `/api/v1/local/automation/webhooks/{id}/deliveries/{delivery_id}` | `Server.getDelivery` | `200` | — | [api-v1-local-automation-webhooks-id-deliveries-delivery-id](local/api-v1-local-automation-webhooks-id-deliveries-delivery-id.md) |
+| POST | `/api/v1/local/automation/webhooks/{id}/deliveries/{delivery_id}/retry` | `Server.retryDelivery` | `200` | — | [api-v1-local-automation-webhooks-id-deliveries-delivery-id-retry](local/api-v1-local-automation-webhooks-id-deliveries-delivery-id-retry.md) |
+| POST | `/api/v1/local/automation/webhooks/{id}/test` | `Server.testWebhook` | `200` | 5 | [api-v1-local-automation-webhooks-id-test](local/api-v1-local-automation-webhooks-id-test.md) |
+| GET | `/api/v1/local/automation/workflows` | `Server.listWorkflows` | — | 5 | [api-v1-local-automation-workflows](local/api-v1-local-automation-workflows.md) |
+| POST | `/api/v1/local/automation/workflows` | `Server.createWorkflow` | `201` | 5 | [api-v1-local-automation-workflows](local/api-v1-local-automation-workflows.md) |
+| DELETE | `/api/v1/local/automation/workflows/{id}` | `Server.deleteWorkflow` | `200` | 5 | [api-v1-local-automation-workflows-id](local/api-v1-local-automation-workflows-id.md) |
+| GET | `/api/v1/local/automation/workflows/{id}` | `Server.getWorkflow` | `200` | 5 | [api-v1-local-automation-workflows-id](local/api-v1-local-automation-workflows-id.md) |
+| PATCH | `/api/v1/local/automation/workflows/{id}` | `Server.updateWorkflow` | `200` | 5 | [api-v1-local-automation-workflows-id](local/api-v1-local-automation-workflows-id.md) |
+| GET | `/api/v1/local/automation/workflows/{id}/runs` | `Server.listRuns` | — | 5 | [api-v1-local-automation-workflows-id-runs](local/api-v1-local-automation-workflows-id-runs.md) |
+| GET | `/api/v1/local/automation/workflows/{id}/runs/{run_id}` | `Server.getRun` | `200` | — | [api-v1-local-automation-workflows-id-runs-run-id](local/api-v1-local-automation-workflows-id-runs-run-id.md) |
 | GET | `/api/v1/local/categories` | `Server.listCategories` | `200` | 4 | [api-v1-local-categories](local/api-v1-local-categories.md) |
 | POST | `/api/v1/local/categories` | `Server.createCategory` | `201` | 6 | [api-v1-local-categories](local/api-v1-local-categories.md) |
 | DELETE | `/api/v1/local/categories/{id}` | `Server.deleteCategory` | `200` | 6 | [api-v1-local-categories-id](local/api-v1-local-categories-id.md) |

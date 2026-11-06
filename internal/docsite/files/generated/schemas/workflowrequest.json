@@ -1,0 +1,48 @@
+{
+  "go_type": "workflowRequest",
+  "properties": {
+    "managed_channel_id": {
+      "go_type": "*int64",
+      "nullable": true,
+      "type": "integer"
+    },
+    "enabled": {
+      "go_type": "*bool",
+      "nullable": true,
+      "type": "boolean"
+    },
+    "ai_enabled": {
+      "go_type": "*bool",
+      "nullable": true,
+      "type": "boolean"
+    },
+    "ai_prompt": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "ai_send_images": {
+      "go_type": "*bool",
+      "nullable": true,
+      "type": "boolean"
+    },
+    "ai_publish_on_failure": {
+      "go_type": "*bool",
+      "nullable": true,
+      "type": "boolean"
+    },
+    "destinations": {
+      "go_type": "*[]workflowDestinationRequest",
+      "nullable": true
+    }
+  },
+  "required": [
+    "ai_enabled",
+    "ai_prompt",
+    "ai_publish_on_failure",
+    "ai_send_images",
+    "destinations",
+    "enabled",
+    "managed_channel_id"
+  ]
+}

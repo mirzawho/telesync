@@ -59,6 +59,11 @@ type accessView struct {
 	// Content is the global "content.publish" permission: whether this caller
 	// may publish a prepared message to a destination it can see.
 	Content bool `json:"content"`
+	// Automation is the global "automation.view" permission: whether this
+	// caller may see the background automation area and its history at all.
+	// Managing webhooks and workflows are separate permissions and are not
+	// summarised here.
+	Automation bool `json:"automation"`
 }
 
 type permissionsView struct {
@@ -251,9 +256,14 @@ func (s *Server) serveLocal(w http.ResponseWriter, r *http.Request, requestID st
 		// The dashboard's counts read every local store, so the handler decides
 		// which of them it needs and what a missing one means.
 		s.dashboardStats(w, r, requestID)
+	case underPath(r.URL.Path, s.fullPath(automationPrefix)):
+		s.automation(w, r, requestID)
 	default:
-		w.Header().Set("Allow", http.MethodGet)
-		s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "Only GET is supported.", requestID)
+		// The namespace matched at the top but no sub-resource did. That is an
+		// address that does not exist, not a method this resource refuses —
+		// answering 405 here would tell a caller who mistyped a path to try a
+		// different verb instead of a different path.
+		s.notFound(w, requestID)
 	}
 }
 

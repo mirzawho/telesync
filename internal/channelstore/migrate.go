@@ -230,6 +230,306 @@ var migrations = []migration{
 			`CREATE INDEX publish_operations_user_idx ON publish_operations (user_id, created_at)`,
 		},
 	},
+	{
+		version: 8,
+		name:    "automation_events",
+		stmts: []string{
+			// One row per normalized incoming Telegram message. The row id is
+			// derived from the identity below, so a replayed update produces the
+			// same id and is refused twice over: once by the primary key and once
+			// by the identity constraint. The identity deliberately excludes
+			// source_client_key: two accounts watching the same channel on the
+			// same network describe one logical message and must not run an
+			// automation twice.
+			`CREATE TABLE automation_events (
+	id TEXT PRIMARY KEY,
+	type TEXT NOT NULL CHECK (length(trim(type)) > 0),
+	network_key TEXT NOT NULL CHECK (length(trim(network_key)) > 0),
+	source_client_key TEXT NOT NULL CHECK (length(trim(source_client_key)) > 0),
+	managed_channel_id INTEGER NOT NULL REFERENCES managed_channels (id) ON DELETE CASCADE,
+	telegram_channel_id INTEGER NOT NULL CHECK (telegram_channel_id <> 0),
+	message_id INTEGER NOT NULL CHECK (message_id > 0),
+	grouped_id INTEGER,
+	occurred_at TEXT NOT NULL,
+	received_at TEXT NOT NULL,
+	payload TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	UNIQUE (type, network_key, telegram_channel_id, message_id))`,
+			`CREATE INDEX automation_events_channel_idx ON automation_events (managed_channel_id, message_id)`,
+			`CREATE INDEX automation_events_received_idx ON automation_events (received_at)`,
+			// Which connections have observed an event. A duplicate observation is
+			// dropped as an event but recorded here, so at least one authorized
+			// connection able to read the media stays known even when the
+			// connection that created the event row later loses access.
+			`CREATE TABLE automation_event_sources (
+	event_id TEXT NOT NULL REFERENCES automation_events (id) ON DELETE CASCADE,
+	client_key TEXT NOT NULL CHECK (length(trim(client_key)) > 0),
+	first_seen_at TEXT NOT NULL,
+	last_seen_at TEXT NOT NULL,
+	PRIMARY KEY (event_id, client_key))`,
+			`CREATE INDEX automation_event_sources_client_idx ON automation_event_sources (client_key)`,
+		},
+	},
+	{
+		version: 9,
+		name:    "automation_jobs",
+		stmts: []string{
+			// One durable unit of background work per (kind of work, target,
+			// event). Claiming happens inside a transaction so two workers cannot
+			// take the same row; a lease that stops being renewed is reclaimed.
+			`CREATE TABLE automation_jobs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	event_id TEXT NOT NULL REFERENCES automation_events (id) ON DELETE CASCADE,
+	job_type TEXT NOT NULL CHECK (job_type IN ('webhook_delivery', 'workflow_run')),
+	target_id INTEGER NOT NULL CHECK (target_id > 0),
+	status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'retry_wait', 'succeeded', 'failed', 'cancelled')),
+	attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+	max_attempts INTEGER NOT NULL CHECK (max_attempts > 0),
+	available_at TEXT NOT NULL,
+	locked_by TEXT NOT NULL DEFAULT '',
+	locked_until TEXT,
+	last_error_code TEXT NOT NULL DEFAULT '',
+	last_error_message TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	completed_at TEXT,
+	UNIQUE (job_type, target_id, event_id))`,
+			`CREATE INDEX automation_jobs_claim_idx ON automation_jobs (status, available_at)`,
+			`CREATE INDEX automation_jobs_lease_idx ON automation_jobs (status, locked_until)`,
+			// Ordering: jobs for one target run in insertion order, so a job is
+			// only claimable once nothing earlier for the same target is left.
+			`CREATE INDEX automation_jobs_target_idx ON automation_jobs (job_type, target_id, id)`,
+		},
+	},
+	{
+		version: 10,
+		name:    "automation_recovery_state",
+		stmts: []string{
+			// Per-channel high-water mark for the bounded history fallback used
+			// when gotd cannot close a gap (ChannelDifferenceTooLong and friends).
+			`CREATE TABLE automation_checkpoints (
+	client_key TEXT NOT NULL CHECK (length(trim(client_key)) > 0),
+	channel_id INTEGER NOT NULL,
+	last_message_id INTEGER NOT NULL DEFAULT 0,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (client_key, channel_id))`,
+			// Durable backing for gotd's updates.StateStorage, so update state
+			// survives a restart and missed updates can be recovered.
+			`CREATE TABLE automation_update_states (
+	client_key TEXT NOT NULL CHECK (length(trim(client_key)) > 0),
+	user_id INTEGER NOT NULL,
+	pts INTEGER NOT NULL DEFAULT 0,
+	qts INTEGER NOT NULL DEFAULT 0,
+	date INTEGER NOT NULL DEFAULT 0,
+	seq INTEGER NOT NULL DEFAULT 0,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (client_key, user_id))`,
+			`CREATE TABLE automation_channel_pts (
+	client_key TEXT NOT NULL CHECK (length(trim(client_key)) > 0),
+	user_id INTEGER NOT NULL,
+	channel_id INTEGER NOT NULL,
+	pts INTEGER NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (client_key, user_id, channel_id))`,
+			`CREATE TABLE automation_peer_hashes (
+	client_key TEXT NOT NULL CHECK (length(trim(client_key)) > 0),
+	user_id INTEGER NOT NULL,
+	peer_kind TEXT NOT NULL CHECK (peer_kind IN ('channel', 'user')),
+	peer_id INTEGER NOT NULL,
+	access_hash INTEGER NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (client_key, user_id, peer_kind, peer_id))`,
+		},
+	},
+	{
+		version: 11,
+		name:    "webhooks",
+		stmts: []string{
+			// The secret is sealed exactly like a WordPress credential: a
+			// versioned nonce/ciphertext pair the browser never sees again after
+			// it is written.
+			`CREATE TABLE webhooks (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+	description TEXT NOT NULL DEFAULT '',
+	enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+	url TEXT NOT NULL CHECK (length(trim(url)) > 0),
+	method TEXT NOT NULL CHECK (method IN ('POST', 'PUT', 'PATCH')),
+	auth_mode TEXT NOT NULL CHECK (auth_mode IN ('hmac', 'bearer', 'header', 'none')),
+	auth_header TEXT NOT NULL DEFAULT '',
+	secret_version INTEGER NOT NULL DEFAULT 0 CHECK (secret_version >= 0),
+	secret_nonce BLOB,
+	secret_ciphertext BLOB,
+	secret_sealed_at TEXT,
+	timeout_ms INTEGER NOT NULL DEFAULT 15000 CHECK (timeout_ms > 0),
+	max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts > 0),
+	created_by INTEGER REFERENCES users (id) ON DELETE CASCADE,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	CHECK (auth_mode <> 'header' OR length(trim(auth_header)) > 0))`,
+			`CREATE TABLE webhook_sources (
+	webhook_id INTEGER NOT NULL REFERENCES webhooks (id) ON DELETE CASCADE,
+	managed_channel_id INTEGER NOT NULL REFERENCES managed_channels (id) ON DELETE CASCADE,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY (webhook_id, managed_channel_id))`,
+			`CREATE INDEX webhook_sources_channel_idx ON webhook_sources (managed_channel_id)`,
+		},
+	},
+	{
+		version: 12,
+		name:    "webhook_deliveries",
+		stmts: []string{
+			// One logical delivery per (webhook, event). A retry extends this row
+			// and appends an attempt; it never creates a second delivery.
+			`CREATE TABLE webhook_deliveries (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	webhook_id INTEGER NOT NULL REFERENCES webhooks (id) ON DELETE CASCADE,
+	event_id TEXT NOT NULL REFERENCES automation_events (id) ON DELETE CASCADE,
+	status TEXT NOT NULL CHECK (status IN ('pending', 'delivering', 'succeeded', 'failed', 'cancelled')),
+	attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+	next_attempt_at TEXT,
+	last_http_status INTEGER NOT NULL DEFAULT 0,
+	last_error TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	completed_at TEXT,
+	UNIQUE (webhook_id, event_id))`,
+			`CREATE INDEX webhook_deliveries_list_idx ON webhook_deliveries (webhook_id, created_at)`,
+			`CREATE INDEX webhook_deliveries_status_idx ON webhook_deliveries (status, next_attempt_at)`,
+			// Every request and response is kept. Headers and bodies are stored
+			// already redacted and already truncated to the configured cap.
+			`CREATE TABLE webhook_attempts (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	delivery_id INTEGER NOT NULL REFERENCES webhook_deliveries (id) ON DELETE CASCADE,
+	attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+	request_method TEXT NOT NULL,
+	request_url TEXT NOT NULL,
+	request_headers TEXT NOT NULL DEFAULT '{}',
+	request_body TEXT NOT NULL DEFAULT '',
+	request_body_truncated INTEGER NOT NULL DEFAULT 0 CHECK (request_body_truncated IN (0, 1)),
+	response_status INTEGER NOT NULL DEFAULT 0,
+	response_headers TEXT NOT NULL DEFAULT '{}',
+	response_body TEXT NOT NULL DEFAULT '',
+	response_body_truncated INTEGER NOT NULL DEFAULT 0 CHECK (response_body_truncated IN (0, 1)),
+	response_bytes INTEGER NOT NULL DEFAULT 0,
+	duration_ms INTEGER NOT NULL DEFAULT 0,
+	error_code TEXT NOT NULL DEFAULT '',
+	error_message TEXT NOT NULL DEFAULT '',
+	started_at TEXT NOT NULL,
+	finished_at TEXT,
+	UNIQUE (delivery_id, attempt_number))`,
+			`CREATE INDEX webhook_attempts_delivery_idx ON webhook_attempts (delivery_id, attempt_number)`,
+		},
+	},
+	{
+		version: 13,
+		name:    "workflows",
+		stmts: []string{
+			// At most one workflow per managed source channel, enforced by the
+			// column constraint rather than by application code alone.
+			`CREATE TABLE workflows (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	managed_channel_id INTEGER NOT NULL UNIQUE REFERENCES managed_channels (id) ON DELETE CASCADE,
+	enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+	ai_enabled INTEGER NOT NULL DEFAULT 0 CHECK (ai_enabled IN (0, 1)),
+	ai_prompt TEXT NOT NULL DEFAULT '',
+	ai_send_images INTEGER NOT NULL DEFAULT 0 CHECK (ai_send_images IN (0, 1)),
+	ai_publish_on_failure INTEGER NOT NULL DEFAULT 0 CHECK (ai_publish_on_failure IN (0, 1)),
+	config_revision INTEGER NOT NULL DEFAULT 1 CHECK (config_revision > 0),
+	created_by INTEGER REFERENCES users (id) ON DELETE CASCADE,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL)`,
+			`CREATE TABLE workflow_destinations (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	workflow_id INTEGER NOT NULL REFERENCES workflows (id) ON DELETE CASCADE,
+	destination_type TEXT NOT NULL CHECK (destination_type IN ('telegram', 'wordpress')),
+	client_key TEXT NOT NULL DEFAULT '',
+	channel_id INTEGER NOT NULL DEFAULT 0,
+	site_id INTEGER NOT NULL DEFAULT 0,
+	options TEXT NOT NULL DEFAULT '{}',
+	position INTEGER NOT NULL DEFAULT 0,
+	enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	CHECK (
+		(destination_type = 'telegram' AND length(trim(client_key)) > 0 AND channel_id <> 0 AND site_id = 0) OR
+		(destination_type = 'wordpress' AND site_id > 0 AND length(trim(client_key)) = 0 AND channel_id = 0)
+	))`,
+			`CREATE INDEX workflow_destinations_workflow_idx ON workflow_destinations (workflow_id, position)`,
+		},
+	},
+	{
+		version: 14,
+		name:    "workflow_runs",
+		stmts: []string{
+			`CREATE TABLE workflow_runs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	workflow_id INTEGER NOT NULL REFERENCES workflows (id) ON DELETE CASCADE,
+	event_id TEXT NOT NULL REFERENCES automation_events (id) ON DELETE CASCADE,
+	status TEXT NOT NULL CHECK (status IN ('queued', 'processing', 'published', 'published_with_fallback', 'partially_published', 'failed', 'cancelled')),
+	source_message_id INTEGER NOT NULL CHECK (source_message_id > 0),
+	original_content TEXT NOT NULL DEFAULT '',
+	polished_content TEXT NOT NULL DEFAULT '',
+	ai_status TEXT NOT NULL CHECK (ai_status IN ('not_used', 'succeeded', 'failed', 'fallback_used')),
+	ai_fallback_used INTEGER NOT NULL DEFAULT 0 CHECK (ai_fallback_used IN (0, 1)),
+	ai_model TEXT NOT NULL DEFAULT '',
+	ai_error_code TEXT NOT NULL DEFAULT '',
+	ai_error_message TEXT NOT NULL DEFAULT '',
+	ai_input_tokens INTEGER NOT NULL DEFAULT 0,
+	ai_output_tokens INTEGER NOT NULL DEFAULT 0,
+	ai_duration_ms INTEGER NOT NULL DEFAULT 0,
+	config_revision INTEGER NOT NULL DEFAULT 0,
+	attempt_count INTEGER NOT NULL DEFAULT 0,
+	last_error_code TEXT NOT NULL DEFAULT '',
+	last_error_message TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	started_at TEXT,
+	completed_at TEXT,
+	UNIQUE (workflow_id, event_id))`,
+			`CREATE INDEX workflow_runs_list_idx ON workflow_runs (workflow_id, created_at)`,
+			`CREATE INDEX workflow_runs_status_idx ON workflow_runs (status, created_at)`,
+			// One result per destination. A destination that already published is
+			// never published again on retry: this row is the proof.
+			`CREATE TABLE workflow_publications (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	workflow_run_id INTEGER NOT NULL REFERENCES workflow_runs (id) ON DELETE CASCADE,
+	destination_type TEXT NOT NULL CHECK (destination_type IN ('telegram', 'wordpress')),
+	client_key TEXT NOT NULL DEFAULT '',
+	channel_id INTEGER NOT NULL DEFAULT 0,
+	site_id INTEGER NOT NULL DEFAULT 0,
+	status TEXT NOT NULL CHECK (status IN ('pending', 'published', 'failed', 'unknown')),
+	remote_message_id INTEGER NOT NULL DEFAULT 0,
+	remote_post_id INTEGER NOT NULL DEFAULT 0,
+	remote_url TEXT NOT NULL DEFAULT '',
+	attempt_count INTEGER NOT NULL DEFAULT 0,
+	last_error_code TEXT NOT NULL DEFAULT '',
+	last_error_message TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	completed_at TEXT,
+	UNIQUE (workflow_run_id, destination_type, client_key, channel_id, site_id))`,
+			`CREATE INDEX workflow_publications_remote_idx ON workflow_publications (destination_type, client_key, channel_id, remote_message_id)`,
+		},
+	},
+	{
+		version: 15,
+		name:    "automation_outbound_messages",
+		stmts: []string{
+			// Every message Telesync itself put into a Telegram channel, whatever
+			// put it there. Ingestion checks this before creating an event, which
+			// is what stops a workflow from feeding itself.
+			`CREATE TABLE automation_outbound_messages (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	network_key TEXT NOT NULL CHECK (length(trim(network_key)) > 0),
+	client_key TEXT NOT NULL CHECK (length(trim(client_key)) > 0),
+	channel_id INTEGER NOT NULL,
+	remote_message_id INTEGER NOT NULL CHECK (remote_message_id > 0),
+	origin TEXT NOT NULL CHECK (origin IN ('manual', 'workflow')),
+	origin_id INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL,
+	UNIQUE (network_key, client_key, channel_id, remote_message_id))`,
+			`CREATE INDEX automation_outbound_messages_lookup_idx ON automation_outbound_messages (client_key, channel_id, remote_message_id)`,
+		},
+	},
 }
 
 // migrate brings the schema up to the latest version.

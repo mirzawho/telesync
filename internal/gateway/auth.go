@@ -302,6 +302,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, requestID string) {
 		Users:      a.auth.CanList(channelstore.KindUser),
 		Servers:    a.auth.Global(channelstore.PermissionServersView),
 		Content:    a.auth.Global(channelstore.PermissionContentPublish),
+		Automation: a.auth.Global(channelstore.PermissionAutomationView),
 	}
 	writeJSON(w, http.StatusOK, envelope{
 		Data: view,

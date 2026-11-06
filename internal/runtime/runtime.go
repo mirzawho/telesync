@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mirza/telesync/internal/appconfig"
+	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/gateway"
 	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/tgapi"
@@ -82,6 +83,15 @@ type Supervisor interface {
 }
 
 // DaemonOptions configures the daemon (supervisor + gateway) process.
+// BackgroundRunner drains the durable automation queue until its context ends.
+//
+// It is a separate concern from the supervisor: the supervisor keeps Telegram
+// workers alive, while this keeps the work those workers' messages imply
+// moving. Both stop together, so a shutdown does not strand a job mid-flight.
+type BackgroundRunner interface {
+	Run(ctx context.Context) error
+}
+
 type DaemonOptions struct {
 	Config     appconfig.Config
 	Supervisor Supervisor
@@ -120,6 +130,15 @@ type DaemonOptions struct {
 	// Panel serves the admin panel's static build under BasePath. Nil leaves
 	// the panel's addresses to the API's 404.
 	Panel http.Handler
+	// AutomationWebhooks, AutomationWorkflows and AutomationStatus serve the
+	// background automation area. A nil one makes its routes answer 503.
+	AutomationWebhooks  automation.WebhookService
+	AutomationWorkflows automation.WorkflowService
+	AutomationStatus    automation.AutomationStatusSource
+	// AutomationRunner drains the durable background queue. It runs beside the
+	// supervisor and stops with it, so automation needs neither an HTTP request
+	// nor an open browser to make progress. Nil runs no automation.
+	AutomationRunner BackgroundRunner
 	// BasePath is the prefix both the API and the panel are served under, as
 	// "/admin". Empty serves them at the listener's root.
 	BasePath string
@@ -209,7 +228,15 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		Docs:            opts.Docs,
 		Panel:           opts.Panel,
 		BasePath:        opts.BasePath,
-		Logf:            logf,
+		PublicBaseURL:   opts.Config.API.PublicBaseURL,
+		// The automation area, and what the status route reports about the
+		// subsystem the runner below is draining.
+		AutomationEnabled:   opts.Config.Automation.Enabled,
+		AutomationWorkers:   opts.Config.Automation.Workers,
+		AutomationWebhooks:  opts.AutomationWebhooks,
+		AutomationWorkflows: opts.AutomationWorkflows,
+		AutomationStatus:    opts.AutomationStatus,
+		Logf:                logf,
 	})
 
 	ln, err := listen(opts.Config.API.ListenAddr)
@@ -227,6 +254,16 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		supervisorDone <- nil
 	}
 
+	// The automation queue runs beside the supervisor and stops with it. This
+	// is what makes automation progress with no HTTP request and no open panel:
+	// the work lives in the database and is drained here.
+	automationDone := make(chan error, 1)
+	if opts.AutomationRunner != nil {
+		go func() { automationDone <- opts.AutomationRunner.Run(ctx) }()
+	} else {
+		automationDone <- nil
+	}
+
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -242,6 +279,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	case err := <-serveErr:
 		cancel()
 		<-supervisorDone
+		<-automationDone
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
@@ -257,6 +295,11 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 	// The supervisor stops its children after the API stops accepting work.
 	if err := <-supervisorDone; err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	// The queue drains to the same deadline: a job already claimed is either
+	// finished or released back for the next run, never left half-recorded.
+	if err := <-automationDone; err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	if shutdownErr != nil {

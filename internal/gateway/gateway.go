@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/rpc"
 )
@@ -111,6 +112,23 @@ type Config struct {
 	// Idempotency-Key cannot publish twice. Nil lets a request without such a
 	// key through and answers a request with one with 503.
 	Publishes PublishStore
+	// PublicBaseURL is the externally reachable origin of this installation,
+	// the prefix a webhook receiver uses to open a media link. It is only read
+	// to refuse enabling a webhook that would have to send a relative URL; no
+	// route returns it.
+	PublicBaseURL string
+	// AutomationEnabled and AutomationWorkers describe the background
+	// subsystem for the status route. They are reporting only.
+	AutomationEnabled bool
+	AutomationWorkers int
+	// AutomationWebhooks serves webhook configuration and delivery history.
+	// Nil answers the automation routes with 503.
+	AutomationWebhooks automation.WebhookService
+	// AutomationWorkflows serves workflow configuration and run history. Nil
+	// answers the workflow routes with 503.
+	AutomationWorkflows automation.WorkflowService
+	// AutomationStatus reports queue health. Nil leaves the counters at zero.
+	AutomationStatus automation.AutomationStatusSource
 	// Logf receives one line per request failure. Nil discards.
 	Logf func(format string, args ...any)
 }
@@ -167,6 +185,19 @@ const (
 	CodePublishWordPressTimeout      = "publish_wordpress_timeout"
 	CodePublishWordPressUnreachable  = "publish_wordpress_unreachable"
 	CodePublishWordPressIncompatible = "publish_wordpress_incompatible"
+	// Background automation. The prefix names the area, so a client can tell a
+	// refused automation change from an ordinary validation failure.
+	// CodeAutomationUnavailable means the subsystem is not wired into this
+	// deployment, which is not the same as it being switched off.
+	CodeAutomationUnavailable = "automation_unavailable"
+	// CodeAutomationBaseURLRequired refuses enabling a webhook that would have
+	// to send a relative media link a receiver could not open.
+	CodeAutomationBaseURLRequired = "public_base_url_required"
+	CodeAutomationSourceDenied    = "automation_source_forbidden"
+	CodeAutomationDestDenied      = "automation_destination_forbidden"
+	// CodeAutomationConflict is a uniqueness refusal, most often a second
+	// workflow for one managed channel.
+	CodeAutomationConflict = "conflict"
 )
 
 // Error is the documented error body.
@@ -274,7 +305,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, requestID stri
 		return
 	case underPath(path, categoriesPrefix) || underPath(path, usersPrefix) ||
 		underPath(path, localChannelsPrefix) || underPath(path, wordpressPrefix) ||
-		underPath(path, statsPrefix):
+		underPath(path, statsPrefix) || underPath(path, automationPrefix):
 		// Local users, categories, channels and the dashboard's counts are this
 		// application's data, not any one Telegram account's.
 		if underPath(path, statsPrefix) && s.missingStatsStores() {

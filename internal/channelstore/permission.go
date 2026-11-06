@@ -72,6 +72,19 @@ const (
 	// a message. Which destinations the account may name is decided by the
 	// ordinary visibility rule, not by this permission.
 	PermissionContentPublish GlobalPermission = "content.publish"
+	// PermissionAutomationView lets an account see the automation area: the
+	// webhook and workflow configurations and their execution history. Seeing
+	// history means seeing message content, so this is not implied by any
+	// channel right.
+	PermissionAutomationView GlobalPermission = "automation.view"
+	// PermissionWebhooksManage lets an account create, change and delete
+	// webhooks and retry their deliveries. A webhook sends message content to
+	// a URL of the operator's choosing, so this is kept apart from publishing.
+	PermissionWebhooksManage GlobalPermission = "webhooks.manage"
+	// PermissionWorkflowsManage lets an account create, change and delete
+	// workflows and their destinations. It does not by itself publish anything:
+	// the publishing right is still content.publish.
+	PermissionWorkflowsManage GlobalPermission = "workflows.manage"
 )
 
 var globalPermissions = []GlobalPermission{
@@ -85,6 +98,9 @@ var globalPermissions = []GlobalPermission{
 	PermissionWordPressManage,
 	PermissionServersView,
 	PermissionContentPublish,
+	PermissionAutomationView,
+	PermissionWebhooksManage,
+	PermissionWorkflowsManage,
 }
 
 // GlobalPermissions lists every global permission, in a stable order.

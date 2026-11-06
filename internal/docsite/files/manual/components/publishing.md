@@ -73,6 +73,31 @@ A site that answers a redirect, HTML or a non-REST page is
 `publish_wordpress_incompatible`; a site that cannot be reached is
 `publish_wordpress_unreachable`. The credential is never returned.
 
+## Failure stages
+
+A publish with media is two transfers, and they fail separately. The codes name
+the stage, so a caller knows which one to do something about:
+
+| `code` | Stage | Nothing was | Retry |
+| --- | --- | --- | --- |
+| `publish_source_media_unavailable` | the source connection could not read the source attachment | sent anywhere | yes, or `media.mode: "omit"` to publish the text alone |
+| `publish_media_upload_failed` | the attachment was read and the destination would not take the post carrying it | published | after checking the destination |
+| `publish_unsupported` | the destination cannot take this content at all | published | no |
+| `publish_media_too_large` | the attachment is above the 32 MiB send limit | published | no |
+
+`publish_source_media_unavailable` is a source failure and only that: the
+destination is never named, blamed or reached, and the draft is exactly as the
+caller left it. `publish_media_upload_failed` is the opposite stage and is never
+reported in its place. An attachment that is read is read through the connection
+that recorded the source message; an attachment that is sent is sent through the
+destination named in the path. The two are different accounts and never share a
+session, a peer store or a file reference.
+
+Nothing is published without its attachment by accident. A draft that says
+`preserve_source` and whose attachment cannot be read is refused before the
+message is created; the only way a post leaves without its attachment is an
+explicit `omit`.
+
 ## Idempotency
 
 Send an `Idempotency-Key` header and the attempt is recorded:

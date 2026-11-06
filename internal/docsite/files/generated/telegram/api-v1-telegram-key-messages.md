@@ -7,21 +7,18 @@
 
 | Method | Path | Auth conditions | Success |
 | --- | --- | --- | --- |
-| POST | `/api/v1/telegram/{key}/messages` | 3 | `200` |
+| POST | `/api/v1/telegram/{key}/messages` | 1 | `200` |
 
 ## POST
 
 - **Handler:** `Server.publishTelegram` (publish.go)
 - **Success:** `writeJSON` with `answer`, status `StatusOK (200)`
-- **Request body:** `publishRequest` ([schema](../schemas/publishrequest.json))
 - **Documentation:** [telegram](../../manual/components/telegram.md)
 - **Documentation:** [publishing](../../manual/components/publishing.md)
 
 ### Authorization conditions in the source
 
 - `a.auth.Global(channelstore.PermissionContentPublish)  (publish.go:publishTelegram)`
-- `authr.Allowed(kind, action, localID)  (access.go:visible)`
-- `authr.CanList(kind)  (access.go:visible)`
 
 What these mean for who may call the route is in the authentication paragraph; the conditions are checked, not interpreted.
 

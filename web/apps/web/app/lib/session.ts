@@ -45,6 +45,9 @@ export interface Me {
     categories: boolean
     users: boolean
     servers: boolean
+    // automation is the "automation.view" global permission: the automation
+    // area and its histories. A summary that omits the flag grants nothing.
+    automation: boolean
   }
 }
 

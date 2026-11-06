@@ -230,3 +230,75 @@ DELETE /api/v1/local/users/{{user}}
 # --- local: stats --------------------------------------------------------
 
 GET /api/v1/local/stats/dashboard
+
+# --- local: automation ---------------------------------------------------
+#
+# The background automation area: webhooks and workflows. The examples create
+# one of each, edit it and delete it. They are deliberately written with the
+# webhook disabled: enabling one needs api.public_base_url to be configured, and
+# a documentation example must not depend on an operator's deployment settings.
+
+GET /api/v1/local/automation
+
+GET /api/v1/local/automation/status
+
+GET /api/v1/local/automation/webhooks
+
+POST /api/v1/local/automation/webhooks/capture:webhook
+Content-Type: application/json
+
+	{
+	  "name": "Documented webhook",
+	  "description": "Sends new messages to an external API",
+	  "enabled": false,
+	  "url": "https://example.com/telesync/incoming",
+	  "method": "POST",
+	  "auth_mode": "hmac",
+	  "secret": "whsec_ZXhhbXBsZS1kb2N1bWVudGF0aW9uLWtleQ==",
+	  "source_channel_ids": [1]
+	}
+
+GET /api/v1/local/automation/webhooks/{{webhook}}
+
+PATCH /api/v1/local/automation/webhooks/{{webhook}}
+Content-Type: application/json
+
+	{
+	  "name": "Documented webhook (renamed)"
+	}
+
+GET /api/v1/local/automation/webhooks/{{webhook}}/deliveries
+
+POST /api/v1/local/automation/webhooks/{{webhook}}/test
+
+DELETE /api/v1/local/automation/webhooks/{{webhook}}
+
+GET /api/v1/local/automation/workflows
+
+POST /api/v1/local/automation/workflows/capture:workflow
+Content-Type: application/json
+
+	{
+	  "managed_channel_id": 1,
+	  "enabled": false,
+	  "ai_enabled": false,
+	  "ai_prompt": "",
+	  "ai_send_images": false,
+	  "ai_publish_on_failure": false,
+	  "destinations": []
+	}
+
+GET /api/v1/local/automation/workflows/{{workflow}}
+
+PATCH /api/v1/local/automation/workflows/{{workflow}}
+Content-Type: application/json
+
+	{
+	  "enabled": false,
+	  "ai_enabled": true,
+	  "ai_publish_on_failure": false
+	}
+
+GET /api/v1/local/automation/workflows/{{workflow}}/runs
+
+DELETE /api/v1/local/automation/workflows/{{workflow}}

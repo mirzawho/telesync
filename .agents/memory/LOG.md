@@ -1016,3 +1016,89 @@ expected.
 VERIFIED: `npm test` 311 green (content 26, media 19, panel 109, publish 108
 including the new article-link tests, administrators 49); `npm run typecheck`
 clean. NOT verified: in a browser, and a live WordPress publish with links.
+
+## 2026-11-06 — v0.0.3: background automation, webhooks and AI publishing
+
+- Added the durable automation subsystem. One shared ingestion path normalizes
+  new channel messages into `automation_events` (identity derived from type,
+  network, channel and message, so a replay is the same event and two accounts
+  on one network are one event) and fans out to a SQLite job queue.
+- `automation_jobs` claims work in a transaction with a lease, retries with
+  bounded backoff that honours a provider's own delay, and preserves per-target
+  chronological order. A job that failed for good is recorded and does not block
+  the ones behind it.
+- Webhooks deliver a CloudEvents envelope with media as metadata plus a
+  URL — never bytes — to an SSRF-restricted transport, with four authentication
+  modes and Standard-Webhooks-compatible HMAC. Every request and response is
+  stored, redacted and truncated, and a retry extends the same delivery.
+- One workflow per managed channel publishes to Telegram and WordPress through
+  the extracted v0.0.2 publisher. AI polishing is optional, off by default, and
+  blocks publication on failure unless the workflow opted into fallback.
+  Images are excluded from the AI by default and still reach the destination.
+- Loop prevention records every publication this installation makes and
+  suppresses it on the way back in.
+- A workflow publishes under the authority of the account that created it,
+  re-read at every execution. The operator token is not an account, so a
+  workflow created through it cannot be switched on.
+- Fixed `internal/docsgen`'s permission extraction: it scanned
+  `internal/gateway` for permission constants that live in
+  `internal/channelstore`, so `facts.json`'s `permissions` had been `null` and
+  no permission was documented at all.
+- Fixed a permission drift in the panel: the desktop sidebar iterated the raw
+  `navItems` and so ignored access, while the bottom nav filtered correctly.
+- Added three global permissions: `automation.view`, `webhooks.manage`,
+  `workflows.manage`.
+- **Verified:** `gofmt -l .`, `go vet ./...`, `go test ./... -count=1`,
+  `go build ./...`, `go run ./cmd/docsgen --check`, `go test ./internal/apidocs`,
+  `cd web && npm run typecheck`, `cd web/apps/web && npm test` (426 passing).
+  **Not verified:** no live Telegram, WordPress, AI provider or webhook
+  receiver; no browser session. `internal/worker`'s socket tests fail on this
+  machine because the Unix socket path exceeds `sun_path`; the package is
+  untouched by this release.
+
+## 2026-11-06 — v0.0.3 integration: the UI was unreachable and the listener was silent
+
+- **Why the automation UI was invisible.** Two independent causes, both confirmed:
+  the embedded panel (`internal/panel/files`, folded into the binary at build
+  time) had been built before the automation UI existed — `go build` embeds that
+  directory and never rebuilds the frontend — and the v0.0.3 source was
+  uncommitted in one worktree, so `main` and every CI-built image
+  (`ghcr.io/mirzawho/telesync`) carried none of it. Rebuilt with
+  `node web/scripts/build-panel.mjs`; the served bundle now contains nine
+  automation routes.
+- **The MTProto listener is wired.** `internal/profile/profile.go:180`'s no-op
+  `UpdateHandler` is now a seam filled by gotd's `updates.Manager`. A worker
+  normalizes one bounded observation per new channel message and sends it over a
+  private `automation.sock` to the daemon, which persists it and fans out to the
+  queue. Media crosses as metadata only.
+  **Ordering:** gotd advances pts/qts/seq only after the handler returns, and
+  the handler returns only after the daemon has committed the event, so the
+  stored counter can never run ahead of the stored event. A crash between the
+  two replays the message, which deduplication turns into a no-op.
+- Fixed in `internal/gateway/automation.go`: the webhook test-send needed only
+  `automation.view` though it dispatches a real signed request; a delivery retry
+  never re-checked the caller could see the webhook; `validAuthHeader` accepted
+  `Webhook-Anything` rather than refusing the whole `webhook-` prefix.
+- Fixed: `ListWebhooks`/`ListWorkflows` ignored the visibility restriction and
+  so listed other accounts' rows and counted them in `total`; `ListWebhooks`
+  never loaded `source_channel_ids`.
+- Fixed: a malformed `whsec_` secret was sealed happily and only failed at the
+  first delivery. It is now refused where it is typed.
+- Fixed: `serveLocal`'s default answered 405 to an unknown sub-path instead of
+  404, so a mistyped address read as a wrong method.
+- **Found by a real browser, missed by every test:** the status screen read the
+  response envelope as the record, so a live subsystem rendered as "اتوماسیون
+  غیرفعال است" with zero workers. `statusRecord` unwraps it; pinned by a test.
+- Verified in a real authenticated browser against a running daemon built from
+  this worktree: the sidebar entry `اتوماسیون`, the overview, the webhook list
+  and its create form at `/automation/webhooks/new`, the workflow list, and the
+  mobile overflow (`بیشتر`, 44px rows, anchored above the pill, active on nested
+  routes).
+- **Verified:** `gofmt -l .`, `go vet ./...`, `go test ./... -count=1`,
+  `go build ./cmd/telesync`, `go run ./cmd/docsgen --check`,
+  `go test ./internal/apidocs`, `npm run typecheck`, `npm test` (477 passing).
+  **Not verified:** nothing was exercised against a live Telegram account,
+  WordPress site, AI provider or webhook receiver; no credentials exist in this
+  checkout. `internal/worker`'s two socket tests still fail because the temp
+  path (112 bytes) exceeds macOS's `sun_path` (104) — pre-existing,
+  environmental, and `internal/worker` is unchanged by this release.

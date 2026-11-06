@@ -7,7 +7,7 @@
 
 | Method | Path | Auth conditions | Success |
 | --- | --- | --- | --- |
-| GET | `/api/v1/auth/me` | 5 | `200` |
+| GET | `/api/v1/auth/me` | 6 | `200` |
 
 ## GET
 
@@ -20,6 +20,7 @@
 - `a.auth.CanList(channelstore.KindCategory)  (auth.go:me)`
 - `a.auth.CanList(channelstore.KindChannel)  (auth.go:me)`
 - `a.auth.CanList(channelstore.KindUser)  (auth.go:me)`
+- `a.auth.Global(channelstore.PermissionAutomationView)  (auth.go:me)`
 - `a.auth.Global(channelstore.PermissionContentPublish)  (auth.go:me)`
 - `a.auth.Global(channelstore.PermissionServersView)  (auth.go:me)`
 
@@ -48,7 +49,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>operator: GET /api/v1/auth/me → 200</summary>
 
 ```json
-{"data":{"id":0,"fullname":"","username":"operator","is_active":true,"created_at":"","updated_at":"","access":{"channels":true,"categories":true,"users":true,"servers":true,"content":true}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"id":0,"fullname":"","username":"operator","is_active":true,"created_at":"","updated_at":"","access":{"channels":true,"categories":true,"users":true,"servers":true,"content":true,"automation":true}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -57,7 +58,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>limited user: GET /api/v1/auth/me → 200</summary>
 
 ```json
-{"data":{"id":2,"fullname":"Documented Limited User","username":"doc-limited","is_active":true,"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z","permissions":{"global":[],"channels":[],"categories":[{"category_id":1,"view":"allow","update":"allow","delete":"allow"}],"wordpress":[]},"access":{"channels":false,"categories":false,"users":false,"servers":false,"content":false}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"id":2,"fullname":"Documented Limited User","username":"doc-limited","is_active":true,"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z","permissions":{"global":[],"channels":[],"categories":[{"category_id":1,"view":"allow","update":"allow","delete":"allow"}],"wordpress":[]},"access":{"channels":false,"categories":false,"users":false,"servers":false,"content":false,"automation":false}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -66,7 +67,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>administrator: GET /api/v1/auth/me → 200</summary>
 
 ```json
-{"data":{"id":1,"fullname":"Documented Administrator","username":"admin","is_active":true,"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z","permissions":{"global":["categories.create","categories.view","channels.create","channels.view","content.publish","servers.view","users.manage","users.view","wordpress.create","wordpress.view"],"channels":[],"categories":[],"wordpress":[]},"access":{"channels":true,"categories":true,"users":true,"servers":true,"content":true}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"id":1,"fullname":"Documented Administrator","username":"admin","is_active":true,"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z","permissions":{"global":["automation.view","categories.create","categories.view","channels.create","channels.view","content.publish","servers.view","users.manage","users.view","webhooks.manage","wordpress.create","wordpress.view","workflows.manage"],"channels":[],"categories":[],"wordpress":[]},"access":{"channels":true,"categories":true,"users":true,"servers":true,"content":true,"automation":true}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -80,7 +81,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>GET /api/v1/auth/me → 200</summary>
 
 ```json
-{"data":{"id":0,"fullname":"","username":"operator","is_active":true,"created_at":"","updated_at":"","access":{"channels":true,"categories":true,"users":true,"servers":true,"content":true}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"id":0,"fullname":"","username":"operator","is_active":true,"created_at":"","updated_at":"","access":{"channels":true,"categories":true,"users":true,"servers":true,"content":true,"automation":true}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -89,7 +90,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>GET /api/v1/auth/me → 200</summary>
 
 ```json
-{"data":{"id":0,"fullname":"","username":"operator","is_active":true,"created_at":"","updated_at":"","access":{"channels":true,"categories":true,"users":true,"servers":true,"content":true}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"id":0,"fullname":"","username":"operator","is_active":true,"created_at":"","updated_at":"","access":{"channels":true,"categories":true,"users":true,"servers":true,"content":true,"automation":true}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 

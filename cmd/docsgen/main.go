@@ -23,7 +23,11 @@ import (
 	"time"
 
 	"github.com/mirza/telesync/internal/apidocs"
+	"github.com/mirza/telesync/internal/appconfig"
 	"github.com/mirza/telesync/internal/auth"
+	"github.com/mirza/telesync/internal/automation/queue"
+	"github.com/mirza/telesync/internal/automation/webhooks"
+	"github.com/mirza/telesync/internal/automation/workflows"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/docsgen"
 	"github.com/mirza/telesync/internal/gateway"
@@ -191,8 +195,61 @@ func (p *prober) seed(ctx context.Context) error {
 		WordPress:       p.store,
 		Secrets:         probeSeal,
 		WordPressClient: wordpress.NewClient(wordpress.WithTransport(scriptedSite(probeClock))),
+		// The automation routes are observed the way the daemon wires them:
+		// the real webhook and workflow services over the real store and the
+		// real queue, with the clock fixed so two runs of the generator produce
+		// byte-identical exchanges. Only the receiver is scripted.
+		AutomationWebhooks:  docWebhookService(p.store, probeSeal, probeClock),
+		AutomationWorkflows: &workflows.Service{Store: p.store},
+		AutomationStatus:    &workflows.Status{Store: p.store},
+		PublicBaseURL:       docPublicBaseURL,
+		AutomationEnabled:   true,
+		AutomationWorkers:   2,
 	})
 	return nil
+}
+
+// docPublicBaseURL stands for api.public_base_url: the origin a webhook
+// receiver resolves a media link against. Nothing connects to it.
+const docPublicBaseURL = "https://telesync.example"
+
+// docWebhookService builds the real webhook service over the probe's store.
+func docWebhookService(store *channelstore.Store, box webhooks.Secrets, now func() time.Time) *webhooks.Service {
+	enqueuer := queue.NewEnqueuer(store, 5)
+	svc, err := webhooks.New(webhooks.Config{
+		PublicBaseURL: docPublicBaseURL,
+		Webhooks: appconfig.WebhookConfig{
+			Timeout:                 15 * time.Second,
+			MaxAttempts:             5,
+			MaxResponseBytes:        64 << 10,
+			MaxConcurrentDeliveries: 4,
+		},
+		Store:     store,
+		Secrets:   box,
+		Events:    store.AutomationEvent,
+		Jobs:      enqueuer,
+		Reopen:    enqueuer.Reopen,
+		Now:       now,
+		Transport: scriptedReceiver{},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return svc
+}
+
+// scriptedReceiver stands in for the endpoint a webhook posts to, as
+// scriptedSite stands in for WordPress. The request, its signature and the
+// attempt record are all real; only the socket is absent.
+type scriptedReceiver struct{}
+
+func (scriptedReceiver) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"received":true}`)),
+	}, nil
 }
 
 // probeSeal seals the probe's WordPress credentials. The key is a placeholder

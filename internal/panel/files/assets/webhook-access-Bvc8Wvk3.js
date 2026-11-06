@@ -1,0 +1,1 @@
+function e(e){let t=e.permissions?.global;return Array.isArray(t)?t.includes(`webhooks.manage`):!!e.access?.automation}export{e as t};

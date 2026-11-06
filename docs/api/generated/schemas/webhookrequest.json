@@ -1,0 +1,74 @@
+{
+  "go_type": "webhookRequest",
+  "properties": {
+    "name": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "description": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "enabled": {
+      "go_type": "*bool",
+      "nullable": true,
+      "type": "boolean"
+    },
+    "url": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "method": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "auth_mode": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "auth_header": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "secret": {
+      "go_type": "*string",
+      "nullable": true,
+      "type": "string"
+    },
+    "timeout_ms": {
+      "go_type": "*int64",
+      "nullable": true,
+      "type": "integer"
+    },
+    "max_attempts": {
+      "go_type": "*int",
+      "nullable": true,
+      "type": "integer"
+    },
+    "source_channel_ids": {
+      "$ref": "#/components/schemas/int64",
+      "go_type": "[]int64",
+      "items": "int64",
+      "type": "array"
+    }
+  },
+  "required": [
+    "auth_header",
+    "auth_mode",
+    "description",
+    "enabled",
+    "max_attempts",
+    "method",
+    "name",
+    "secret",
+    "source_channel_ids",
+    "timeout_ms",
+    "url"
+  ]
+}

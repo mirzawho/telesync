@@ -1,0 +1,1 @@
+import{U as e,V as t}from"./utils-Ba9q0Lno.js";var n=e(t(),1),r=n.createContext({disabled:!1});function i(){return n.useContext(r)}export{i as t};

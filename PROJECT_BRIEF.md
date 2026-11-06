@@ -334,8 +334,19 @@ a new permission model opportunistically.
 | Telegram message publishing | Distribution | IMPLEMENTED | `POST /api/v1/telegram/{key}/messages`; gated by `content.publish`; live Telegram **not verified** |
 | WordPress post publishing | Distribution | IMPLEMENTED | `POST /api/v1/local/wordpress/{id}/posts` with tags and media; live site **not verified** |
 | Media transfer during publishing | Distribution | IMPLEMENTED | Source read → destination upload; 32 MiB cap; live transfer **not verified** |
-| Publication history | Operations | NOT IMPLEMENTED — REQUIRES OWNER DECISION | Not established as a requirement |
-| Scheduling / bulk publishing | Automation | NOT IMPLEMENTED — REQUIRES OWNER DECISION | Not established as a requirement |
+| Publication history | Operations | IMPLEMENTED (2026-11-06, for automation) | `workflow_runs` + `workflow_publications` and `webhook_deliveries` + `webhook_attempts`; manual publishing still records only its idempotency row |
+| Incoming message events | Automation | IMPLEMENTED | `automation_events` with a derived identity; deduplicated across accounts on one network; live Telegram **not verified** |
+| Background job queue | Automation | IMPLEMENTED | `automation_jobs`; transactional claiming, leases, backoff, per-target ordering, restart recovery |
+| Reconnection recovery | Automation | IMPLEMENTED | gotd `telegram/updates` state over SQLite plus a bounded history fallback; live gap recovery **not verified** |
+| Outbound webhooks | Automation | IMPLEMENTED | CRUD, four auth modes, SSRF-restricted delivery, retries; live delivery **not verified** |
+| Webhook request/response history | Automation | IMPLEMENTED | every request and response stored, redacted and truncated; UI shows the real attempt records |
+| One workflow per source channel | Automation | IMPLEMENTED | `UNIQUE (managed_channels.id)` in the schema, refused in the service and the route |
+| Automatic publishing to Telegram / WordPress | Automation | IMPLEMENTED | reuses the v0.0.2 publisher; per-destination results; partial failure reported as such |
+| AI message polishing | Automation | IMPLEMENTED | OpenAI-compatible Chat Completions, default and custom prompts, validated structured output; **no live provider tested** |
+| Optional AI image input | Automation | IMPLEMENTED | off by default, images only, bounded; independent of destination media |
+| AI failure fallback | Automation | IMPLEMENTED | publishing is blocked by default; opt-in fallback publishes the original and is labelled as such |
+| Automation administration UI | Operations | IMPLEMENTED | webhooks, deliveries, workflows, run history, Persian RTL, permission-based navigation; **no browser session available to verify** |
+| Scheduling / bulk publishing | Automation | NOT IMPLEMENTED — REQUIRES OWNER DECISION | Out of scope for v0.0.3: no cron, no arbitrary workflow graphs |
 
 ## 10. What exists technically (summary)
 
@@ -362,10 +373,23 @@ HTTP / panel → daemon (gateway + supervisor + SQLite + caches)
   authorization rule; it also serves `/docs` and the panel (under `/admin`,
   with the API at `/admin/api/v1`). A binary built without the panel answers
   503.
-- `internal/channelstore` SQLite (migrations 1–5): `managed_channels`,
+- `internal/channelstore` SQLite (migrations 1–15): `managed_channels`,
   `categories`, `channel_categories`, `users`, `user_permissions`,
   `user_channels_permission`, `user_categories_permission`, `wordpress_sites`,
-  `user_wordpress_permission`, `wordpress_site_categories`. **No message table.**
+  `user_wordpress_permission`, `wordpress_site_categories`,
+  `publish_operations`, and the automation tables (`automation_events`,
+  `automation_event_sources`, `automation_jobs`, `automation_checkpoints`,
+  `automation_update_states`, `automation_channel_pts`, `automation_peer_hashes`,
+  `webhooks`, `webhook_sources`, `webhook_deliveries`, `webhook_attempts`,
+  `workflows`, `workflow_destinations`, `workflow_runs`,
+  `workflow_publications`, `automation_outbound_messages`). **Still no message
+  table:** an event keeps a bounded snapshot of one message; it is not a
+  message store.
+- `internal/automation` the background subsystem: `events` (normalization,
+  identity, ingestion), `queue` (the durable job runner), `recovery` (durable
+  update state and the bounded backfill), `webhooks`, `workflows`, `publishing`
+  (the v0.0.2 pipeline, callable from both the route and a background job),
+  `ai`.
 - `internal/avatarcache`, `internal/secrets`, `internal/wordpress`,
   `internal/auth`.
 - `web/` the real panel (React Router 8, React 19, Vite 8, TypeScript 6,

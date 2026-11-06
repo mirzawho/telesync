@@ -7,21 +7,18 @@
 
 | Method | Path | Auth conditions | Success |
 | --- | --- | --- | --- |
-| POST | `/api/v1/local/wordpress/{id}/posts` | 3 | `200` |
+| POST | `/api/v1/local/wordpress/{id}/posts` | 1 | `200` |
 
 ## POST
 
 - **Handler:** `Server.publishWordPress` (publish.go)
 - **Success:** `writeJSON` with `answer`, status `StatusOK (200)`
-- **Request body:** `wpPostRequest` ([schema](../schemas/wppostrequest.json))
 - **Documentation:** [wordpress](../../manual/components/wordpress.md)
 - **Documentation:** [publishing](../../manual/components/publishing.md)
 
 ### Authorization conditions in the source
 
 - `a.auth.Global(channelstore.PermissionContentPublish)  (publish.go:publishWordPress)`
-- `authr.Allowed(kind, action, localID)  (access.go:visible)`
-- `authr.CanList(kind)  (access.go:visible)`
 
 What these mean for who may call the route is in the authentication paragraph; the conditions are checked, not interpreted.
 

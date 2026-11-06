@@ -55,11 +55,27 @@ requests after it.
 | GET | `/api/v1/local/users/{user_id}/permissions` | — | below |
 | PUT | `/api/v1/local/users/{user_id}/permissions` | — | below |
 | GET | `/api/v1/local/stats/dashboard` | — | below |
+| GET | `/api/v1/local/automation` | — | below |
+| GET | `/api/v1/local/automation/status` | — | below |
+| GET | `/api/v1/local/automation/webhooks` | — | below |
+| POST | `/api/v1/local/automation/webhooks` | `webhook` | below |
+| GET | `/api/v1/local/automation/webhooks/{webhook_id}` | — | below |
+| PATCH | `/api/v1/local/automation/webhooks/{webhook_id}` | — | below |
+| DELETE | `/api/v1/local/automation/webhooks/{webhook_id}` | — | below |
+| POST | `/api/v1/local/automation/webhooks/{webhook_id}/test` | — | below |
+| GET | `/api/v1/local/automation/webhooks/{webhook_id}/deliveries` | — | below |
+| GET | `/api/v1/local/automation/workflows` | — | below |
+| POST | `/api/v1/local/automation/workflows` | `workflow` | below |
+| GET | `/api/v1/local/automation/workflows/{workflow_id}` | — | below |
+| PATCH | `/api/v1/local/automation/workflows/{workflow_id}` | — | below |
+| DELETE | `/api/v1/local/automation/workflows/{workflow_id}` | — | below |
+| GET | `/api/v1/local/automation/workflows/{workflow_id}/runs` | — | below |
 
-`category`, `site` and `user` are ids the API assigns: `api.http` creates them,
-captures them and substitutes them into the later requests, and the test runs the file
-in order. `{key}`, `{channel_id}` and `{message_id}` are the table's variable
-names; the file uses `official`, `1671633563` and `1233` as example values.
+`category`, `site`, `user`, `webhook` and `workflow` are ids the API assigns:
+`api.http` creates them, captures them and substitutes them into the later
+requests, and the test runs the file in order. `{key}`, `{channel_id}` and
+`{message_id}` are the table's variable names; the file uses `official`,
+`1671633563` and `1233` as example values.
 
 The curl form of every request is in
 [the legacy examples page](../manual/legacy/examples/README.md), which predates

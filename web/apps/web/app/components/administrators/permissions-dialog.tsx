@@ -47,7 +47,7 @@ import type {
   WordPressSite,
 } from "@/lib/types"
 
-// The permissions dialog: one editable draft behind six tabs. Every tab reads
+// The permissions dialog: one editable draft behind seven tabs. Every tab reads
 // and writes that same draft, and nothing here submits on its own — the save is
 // the footer's one button, and leaving the dialog throws the draft away.
 //
@@ -62,6 +62,7 @@ export const permissionsTabs = [
   { value: "channels", label: "کانال‌ها" },
   { value: "wordpress", label: "سایت‌های وردپرسی" },
   { value: "users", label: "مدیرها" },
+  { value: "automation", label: "اتوماسیون" },
   { value: "general", label: "عمومی" },
 ] as const
 
@@ -234,6 +235,18 @@ export function AdministratorPermissionsContent({
                 flags={[
                   { value: "users.view", label: "مشاهده مدیرها" },
                   { value: "users.manage", label: "مدیریت مدیرها" },
+                ]}
+              />
+            </TabsContent>
+            <TabsContent value="automation" className="mt-0">
+              <PermissionFlags
+                title="اتوماسیون"
+                draft={draft}
+                onDraftChange={onDraftChange}
+                flags={[
+                  { value: "automation.view", label: "مشاهده اتوماسیون" },
+                  { value: "webhooks.manage", label: "مدیریت وب‌هوک‌ها" },
+                  { value: "workflows.manage", label: "مدیریت ورک‌فلوها" },
                 ]}
               />
             </TabsContent>

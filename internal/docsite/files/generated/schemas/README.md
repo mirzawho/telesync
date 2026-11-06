@@ -14,8 +14,8 @@ These JSON Schema documents are rendered from the request types in `internal/gat
 | `leaveRequest` | [leaverequest.json](leaverequest.json) |
 | `loginRequest` | [loginrequest.json](loginrequest.json) |
 | `permissionsRequest` | [permissionsrequest.json](permissionsrequest.json) |
-| `publishRequest` | [publishrequest.json](publishrequest.json) |
 | `updateUserRequest` | [updateuserrequest.json](updateuserrequest.json) |
+| `webhookRequest` | [webhookrequest.json](webhookrequest.json) |
 | `wordpressPermissionsEntry` | [wordpresspermissionsentry.json](wordpresspermissionsentry.json) |
 | `wordpressRequest` | [wordpressrequest.json](wordpressrequest.json) |
-| `wpPostRequest` | [wppostrequest.json](wppostrequest.json) |
+| `workflowRequest` | [workflowrequest.json](workflowrequest.json) |

@@ -10,9 +10,11 @@ import (
 
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
+	"github.com/mirza/telesync/internal/automation/recovery"
 	"github.com/mirza/telesync/internal/peerstore"
 	"github.com/mirza/telesync/internal/profile"
 	"github.com/mirza/telesync/internal/tgapi"
@@ -72,6 +74,12 @@ type Manager struct {
 	// eventf emits one line per connection transition. Never nil after
 	// NewManager.
 	eventf func(format string, args ...any)
+	// automation turns on the update listener when set.
+	automation *AutomationOptions
+	// updatesMgr is the current generation's gotd update manager. It is rebuilt
+	// per client generation and reloads its counters from the daemon, so a
+	// reconnect resumes where the durable state left off. Guarded by mu.
+	updatesMgr *updates.Manager
 }
 
 // ManagerOptions configures the manager.
@@ -98,6 +106,40 @@ type ManagerOptions struct {
 	// Now overrides the clock, which dates the cached custom-emoji set
 	// (tests). Nil means time.Now.
 	Now func() time.Time
+	// Automation turns on the MTProto update listener, so new channel messages
+	// reach the durable automation pipeline. Nil leaves updates discarded (the
+	// pre-automation behaviour).
+	Automation *AutomationOptions
+}
+
+// AutomationOptions is what the update listener needs to reach the daemon.
+//
+// The worker holds no database, so both the observations and the update counter
+// cross to the daemon over the private automation bridge. State and Checkpoints
+// are the two halves of gotd's durable update state: the counters say where
+// Telegram's difference API got to, the checkpoints say which messages the gap
+// backfill has already consumed.
+type AutomationOptions struct {
+	// Sink receives one normalized observation per new channel message.
+	Sink IngestSink
+	// State persists gotd's pts/qts/seq counters in the daemon.
+	State recovery.StatePersistence
+	// Checkpoints persists the bounded gap-backfill high-water marks.
+	Checkpoints recovery.CheckpointStore
+	// NetworkKey is the network this connection belongs to, so two connections
+	// on one network describe one logical message.
+	NetworkKey string
+	// Read and Accept run the bounded gap backfill: Read lists up to limit
+	// message ids newer than afterID; Accept ingests one. Both may be nil, in
+	// which case a channel gap is reported as unrecoverable instead of being
+	// backfilled.
+	Read   backfillReader
+	Accept backfillAcceptor
+	// BackfillLimit bounds one gap-backfill batch. Zero means defaultBackfillBatch.
+	BackfillLimit int
+	// MaxChannelDifferenceConcurrency bounds concurrent getChannelDifference
+	// calls across tracked channels (gotd). Zero means unlimited.
+	MaxChannelDifferenceConcurrency int
 }
 
 // DefaultReconnect is the retry interval when the configuration does not set
@@ -118,13 +160,14 @@ func NewManager(spec *profile.Spec, opts ManagerOptions) *Manager {
 		reconnect = DefaultReconnect
 	}
 	m := &Manager{
-		spec:      spec,
-		log:       logw,
-		state:     tgapi.StateDisconnected,
-		ready:     make(chan struct{}),
-		peers:     opts.Peers,
-		reconnect: reconnect,
-		now:       opts.Now,
+		spec:       spec,
+		log:        logw,
+		state:      tgapi.StateDisconnected,
+		ready:      make(chan struct{}),
+		peers:      opts.Peers,
+		reconnect:  reconnect,
+		now:        opts.Now,
+		automation: opts.Automation,
 	}
 	m.eventf = opts.OnEvent
 	if m.eventf == nil {
@@ -240,12 +283,52 @@ func (m *Manager) supervise(ctx context.Context) {
 
 // newClient builds one gotd client generation and publishes it.
 func (m *Manager) newClient() *telegram.Client {
+	// Build this generation's update manager first: it is the handler gotd must
+	// have before the client is constructed, and it reloads its counters from
+	// the daemon so a reconnect resumes instead of starting over.
+	mgr := m.buildUpdatesManager()
+	if mgr != nil {
+		m.spec.UpdateHandler = mgr
+	}
 	client := m.spec.NewClientWithBackoff(m.onConnectionState, m.log, nil)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.client = client
 	m.api = client.API()
+	m.updatesMgr = mgr
 	return client
+}
+
+// buildUpdatesManager wires the automation update listener for one client
+// generation. It returns nil when automation is off, leaving gotd's no-op
+// handler in place.
+func (m *Manager) buildUpdatesManager() *updates.Manager {
+	if m.automation == nil {
+		return nil
+	}
+	handler := newUpdateHandler(m.spec.Key, m.automation.NetworkKey, m.automation.Sink, m.now, m.eventf)
+
+	stateStore := recovery.NewStateStore(m.spec.Key, m.automation.State)
+	read, accept := m.automation.Read, m.automation.Accept
+	if read == nil {
+		read = m.backfillRead
+	}
+	if accept == nil {
+		accept = m.backfillAccept
+	}
+	bf := newBackfiller(m.spec.Key, m.automation.Checkpoints, read, accept, m.automation.BackfillLimit, m.eventf)
+
+	return updates.New(updates.Config{
+		Handler:                         handler,
+		Storage:                         stateStore,
+		AccessHasher:                    stateStore,
+		UserAccessHasher:                stateStore,
+		OnChannelTooLong:                bf.onChannelTooLong,
+		OnTooLong:                       bf.onTooLong,
+		OnLoadUserStateFailed:           bf.onLoadUserStateFailed,
+		OnLoadChannelStateFailed:        bf.onLoadChannelStateFailed,
+		MaxChannelDifferenceConcurrency: m.automation.MaxChannelDifferenceConcurrency,
+	})
 }
 
 // runClient runs one client generation until it stops.
@@ -259,6 +342,11 @@ func (m *Manager) runClient(ctx context.Context, client *telegram.Client) {
 	err := client.Run(runCtx, func(cbCtx context.Context) error {
 		m.setReady()
 		m.refreshAccount(cbCtx)
+		// Start the update manager now that the account is known. It reloads the
+		// durable counters from the daemon and recovers whatever gap the
+		// disconnect left, then keeps the pipeline fed until this generation
+		// ends. Run blocks, so it runs beside the callback.
+		m.startUpdates(cbCtx, client)
 		// Block until the manager is stopped; the client's Run treats a
 		// returning callback as "stop the client".
 		<-cbCtx.Done()
@@ -269,6 +357,33 @@ func (m *Manager) runClient(ctx context.Context, client *telegram.Client) {
 	if ctx.Err() == nil && !errors.Is(err, context.Canceled) {
 		m.setError(err)
 	}
+}
+
+// startUpdates runs the current generation's update manager once the account is
+// known. It does nothing when automation is off or the account is not yet
+// authorized (the manager needs a user id). Run blocks for the life of the
+// generation, so it runs in its own goroutine and ends with cbCtx.
+func (m *Manager) startUpdates(cbCtx context.Context, client *telegram.Client) {
+	m.mu.Lock()
+	mgr := m.updatesMgr
+	var userID int64
+	if m.account != nil {
+		userID = m.account.ID
+	}
+	m.mu.Unlock()
+	if mgr == nil || userID == 0 {
+		return
+	}
+	go func() {
+		// forget=false: resume from the durable counters the daemon holds, so a
+		// reconnect replays the gap instead of silently skipping it.
+		if err := mgr.Run(cbCtx, client.API(), userID, updates.AuthOptions{
+			IsBot:  false,
+			Forget: false,
+		}); err != nil && cbCtx.Err() == nil {
+			m.eventf("client %s: update manager stopped: %v", m.spec.Key, err)
+		}
+	}()
 }
 
 // detach forgets the current client so Status stops reporting its state.

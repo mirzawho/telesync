@@ -1,6 +1,7 @@
 import * as React from "react"
 import {
   Link,
+  NavLink,
   Outlet,
   isRouteErrorResponse,
   useLocation,
@@ -43,9 +44,9 @@ import { ChangePasswordDialog } from "@/components/change-password-dialog"
 import { Breadcrumbs } from "@/components/page-header"
 import { ErrorState } from "@/components/states"
 import { cn } from "@workspace/ui/lib/utils"
-import { navItems, navItemFor } from "@/lib/nav"
+import { navItemActive, navItemFor, visibleNavItems } from "@/lib/nav"
 import type { SectionHandle } from "@/lib/page"
-import { requireSession, setToken } from "@/lib/session"
+import { requireSession, setToken, type Me } from "@/lib/session"
 
 import type { Route } from "./+types/layout"
 
@@ -83,39 +84,7 @@ export default function PanelLayout({ loaderData }: Route.ComponentProps) {
   return (
     <SidebarProvider defaultOpen={sidebarOpen}>
       <Sidebar>
-        <SidebarHeader>
-          <Link
-            to="/dashboard"
-            className="flex items-center gap-2.5 rounded-lg px-1.5 py-1"
-          >
-            <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <RadioTowerIcon className="size-4" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-semibold">تیل‌سینک</span>
-              <span className="text-xs text-muted-foreground">
-                {appVersion ? `v${appVersion}` : "پنل مدیریت"}
-              </span>
-            </div>
-          </Link>
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarMenu>
-              {navItems.map((item) => (
-                <SidebarMenuItem key={item.to}>
-                  <SidebarMenuButton render={<Link to={item.to} />}>
-                    <item.icon />
-                    <span>{item.label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter>
-          <AccountMenu fullname={me.fullname} username={me.username} />
-        </SidebarFooter>
+        <PanelSidebar me={me} />
       </Sidebar>
 
       <div className="flex h-svh min-w-0 flex-1 flex-col">
@@ -152,6 +121,69 @@ export default function PanelLayout({ loaderData }: Route.ComponentProps) {
           navigation is the only chrome and the page gets the whole width. */}
       <BottomNav access={me.access} hidden={bottomNavHidden} />
     </SidebarProvider>
+  )
+}
+
+// Everything the sidebar column carries. It is one component of its own because
+// the shared `Sidebar` paints a drawer below lg and a column at lg and up, and
+// only the drawer branch is in the server's markup: naming the column's body
+// separately is how its navigation can be rendered and asserted at all.
+export function PanelSidebar({ me }: { me: Me }) {
+  return (
+    <>
+      <SidebarHeader>
+        <Link
+          to="/dashboard"
+          className="flex items-center gap-2.5 rounded-lg px-1.5 py-1"
+        >
+          <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <RadioTowerIcon className="size-4" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold">تیل‌سینک</span>
+            <span className="text-xs text-muted-foreground">
+              {appVersion ? `v${appVersion}` : "پنل مدیریت"}
+            </span>
+          </div>
+        </Link>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarNav access={me.access} />
+      </SidebarContent>
+      <SidebarFooter>
+        <AccountMenu fullname={me.fullname} username={me.username} />
+      </SidebarFooter>
+    </>
+  )
+}
+
+// The sidebar's destinations. It reads the URL itself, so the highlighted entry
+// and the address bar come from the same place, and it filters on the same
+// access summary the phone's bar filters on.
+export function SidebarNav({ access }: { access: Me["access"] }) {
+  const { pathname } = useLocation()
+  return (
+    <SidebarGroup>
+      <SidebarMenu>
+        {/* The same permission filter the phone's bottom bar uses. The
+            sidebar used to walk the raw list, so a caller without a right
+            still saw its destination and only met a refusal there. */}
+        {visibleNavItems(access).map((item) => (
+          <SidebarMenuItem key={item.to}>
+            {/* The link and the highlight are the router's own answer to
+                the URL, so a nested screen (/automation/webhooks/9) keeps
+                its section marked and the two can never disagree. */}
+            <SidebarMenuButton
+              isActive={navItemActive(pathname, item.to)}
+              render={<NavLink to={item.to} />}
+            >
+              <item.icon />
+              <span>{item.label}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        ))}
+      </SidebarMenu>
+    </SidebarGroup>
   )
 }
 

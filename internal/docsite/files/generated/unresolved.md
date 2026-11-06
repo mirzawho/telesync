@@ -11,11 +11,61 @@ No permission check was found in the handler or the package functions it calls. 
 
 - `deleteCategory (categories.go)`
 - `probe: anonymous → unauthorized, operator → invalid_input, limited user → invalid_input, administrator → invalid_input`
+## `GET /api/v1/local/automation/status`
+
+No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).
+
+- `automationStatus (automation.go)`
+- `probe: anonymous → unauthorized, operator → 200, limited user → forbidden, administrator → 200`
+## `GET /api/v1/local/automation/webhooks`
+
+No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).
+
+- `listWebhooks (automation.go)`
+- `probe: anonymous → unauthorized, operator → 200, limited user → forbidden, administrator → 200`
+## `GET /api/v1/local/automation/webhooks`
+
+The success body could not be named from the source (the handler writes more than one shape, or none).
+
+- `listWebhooks (automation.go)`
+## `GET /api/v1/local/automation/webhooks/{id}/deliveries`
+
+The success body could not be named from the source (the handler writes more than one shape, or none).
+
+- `listDeliveries (automation.go)`
+## `GET /api/v1/local/automation/workflows`
+
+No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).
+
+- `listWorkflows (automation.go)`
+- `probe: anonymous → unauthorized, operator → 200, limited user → forbidden, administrator → 200`
+## `GET /api/v1/local/automation/workflows`
+
+The success body could not be named from the source (the handler writes more than one shape, or none).
+
+- `listWorkflows (automation.go)`
+## `GET /api/v1/local/automation/workflows/{id}/runs`
+
+The success body could not be named from the source (the handler writes more than one shape, or none).
+
+- `listRuns (automation.go)`
 ## `GET /api/v1/local/channels/{id}/avatar`
 
 The success body could not be named from the source (the handler writes more than one shape, or none).
 
 - `localChannelAvatar (local_channels.go)`
+## `GET /api/v1/local/wordpress/{id}/categories`
+
+No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).
+
+- `wordPressTerms (wordpress.go)`
+- `probe: anonymous → unauthorized, operator → invalid_input, limited user → invalid_input, administrator → invalid_input`
+## `GET /api/v1/local/wordpress/{id}/tags`
+
+No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).
+
+- `wordPressTerms (wordpress.go)`
+- `probe: anonymous → unauthorized, operator → invalid_input, limited user → invalid_input, administrator → invalid_input`
 ## `GET /api/v1/telegram/{key}/channels/{channel_id}/avatar`
 
 The success body could not be named from the source (the handler writes more than one shape, or none).

@@ -8,11 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/mirza/telesync/internal/apidocs"
+	"github.com/mirza/telesync/internal/channelstore"
 )
 
 // Options configures one generation pass.
@@ -89,7 +89,7 @@ func run(ctx context.Context, opts Options, logf func(string, ...any)) (*result,
 			"example":     "the requests in docs/api/examples/*.http, replayed in order",
 		},
 		Schemas:     map[string]map[string]any{},
-		Permissions: permissionNames(proj),
+		Permissions: permissionNames(),
 	}
 	var unresolved []Unresolved
 	byRoute := map[string]*RouteFacts{}
@@ -343,15 +343,17 @@ func registerSchema(proj *project, facts *Facts, typeName string) {
 	}
 }
 
-// permissionNames lists the global permissions the gateway's store defines.
-func permissionNames(proj *project) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, v := range proj.consts {
-		if regexp.MustCompile(`^(users|channels|categories)\.(view|manage|create)$`).MatchString(v) && !seen[v] {
-			seen[v] = true
-			out = append(out, v)
-		}
+// permissionNames lists the global permissions an account can hold.
+//
+// They are read from the store's own list rather than scanned out of the
+// gateway's source. The values are declared in internal/channelstore, so a
+// scan of internal/gateway finds none of them: the generated facts silently
+// carried "permissions": null, and every permission went undocumented.
+func permissionNames() []string {
+	all := channelstore.GlobalPermissions()
+	out := make([]string, 0, len(all))
+	for _, p := range all {
+		out = append(out, string(p))
 	}
 	sort.Strings(out)
 	return out
@@ -424,6 +426,31 @@ func routeHandlers(proj *project) map[string]map[string]handlerRef {
 		},
 		"/api/v1/local/users/{id}/permissions": {http.MethodGet: h("userPermissions"), http.MethodPut: h("userPermissions")},
 		"/api/v1/local/stats/dashboard":        {http.MethodGet: h("dashboardStats")},
+		// The automation namespace. Each history route is served by its own
+		// handler so the generated page can show which request type it reads.
+		"/api/v1/local/automation/status":   {http.MethodGet: h("automationStatus")},
+		"/api/v1/local/automation/webhooks": {http.MethodGet: h("listWebhooks"), http.MethodPost: h("createWebhook")},
+		"/api/v1/local/automation/webhooks/{id}": {
+			http.MethodGet: h("getWebhook"), http.MethodPatch: h("updateWebhook"), http.MethodDelete: h("deleteWebhook"),
+		},
+		"/api/v1/local/automation/webhooks/{id}/test":       {http.MethodPost: h("testWebhook")},
+		"/api/v1/local/automation/webhooks/{id}/deliveries": {http.MethodGet: h("listDeliveries")},
+		"/api/v1/local/automation/webhooks/{id}/deliveries/{delivery_id}": {
+			http.MethodGet: h("getDelivery"),
+		},
+		"/api/v1/local/automation/webhooks/{id}/deliveries/{delivery_id}/retry": {
+			http.MethodPost: h("retryDelivery"),
+		},
+		"/api/v1/local/automation/workflows": {
+			http.MethodGet: h("listWorkflows"), http.MethodPost: h("createWorkflow"),
+		},
+		"/api/v1/local/automation/workflows/{id}": {
+			http.MethodGet: h("getWorkflow"), http.MethodPatch: h("updateWorkflow"), http.MethodDelete: h("deleteWorkflow"),
+		},
+		"/api/v1/local/automation/workflows/{id}/runs": {http.MethodGet: h("listRuns")},
+		"/api/v1/local/automation/workflows/{id}/runs/{run_id}": {
+			http.MethodGet: h("getRun"),
+		},
 	}
 }
 

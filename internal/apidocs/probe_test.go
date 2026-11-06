@@ -14,7 +14,11 @@ import (
 	"time"
 
 	"github.com/mirza/telesync/internal/apidocs"
+	"github.com/mirza/telesync/internal/appconfig"
 	"github.com/mirza/telesync/internal/auth"
+	"github.com/mirza/telesync/internal/automation/queue"
+	"github.com/mirza/telesync/internal/automation/webhooks"
+	"github.com/mirza/telesync/internal/automation/workflows"
 	"github.com/mirza/telesync/internal/avatarcache"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/gateway"
@@ -141,7 +145,64 @@ func (p *probe) build() http.Handler {
 		WordPress:       store,
 		Secrets:         probeEncrypter,
 		WordPressClient: wordpress.NewClient(wordpress.WithTransport(scriptTransport{})),
+		// The automation routes are rehearsed the way the daemon wires them:
+		// the real webhook and workflow services over the same store, and the
+		// real queue they schedule work into. Only the network is absent, so a
+		// documented webhook response is one the application produces and not a
+		// fixture's guess.
+		AutomationWebhooks:  probeWebhookService(p.t, store, probeEncrypter),
+		AutomationWorkflows: &workflows.Service{Store: store},
+		AutomationStatus:    &workflows.Status{Store: store},
+		PublicBaseURL:       probePublicBaseURL,
+		AutomationEnabled:   true,
+		AutomationWorkers:   2,
 	})
+}
+
+// probePublicBaseURL stands for api.public_base_url. It is the documented
+// origin the media link in a webhook payload is resolved against, and nothing
+// connects to it.
+const probePublicBaseURL = "https://telesync.example"
+
+// probeWebhookService builds the real webhook service over the probe's store.
+func probeWebhookService(t *testing.T, store *channelstore.Store, box webhooks.Secrets) *webhooks.Service {
+	t.Helper()
+	enqueuer := queue.NewEnqueuer(store, 5)
+	svc, err := webhooks.New(webhooks.Config{
+		PublicBaseURL: probePublicBaseURL,
+		Webhooks: appconfig.WebhookConfig{
+			Timeout:                 15 * time.Second,
+			MaxAttempts:             5,
+			MaxResponseBytes:        64 << 10,
+			MaxConcurrentDeliveries: 4,
+		},
+		Store:     store,
+		Secrets:   box,
+		Events:    store.AutomationEvent,
+		Jobs:      enqueuer,
+		Reopen:    enqueuer.Reopen,
+		Transport: probeWebhookTransport{},
+	})
+	if err != nil {
+		t.Fatalf("build the webhook service: %v", err)
+	}
+	return svc
+}
+
+// probeWebhookTransport stands in for the receiver a webhook posts to, exactly
+// as scriptTransport stands in for the WordPress site. Only the network is
+// scripted: the request the application builds, the signature it computes and
+// the attempt record it stores are all real.
+type probeWebhookTransport struct{}
+
+func (probeWebhookTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	body := io.NopCloser(strings.NewReader(`{"received":true}`))
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       body,
+	}, nil
 }
 
 // docsSite is the documentation site the probe mounts at /docs: a tiny handler

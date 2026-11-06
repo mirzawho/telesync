@@ -56,6 +56,14 @@ type Spec struct {
 	Resolver   dcs.Resolver
 	Protocol   string
 	Obfuscated bool
+
+	// UpdateHandler receives incoming Telegram updates. Nil installs the
+	// no-op handler: updates are still requested (NoUpdates stays false, which
+	// the custom backend requires) but discarded. Automation installs gotd's
+	// update manager here so new channel messages reach the pipeline. Either
+	// way a handler is present — without one gotd wraps every request in
+	// invokeWithoutUpdates, which the custom backend rejects (D10).
+	UpdateHandler telegram.UpdateHandler
 }
 
 // IsOfficial reports whether this is the official profile.
@@ -172,14 +180,14 @@ func customDCList(host string, port, dcID int) dcs.List {
 func (s *Spec) Options(state func(telegram.ConnectionState), logTo io.Writer) telegram.Options {
 	opt := telegram.Options{
 		SessionStorage: s.Session,
-		// A no-op update handler keeps NoUpdates=false, so gotd does not wrap
-		// requests in invokeWithoutUpdates. Verified against the custom backend:
-		// with no handler installed, initConnection is wrapped and the backend
-		// answers 400 CONNECTION_NOT_INITED. The handler itself must never
-		// process messages; telesync is not a messaging client.
-		UpdateHandler: telegram.UpdateHandlerFunc(func(context.Context, tg.UpdatesClass) error {
-			return nil
-		}),
+		// A handler keeps NoUpdates=false, so gotd does not wrap requests in
+		// invokeWithoutUpdates. Verified against the custom backend: with no
+		// handler installed, initConnection is wrapped and the backend answers
+		// 400 CONNECTION_NOT_INITED. By default the handler discards updates —
+		// telesync is not a messaging client. Automation installs gotd's update
+		// manager here instead, which is still a handler and so still keeps the
+		// backend happy.
+		UpdateHandler: s.UpdateHandler,
 		Device: telegram.DeviceConfig{
 			DeviceModel:    "telesync",
 			SystemVersion:  "linux",
@@ -187,6 +195,11 @@ func (s *Spec) Options(state func(telegram.ConnectionState), logTo io.Writer) te
 			SystemLangCode: "en",
 			LangCode:       "en",
 		},
+	}
+	if opt.UpdateHandler == nil {
+		opt.UpdateHandler = telegram.UpdateHandlerFunc(func(context.Context, tg.UpdatesClass) error {
+			return nil
+		})
 	}
 	if state != nil {
 		opt.OnConnectionState = state

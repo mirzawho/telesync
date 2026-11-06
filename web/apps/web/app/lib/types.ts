@@ -195,6 +195,9 @@ export type GlobalPermission =
   | "wordpress.create"
   | "servers.view"
   | "content.publish"
+  | "automation.view"
+  | "webhooks.manage"
+  | "workflows.manage"
 
 export interface ResourcePermissions {
   channel_id?: number
@@ -229,6 +232,7 @@ export interface User {
     users: boolean
     servers: boolean
     content: boolean
+    automation: boolean
   }
 }
 

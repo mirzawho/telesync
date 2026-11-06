@@ -282,7 +282,7 @@ func renderPattern(f *Facts, pattern string, routes []RouteFacts) []byte {
 
 // Components are the hand-written paragraphs, one per topic, in the order the
 // composed pages use them. Each is docs/api/manual/components/<Name>.md.
-var Components = []string{"authentication", "errors", "pagination", "health-and-docs", "telegram", "channels", "categories", "users", "wordpress", "publishing", "dashboard"}
+var Components = []string{"authentication", "errors", "pagination", "health-and-docs", "telegram", "channels", "categories", "users", "wordpress", "publishing", "dashboard", "automation"}
 
 // componentOf names the paragraphs a route needs. The generator cannot read
 // prose, so the mapping is stated once, here, next to the other facts about
@@ -311,6 +311,8 @@ func componentOf(pattern string) []string {
 		return []string{"wordpress"}
 	case pattern == "/api/v1/local/stats/dashboard":
 		return []string{"dashboard"}
+	case strings.HasPrefix(pattern, "/api/v1/local/automation/"):
+		return []string{"automation"}
 	}
 	return nil
 }
