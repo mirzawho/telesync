@@ -319,6 +319,16 @@ func (e *Enqueuer) EnqueueWorkflowRun(ctx context.Context, eventID string, workf
 	return e.enqueue(ctx, eventID, automation.JobWorkflowRun, workflowID)
 }
 
+// EnqueueMessageSend schedules one accepted send for background delivery.
+//
+// operationID is the send operation's public id and channelID the destination
+// channel it is going to. Naming the channel as the job's target is what makes
+// one channel's sends claim in order and pace themselves, instead of a
+// recovered backlog arriving at a channel all at once.
+func (e *Enqueuer) EnqueueMessageSend(ctx context.Context, operationID string, channelID int64) error {
+	return e.enqueue(ctx, operationID, automation.JobTelegramMessageSend, channelID)
+}
+
 // Reopen gives already-queued work a fresh attempt budget.
 //
 // This is not what Enqueue does, and the difference is deliberate. Enqueue is

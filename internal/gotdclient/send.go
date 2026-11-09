@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
@@ -52,21 +53,9 @@ func (m *Manager) SendMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 		if err != nil {
 			return tgapi.SendResult{}, classifySendError(err)
 		}
-		var input tg.InputMediaClass
-		switch req.Media.Kind {
-		case tgapi.SendMediaPhoto:
-			input = &tg.InputMediaUploadedPhoto{File: file}
-		case tgapi.SendMediaDocument, "":
-			input = &tg.InputMediaUploadedDocument{
-				File:     file,
-				MimeType: req.Media.MimeType,
-				Attributes: []tg.DocumentAttributeClass{
-					&tg.DocumentAttributeFilename{FileName: sendFileName(req.Media)},
-				},
-				ForceFile: req.Media.Kind == tgapi.SendMediaDocument,
-			}
-		default:
-			return tgapi.SendResult{}, fmt.Errorf("%w: media kind %q", tgapi.ErrSendUnsupported, req.Media.Kind)
+		input, err := sendInputMedia(req.Media, file)
+		if err != nil {
+			return tgapi.SendResult{}, err
 		}
 		updates, err = api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
 			Peer:     peer,
@@ -100,6 +89,88 @@ func (m *Manager) SendMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 		result.Message = &normalized
 	}
 	return result, nil
+}
+
+// sendInputMedia builds the MTProto media for one outgoing attachment.
+//
+// Each kind gets the attributes Telegram actually represents it with. There is
+// deliberately no generic document constructor standing in for the others: a
+// voice recording and an ordinary audio file differ by one boolean on one
+// attribute, and both differ from a downloadable file in whether a filename
+// attribute is present at all. Sending everything as a document is what turns a
+// recording into a file that happens to be audio, so a kind this build cannot
+// represent is refused rather than quietly downgraded into one.
+func sendInputMedia(m *tgapi.SendMedia, file tg.InputFileClass) (tg.InputMediaClass, error) {
+	switch m.Kind {
+	case tgapi.SendMediaPhoto:
+		return &tg.InputMediaUploadedPhoto{File: file}, nil
+
+	case tgapi.SendMediaVideo:
+		return &tg.InputMediaUploadedDocument{
+			File:     file,
+			MimeType: mimeTypeOr(m, "video/mp4"),
+			Attributes: []tg.DocumentAttributeClass{
+				// Dimensions are read from the file by the destination; none are
+				// claimed here that this build has not measured.
+				&tg.DocumentAttributeVideo{Duration: float64(m.Duration)},
+				&tg.DocumentAttributeFilename{FileName: sendFileName(m)},
+			},
+		}, nil
+
+	case tgapi.SendMediaAudio:
+		return &tg.InputMediaUploadedDocument{
+			File:     file,
+			MimeType: mimeTypeOr(m, "audio/mpeg"),
+			Attributes: []tg.DocumentAttributeClass{
+				&tg.DocumentAttributeAudio{Voice: false, Duration: m.Duration},
+				&tg.DocumentAttributeFilename{FileName: sendFileName(m)},
+			},
+		}, nil
+
+	case tgapi.SendMediaVoice:
+		// A Telegram voice message is a document whose documentAttributeAudio
+		// carries voice=true, and it has no filename attribute. That absence is
+		// not an oversight: a name is what turns a recording into a file a
+		// client offers to download instead of play.
+		//
+		// ForceFile is left unset for the same reason. gotd's own voice builder
+		// — telegram/message's Voice(file) — is the reference shape here, and it
+		// sets neither: force_file means "plain file, not media", which is
+		// exactly the downloadable document this must not become. Only
+		// UploadedDocument's File() helper sets it, and that is for a file.
+		return &tg.InputMediaUploadedDocument{
+			File:     file,
+			MimeType: mimeTypeOr(m, "audio/ogg"),
+			Attributes: []tg.DocumentAttributeClass{
+				&tg.DocumentAttributeAudio{
+					Voice:    true,
+					Duration: m.Duration,
+					Waveform: m.Waveform,
+				},
+			},
+		}, nil
+
+	case tgapi.SendMediaDocument, "":
+		return &tg.InputMediaUploadedDocument{
+			File:     file,
+			MimeType: m.MimeType,
+			Attributes: []tg.DocumentAttributeClass{
+				&tg.DocumentAttributeFilename{FileName: sendFileName(m)},
+			},
+			ForceFile: m.Kind == tgapi.SendMediaDocument,
+		}, nil
+	}
+	return nil, fmt.Errorf("%w: media kind %q", tgapi.ErrSendUnsupported, m.Kind)
+}
+
+// mimeTypeOr is the content type an attachment is sent under. The caller's own
+// type is what is used when it gave one; the fallback only fills a silence, and
+// only for kinds where sending no type at all would misdescribe the bytes.
+func mimeTypeOr(m *tgapi.SendMedia, fallback string) string {
+	if t := strings.TrimSpace(m.MimeType); t != "" {
+		return t
+	}
+	return fallback
 }
 
 // sendFileName gives the upload a file name Telegram can show. A blank name is

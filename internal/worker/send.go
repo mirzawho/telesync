@@ -19,9 +19,17 @@ func (s *Service) SendMessage(ctx context.Context, req rpc.SendRequest) (rpc.Sen
 	if err := s.requireAuthorized(ctx); err != nil {
 		return rpc.SendResult{}, err
 	}
-	if runes := len([]rune(req.Text)); runes > tgapi.MaxMessageRunes {
+	// A caption beside an attachment is shorter than a message body, and it is
+	// refused at the limit it actually has rather than at the body's: an
+	// over-long caption is a different failure with a different fix, and saying
+	// "the message text" for it sends someone looking at the wrong thing.
+	limit, what := tgapi.MaxMessageRunes, "message text"
+	if req.Media != nil {
+		limit, what = tgapi.MaxCaptionRunes, "caption"
+	}
+	if runes := len([]rune(req.Text)); runes > limit {
 		return rpc.SendResult{}, rpc.NewError(rpc.CodeMessageTooLong,
-			fmt.Sprintf("The message text is %d characters; the limit is %d.", runes, tgapi.MaxMessageRunes), 0)
+			fmt.Sprintf("The %s is %d characters; the limit is %d.", what, runes, limit), 0)
 	}
 	out, err := s.tg.SendMessage(ctx, tgapi.ChannelRef{ID: req.ChannelID}, tgapi.SendRequest{
 		Text:      req.Text,
@@ -54,6 +62,8 @@ func sendMediaFromWire(m *rpc.SendMedia) *tgapi.SendMedia {
 		Name:     m.Name,
 		MimeType: m.MimeType,
 		Data:     m.Data,
+		Duration: m.Duration,
+		Waveform: m.Waveform,
 	}
 }
 

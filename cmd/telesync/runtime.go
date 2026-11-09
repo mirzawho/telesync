@@ -36,6 +36,8 @@ import (
 	"github.com/mirza/telesync/internal/profile"
 	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/runtime"
+	"github.com/mirza/telesync/internal/sending"
+	"github.com/mirza/telesync/internal/staging"
 	"github.com/mirza/telesync/internal/supervisor"
 	"github.com/mirza/telesync/internal/wordpress"
 	"github.com/mirza/telesync/internal/worker"
@@ -85,6 +87,30 @@ func panelHandler() http.Handler {
 func panelBuilt() bool {
 	_, err := fs.Stat(panel.Files(), "index.html")
 	return err == nil
+}
+
+// newSendService builds the direct-sending pipeline.
+//
+// Like newBackgroundPublisher it is a function of its own so that a field here
+// is written once and can be pinned by a test. Each one is load-bearing: an
+// operation that cannot resolve its account, read its staged attachment or
+// reach the queue is a message that was promised and will never be sent.
+func newSendService(
+	cfg appconfig.SendConfig,
+	sender *publishing.Service,
+	store *channelstore.Store,
+	area *staging.Staging,
+	jobs *queue.Enqueuer,
+	logf func(string, ...any),
+) *sending.Service {
+	return &sending.Service{
+		Sender:           sender,
+		Operations:       store,
+		Staging:          area,
+		Jobs:             jobs,
+		HistoryRetention: time.Duration(cfg.HistoryRetentionDays) * 24 * time.Hour,
+		Logf:             logf,
+	}
 }
 
 // runDaemon supervises worker processes and serves the public API.
@@ -202,11 +228,28 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 	// database and the secret box, and both belong to the daemon. With the
 	// subsystem switched off nothing is built and the automation routes answer
 	// 503 rather than appearing to work.
+	// The durable queue is shared by everything that runs in the background:
+	// webhook deliveries, workflow runs and direct sends. One queue, one pool of
+	// workers and one retry policy, because a deployment should not have to
+	// decide twice how much background work may run at once.
+	jobHandlers := automation.JobHandlers{}
+	enqueuer := queue.NewEnqueuer(store, cfg.Automation.MaxAttempts)
+
+	// The publisher is the v0.0.2 one, called from the background as well as
+	// from the route, so the two cannot drift apart. It is what a direct send
+	// goes out through too: the destination, its permissions, how a message is
+	// built and what a failure means are shared with a publish, and only where
+	// the content came from differs.
+	registry := publishing.RegistryFunc(func(key string) (publishing.Worker, bool) {
+		w, ok := workers[key]
+		return w, ok
+	})
+	publisher := newBackgroundPublisher(registry, store, seal, logger.Printf)
+
 	var (
 		autoWebhooks  automation.WebhookService
 		autoWorkflows automation.WorkflowService
 		autoStatus    automation.AutomationStatusSource
-		autoRunner    runtime.BackgroundRunner
 	)
 	if cfg.Automation.Enabled {
 		if seal == nil {
@@ -214,7 +257,6 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 				"webhook secrets cannot be stored unsealed (api.wordpress.encryption_key_env, " +
 				"encryption_key_path or encryption_key)")
 		}
-		enqueuer := queue.NewEnqueuer(store, cfg.Automation.MaxAttempts)
 
 		// The ingest socket is how a worker's update stream reaches the
 		// database this process owns. It is one socket for the deployment — not
@@ -270,14 +312,6 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 		}
 		autoWebhooks = hooks
 
-		// The publisher is the v0.0.2 one, called from the background as well
-		// as from the route, so the two cannot drift apart.
-		registry := publishing.RegistryFunc(func(key string) (publishing.Worker, bool) {
-			w, ok := workers[key]
-			return w, ok
-		})
-		publisher := newBackgroundPublisher(registry, store, seal, logger.Printf)
-
 		var processor automation.AIProcessor
 		if cfg.Automation.AI.Enabled {
 			processor, err = ai.New(cfg.Automation.AI)
@@ -304,10 +338,45 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 			Workers: cfg.Automation.Workers,
 		}
 
-		autoRunner = queue.New(store, automation.JobHandlers{
-			automation.JobWebhookDelivery: hooks.Handler(),
-			automation.JobWorkflowRun:     engine.HandleJob,
-		}, queue.Config{
+		jobHandlers[automation.JobWebhookDelivery] = hooks.Handler()
+		jobHandlers[automation.JobWorkflowRun] = engine.HandleJob
+		logger.Printf("daemon: automation enabled (%d workers)", cfg.Automation.Workers)
+	} else {
+		logger.Printf("daemon: automation disabled")
+	}
+
+	// Direct sending: a message a caller composed and a file they uploaded,
+	// accepted over HTTP and delivered here, long after the request that asked
+	// for it has been answered.
+	var sendService *sending.Service
+	if cfg.Send.Enabled {
+		area, err := staging.Open(cfg.Send.StagingDir, cfg.Send.MaxFileBytes)
+		if err != nil {
+			return fmt.Errorf("open the send staging directory %s: %w", cfg.Send.StagingDir, err)
+		}
+		sendService = newSendService(cfg.Send, publisher, store, area, enqueuer, logger.Printf)
+		jobHandlers[automation.JobTelegramMessageSend] = sendService.Execute
+
+		// A crash can leave an attachment nobody recorded or an operation whose
+		// attachment is gone. Both are settled here, at start-up, before any send
+		// is accepted — so a caller is never told their message is queued when
+		// the bytes it needs are not there.
+		report, err := sendService.Cleanup(ctx)
+		if err != nil {
+			return fmt.Errorf("reconcile the send staging area: %w", err)
+		}
+		logger.Printf("daemon: direct sending enabled (staging %s, limit %d bytes, "+
+			"%d expired operation(s), %d orphaned attachment(s), %d incomplete operation(s), %d partial upload(s))",
+			cfg.Send.StagingDir, cfg.Send.MaxFileBytes,
+			report.ExpiredOperations, report.AbandonedAttachments,
+			report.IncompleteOperations, report.PartialUploads)
+	} else {
+		logger.Printf("daemon: direct sending disabled")
+	}
+
+	var autoRunner runtime.BackgroundRunner
+	if len(jobHandlers) > 0 {
+		autoRunner = queue.New(store, jobHandlers, queue.Config{
 			Workers:         cfg.Automation.Workers,
 			PollInterval:    cfg.Automation.PollInterval,
 			RetryDelay:      cfg.Automation.RetryDelay,
@@ -315,9 +384,6 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 			MaxAttempts:     cfg.Automation.MaxAttempts,
 			PublishInterval: cfg.Automation.PublishInterval,
 		}, queue.WithLogf(logger.Printf))
-		logger.Printf("daemon: automation enabled (%d workers)", cfg.Automation.Workers)
-	} else {
-		logger.Printf("daemon: automation disabled")
 	}
 
 	return runtime.RunDaemon(ctx, runtime.DaemonOptions{
@@ -327,6 +393,7 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 		Channels:   store,
 		Categories: store,
 		Publishes:  store,
+		Send:       sendService,
 		Users:      store,
 		WordPress:  store,
 		// The daemon's own client: public https hosts only, every connection

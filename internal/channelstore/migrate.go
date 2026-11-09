@@ -541,6 +541,128 @@ var migrations = []migration{
 			`ALTER TABLE webhooks ADD COLUMN allow_localhost INTEGER NOT NULL DEFAULT 0 CHECK (allow_localhost IN (0, 1))`,
 		},
 	},
+	{
+		version: 17,
+		name:    "message_send_operations",
+		stmts: []string{
+			// A send that is accepted now and performed later. The request that
+			// created it is answered long before Telegram hears about it, so
+			// everything the background worker needs is here: whose it is, where
+			// it goes, what it says, which staged attachment it carries, and the
+			// client message id every attempt must reuse so a resend after a lost
+			// confirmation is the same message rather than a second one.
+			//
+			// The queue's own attempt count and retry schedule stay in
+			// automation_jobs; this table holds what the caller is told.
+			`CREATE TABLE message_send_operations (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	public_id TEXT NOT NULL UNIQUE CHECK (length(public_id) > 5),
+	user_id INTEGER NOT NULL CHECK (user_id > 0),
+	client_key TEXT NOT NULL CHECK (length(trim(client_key)) > 0),
+	destination_channel_id TEXT NOT NULL CHECK (length(trim(destination_channel_id)) > 0),
+	request_payload TEXT NOT NULL,
+	media_kind TEXT NOT NULL DEFAULT '',
+	media_staging_name TEXT NOT NULL DEFAULT '',
+	media_filename TEXT NOT NULL DEFAULT '',
+	media_mime_type TEXT NOT NULL DEFAULT '',
+	media_size INTEGER NOT NULL DEFAULT 0 CHECK (media_size >= 0),
+	media_sha256 TEXT NOT NULL DEFAULT '',
+	idempotency_key TEXT NOT NULL DEFAULT '',
+	request_fingerprint TEXT NOT NULL CHECK (length(request_fingerprint) > 0),
+	random_id INTEGER NOT NULL DEFAULT 0,
+	status TEXT NOT NULL CHECK (status IN ('queued', 'processing', 'retrying', 'sent', 'failed', 'unknown')),
+	stage TEXT NOT NULL DEFAULT '',
+	attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+	next_attempt_at TEXT,
+	remote_message_id INTEGER NOT NULL DEFAULT 0 CHECK (remote_message_id >= 0),
+	last_error_code TEXT NOT NULL DEFAULT '',
+	last_error_message TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	started_at TEXT,
+	completed_at TEXT,
+	updated_at TEXT NOT NULL)`,
+			// Idempotency is scoped to the account, exactly as publish_operations
+			// scopes it: one key means one request, whoever repeats it. The index
+			// is partial because a request that carried no key joins nothing.
+			`CREATE UNIQUE INDEX message_send_operations_idem_idx
+	ON message_send_operations (user_id, idempotency_key) WHERE idempotency_key <> ''`,
+			`CREATE INDEX message_send_operations_status_idx ON message_send_operations (status, updated_at)`,
+			`CREATE INDEX message_send_operations_owner_idx ON message_send_operations (user_id, created_at)`,
+			`CREATE INDEX message_send_operations_created_idx ON message_send_operations (created_at)`,
+			// What a cleanup sweep reads to decide which staged attachments are
+			// still needed. An empty name means a text-only send and names no
+			// file, so those rows are excluded from the index.
+			`CREATE INDEX message_send_operations_media_idx
+	ON message_send_operations (media_staging_name) WHERE media_staging_name <> ''`,
+		},
+	},
+	{
+		version: 18,
+		name:    "automation_jobs_carry_direct_sends",
+		stmts: []string{
+			// One queue runs every kind of background work this deployment has,
+			// and a direct send is one more: it has an attempt budget, a lease
+			// and a retry policy like the rest, and giving it a table of its own
+			// would mean two claim protocols to keep in step.
+			//
+			// What changes is that event_id no longer always names an
+			// automation event. For a webhook delivery or a workflow run it
+			// still does, and the reference is still enforced — below, by
+			// trigger, because a column-level foreign key cannot tell one job
+			// kind from another. For a send it names the send operation, whose
+			// own table is where that work is described.
+			//
+			// SQLite cannot alter a CHECK or a foreign key in place, so the
+			// table is rebuilt. It is empty of meaning during the copy: the
+			// columns are carried across unchanged and the indexes are put back
+			// as they were.
+			`CREATE TABLE automation_jobs_rebuilt (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	event_id TEXT NOT NULL,
+	job_type TEXT NOT NULL CHECK (job_type IN ('webhook_delivery', 'workflow_run', 'telegram_message_send')),
+	target_id INTEGER NOT NULL CHECK (target_id > 0),
+	status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'retry_wait', 'succeeded', 'failed', 'cancelled')),
+	attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+	max_attempts INTEGER NOT NULL CHECK (max_attempts > 0),
+	available_at TEXT NOT NULL,
+	locked_by TEXT NOT NULL DEFAULT '',
+	locked_until TEXT,
+	last_error_code TEXT NOT NULL DEFAULT '',
+	last_error_message TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	completed_at TEXT,
+	UNIQUE (job_type, target_id, event_id))`,
+			`INSERT INTO automation_jobs_rebuilt (
+	id, event_id, job_type, target_id, status, attempt_count, max_attempts,
+	available_at, locked_by, locked_until, last_error_code, last_error_message,
+	created_at, updated_at, completed_at)
+	SELECT id, event_id, job_type, target_id, status, attempt_count, max_attempts,
+	available_at, locked_by, locked_until, last_error_code, last_error_message,
+	created_at, updated_at, completed_at FROM automation_jobs`,
+			`DROP TABLE automation_jobs`,
+			`ALTER TABLE automation_jobs_rebuilt RENAME TO automation_jobs`,
+			`CREATE INDEX automation_jobs_claim_idx ON automation_jobs (status, available_at)`,
+			`CREATE INDEX automation_jobs_lease_idx ON automation_jobs (status, locked_until)`,
+			`CREATE INDEX automation_jobs_target_idx ON automation_jobs (job_type, target_id, id)`,
+			// The two automation kinds keep exactly the integrity their column
+			// used to give them: a job is not queued for an event that is not
+			// there, and deleting an event still takes its jobs with it.
+			`CREATE TRIGGER automation_jobs_event_insert
+	BEFORE INSERT ON automation_jobs
+	WHEN NEW.job_type IN ('webhook_delivery', 'workflow_run')
+	  AND NOT EXISTS (SELECT 1 FROM automation_events WHERE id = NEW.event_id)
+	BEGIN
+		SELECT RAISE(ABORT, 'automation_jobs.event_id names no automation event');
+	END`,
+			`CREATE TRIGGER automation_jobs_event_delete
+	AFTER DELETE ON automation_events
+	BEGIN
+		DELETE FROM automation_jobs
+		WHERE event_id = OLD.id AND job_type IN ('webhook_delivery', 'workflow_run');
+	END`,
+		},
+	},
 }
 
 // migrate brings the schema up to the latest version.

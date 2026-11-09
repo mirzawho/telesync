@@ -22,6 +22,7 @@ import (
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/rpc"
+	"github.com/mirza/telesync/internal/sending"
 )
 
 // Worker is the upstream operation set for one configured client.
@@ -112,6 +113,10 @@ type Config struct {
 	// Idempotency-Key cannot publish twice. Nil lets a request without such a
 	// key through and answers a request with one with 503.
 	Publishes PublishStore
+	// Send accepts and performs direct sends: messages a caller composed and
+	// attachments they uploaded, delivered in the background. Nil answers the
+	// send routes with 503 and changes nothing else.
+	Send *sending.Service
 	// PublicBaseURL is the externally reachable origin of this installation,
 	// the prefix a webhook receiver uses to open a media link. It is only read
 	// to refuse enabling a webhook that would have to send a relative URL; no
@@ -371,7 +376,7 @@ func (s *Server) serveTelegram(w http.ResponseWriter, r *http.Request, requestID
 // routeTelegram is the per-resource part of the Telegram routes.
 func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *http.Request,
 	key string, worker Worker, resource string, segments []string, requestID string) {
-	// join and publish are the only state-changing routes. Everything else is
+	// join, publish and send are the only state-changing routes. Everything else is
 	// read-only and answers 405 to anything but GET.
 	if resource == "messages" && len(segments) == 2 {
 		if r.Method != http.MethodPost {
@@ -391,6 +396,33 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 			return
 		}
 		s.join(ctx, w, r, key, worker, segments[2], requestID)
+		return
+	}
+	// /channels/{id}/messages/send is a message being sent, not a message whose
+	// id is "send". It is named here, before the message-id arm below would
+	// take it, and so is its read-only companion: a send is accepted at one
+	// address and polled at another, and neither of them is a message.
+	if resource == "channels" && len(segments) >= 5 && segments[3] == "messages" && segments[4] == "send" {
+		switch len(segments) {
+		case 5:
+			if r.Method != http.MethodPost {
+				w.Header().Set("Allow", http.MethodPost)
+				s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+					"Sending a message changes state and must be sent as POST.", requestID)
+				return
+			}
+			s.sendTelegramMessage(ctx, w, r, key, segments[2], requestID)
+		case 6:
+			if r.Method != http.MethodGet {
+				w.Header().Set("Allow", http.MethodGet)
+				s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+					"Reading a send operation is only GET.", requestID)
+				return
+			}
+			s.telegramSendStatus(ctx, w, r, key, segments[2], segments[5], requestID)
+		default:
+			s.notFound(w, requestID)
+		}
 		return
 	}
 	if r.Method != http.MethodGet {

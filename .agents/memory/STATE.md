@@ -1,6 +1,10 @@
 # Current state
 
-**Updated:** 2026-11-08 (`telesync serve-webhook` adds a local receiver for the webhook delivery engine — see the last section. Webhook and workflow create/edit are dedicated
+**Updated:** 2026-11-09 (v0.0.4 direct asynchronous sending: `POST
+/api/v1/telegram/{key}/channels/{channel_id}/messages/send` composes and sends a
+message with an uploaded attachment, with no source message behind it, and is
+delivered by the durable queue after the `202` — see the section below. On
+2026-11-08 `telesync serve-webhook` adds a local receiver for the webhook delivery engine — see the last section. Webhook and workflow create/edit are dedicated
 full-page forms at `/automation/{webhooks,workflows}/{new,:id/edit}`, with one
 shared shell, a connection-first source picker and an accordion for the
 webhook's advanced tuning. A shipped-bundle crash — `isCreation is not defined`,
@@ -31,6 +35,105 @@ an embedded `/admin` panel. The product path is acquire → manage → read → 
 durable events that drive webhooks and per-channel workflows in the background.
 Telegram and WordPress publishing is implemented, but not live-verified; the
 exact product matrix remains in `PROJECT_BRIEF.md` §9.
+
+## v0.0.4 direct asynchronous sending (2026-11-09)
+
+`POST /api/v1/telegram/{key}/channels/{channel_id}/messages/send` sends a
+message a caller composed and one file they uploaded. There is **no source
+message** — no `source.local_channel_id`, no `source.message_id`, no
+`media.mode` — and nothing is read back from Telegram to build the post. It is
+the other way to produce an outgoing message and it goes out through the same
+door as a publish: `publishing.SendDirect` shares the destination resolution,
+the permission rule, the message construction and the classification of a
+failure with `PublishTelegram`.
+
+**It is asynchronous, and both halves are.** A text-only request is not sent
+synchronously while a file waits in the background. The request stages any
+attachment, records the operation, enqueues a job on the durable queue and
+answers `202 Accepted` with an opaque `operation_id` and a `Location`.
+`GET .../messages/send/{operation_id}` reports `queued`, `processing`,
+`retrying`, `sent`, `failed` or `unknown`, and reading it never sends anything.
+
+**What was added.** `internal/staging` (durable attachment staging),
+`internal/channelstore/send_operations.go` (migration 17,
+`message_send_operations`), `internal/sending` (accept / execute / status /
+cleanup), `internal/automation/publishing/direct.go` (the shared outgoing
+sender), `internal/gateway/send.go` (the two routes). Migration **18** rebuilds
+`automation_jobs` so one queue carries `telegram_message_send` beside webhook
+deliveries and workflow runs — its `event_id` names a send operation for that
+kind and an automation event for the other two, and the reference is enforced by
+trigger because a column-level foreign key cannot tell one job kind from
+another.
+
+**Voice is a voice message.** `gotdclient.sendInputMedia` builds each kind on
+its own. A recording goes out as a document whose `documentAttributeAudio`
+carries `voice=true`, its duration and its waveform, and **no filename
+attribute** — a filename is what turns a recording into a file a client offers
+to download instead of play. Music stays `audio` with its name; a photo is a
+`InputMediaUploadedPhoto`; a video carries `documentAttributeVideo`; a document
+keeps the sender's file name. A kind that cannot be represented is refused with
+`tgapi.ErrSendUnsupported`, never silently downgraded.
+
+**`ForceFile` must be false for voice and audio — corrected here.** The first
+version of this code set `ForceFile: true` on both, reasoning that a recording
+should not be reinterpreted. That reasoning was backwards and the effect was
+exactly the bug this work exists to avoid. gotd's own source settles it:
+`telegram/message`'s `File(file)` is the **only** helper that sets
+`ForceFile(true)`, and its comment says why — "forces it to be used as plain
+file, **not media**". Its `Voice(file)` is `UploadedDocument(file).MIME(DefaultVoiceMIME).Audio().Voice()`,
+which never touches `ForceFile` and never adds a filename attribute. The raw
+construction now matches that reference shape, and `TestB` pins
+`ForceFile == false`, `MimeType == message.DefaultVoiceMIME` and an attribute
+list of exactly one element. `TestH` checks the wire form too: `SetFlags()`
+puts voice on bit 10 and a non-nil waveform on bit 2, so the flag survives
+encoding. A test written from the same wrong assumption as the code had been
+asserting the bug; anchoring on gotd's builder is what caught it.
+
+**Nothing is trusted from the client.** The content type is sniffed from the
+first 512 bytes and what they say wins whenever they say something specific; a
+PDF offered as `photo` is `invalid_media_kind`. The file name is metadata and
+never a path. The staging directory is `0700`, its files `0600`, and every
+storage name is 32 hex characters this server chose — a client name never
+resolves anything, and a planted symlink is not a staged file.
+
+**Duplicate sends.** One MTProto `random_id` is issued per operation, persisted
+before the first attempt and reused by every retry — random per operation and
+never derived from the request, because two identical sends are two messages.
+Idempotency is scoped to `(user_id, idempotency_key)` exactly as
+`publish_operations` scopes it, and the fingerprint covers the destination,
+text, entities, options, media kind and the **digest of the attachment's bytes**
+— never its file name. An outcome nobody confirmed is `unknown`, terminal, and
+never retried: the message may already be there.
+
+**Crash consistency.** An attachment is written to `<name>.part`, flushed, and
+renamed, so a name that exists is a whole file. At start-up the sweep deletes
+what no operation claims, stops an operation whose attachment is gone — as a
+failure, never as a delivery — and removes abandoned partials. An attachment is
+removed once its send has finished one way or the other, and retention deletes
+finished operations after `send.history_retention_days`.
+
+**Configuration** is the `send` block, overridable by `TELESYNC_SEND_ENABLED`,
+`TELESYNC_SEND_STAGING_DIR`, `TELESYNC_SEND_MAX_FILE_BYTES` and
+`TELESYNC_SEND_HISTORY_RETENTION_DAYS`. Workers, retry policy and lease are
+deliberately **not** duplicated: they are the durable queue's, shared with
+webhooks and workflows.
+
+**Verified:** `gofmt -l .`, `go vet ./...`, `go test ./... -count=1` (all
+packages), `go build -o ./bin/telesync ./cmd/telesync`, `go run ./cmd/docsgen
+--check`, `go test ./internal/apidocs`. 106 new tests: `internal/staging` (13),
+`internal/sending` (26), `internal/channelstore` (15), `internal/gateway` (25),
+`internal/automation/publishing` (12), `internal/gotdclient` (7),
+`internal/appconfig` (7), `cmd/telesync` (1). The existing copy route,
+`TestWordPressPublish*` and `TestBackgroundPublishing*` are green and unedited.
+
+**Not verified:** anything against live Telegram or the `cat` backend — this
+checkout has no credentials and none may be invented. Live delivery, a real
+flood wait, a restart mid-send, and the panel in a browser are unexercised.
+
+**Deliberately not done here.** The source-based publisher's own voice handling
+is unchanged: `publishing.sendKind` still maps a source `voice` attachment to
+`document`, so republishing a recorded voice message still degrades it. That is
+a separate piece of work and its fix belongs beside this one.
 
 ## Topology and ownership
 
