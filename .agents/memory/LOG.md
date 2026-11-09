@@ -1712,6 +1712,5 @@ packages), `go build -o ./bin/telesync ./cmd/telesync`, `go run ./cmd/docsgen
 **Not verified:** anything against live Telegram or the `cat` backend — this
 checkout has no credentials and none may be invented. Live delivery, a real
 flood wait, a real restart mid-send and the panel in a browser are unexercised.
-The source-based publisher's own voice handling is unchanged here: `sendKind`
-still maps a source `voice` attachment to `document`, which is a separate piece
-of work.
+The source-based publisher's own voice handling landed with the merge above and
+is not part of this entry.

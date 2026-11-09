@@ -79,6 +79,14 @@ to download instead of play. Music stays `audio` with its name; a photo is a
 keeps the sender's file name. A kind that cannot be represented is refused with
 `tgapi.ErrSendUnsupported`, never silently downgraded.
 
+**A filename on a recording — one rule per path, deliberately.** `sendMediaInput`
+adds a `documentAttributeFilename` when the caller gives a name, because a source
+document may genuinely have had one. The direct-send path sends a recording
+**unnamed** regardless: the multipart filename is a file on the caller's disk and
+not a property of the recording, so it is kept as the operation's metadata and
+never put on the wire. `TestL` pins that. The two rules coexist because the two
+paths answer different questions; neither was overwritten during the merge.
+
 **`ForceFile` must be false for voice and audio — corrected here.** The first
 version of this code set `ForceFile: true` on both, reasoning that a recording
 should not be reinterpreted. That reasoning was backwards and the effect was
@@ -135,10 +143,11 @@ packages), `go build -o ./bin/telesync ./cmd/telesync`, `go run ./cmd/docsgen
 checkout has no credentials and none may be invented. Live delivery, a real
 flood wait, a restart mid-send, and the panel in a browser are unexercised.
 
-**Deliberately not done here.** The source-based publisher's own voice handling
-is unchanged: `publishing.sendKind` still maps a source `voice` attachment to
-`document`, so republishing a recorded voice message still degrades it. That is
-a separate piece of work and its fix belongs beside this one.
+**Merged with the other two pieces of work.** The source-based publisher's own
+voice handling landed at the same time (see the voice section below): it fixes
+`publishing.sendKind`, which this entry left mapping a source `voice`
+attachment to `document`. Both paths now send a recording as a recording, by
+different rules on purpose — see the note on filenames.
 
 ## Topology and ownership
 
