@@ -477,7 +477,8 @@
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
-        "recent_failures": []
+        "recent_failures": [],
+        "webhook_allow_localhost": false
        }
       },
       "meta": {
@@ -520,7 +521,8 @@
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
-        "recent_failures": []
+        "recent_failures": [],
+        "webhook_allow_localhost": false
        }
       },
       "meta": {
@@ -545,7 +547,8 @@
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
-        "recent_failures": []
+        "recent_failures": [],
+        "webhook_allow_localhost": false
        }
       },
       "meta": {
@@ -602,7 +605,8 @@
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
-        "recent_failures": []
+        "recent_failures": [],
+        "webhook_allow_localhost": false
        }
       },
       "meta": {
@@ -645,7 +649,8 @@
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
-        "recent_failures": []
+        "recent_failures": [],
+        "webhook_allow_localhost": false
        }
       },
       "meta": {
@@ -670,7 +675,8 @@
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
-        "recent_failures": []
+        "recent_failures": [],
+        "webhook_allow_localhost": false
        }
       },
       "meta": {
@@ -905,6 +911,7 @@
         "source_channel_ids": [
          1
         ],
+        "allow_localhost": false,
         "created_at": "2026-10-25T10:00:00Z",
         "updated_at": "2026-10-25T10:00:00Z"
        }
@@ -1129,6 +1136,7 @@
         "source_channel_ids": [
          1
         ],
+        "allow_localhost": false,
         "created_at": "2026-10-25T10:00:00Z",
         "updated_at": "2026-10-25T10:00:00Z"
        }
@@ -1252,6 +1260,7 @@
         "source_channel_ids": [
          1
         ],
+        "allow_localhost": false,
         "created_at": "2026-10-25T10:00:00Z",
         "updated_at": "2026-10-25T10:00:00Z"
        }
@@ -1512,10 +1521,10 @@
           "Content-Type": "application/json",
           "User-Agent": "telesync-webhooks/1",
           "Webhook-Id": "wbd_test_1",
-          "Webhook-Signature": "v1,JQns/C5k+MSQN/V+0rXe9smF48cgeo8RTUbWvznbeJw=",
+          "Webhook-Signature": "v1,Qoa7HBGvbr/vXXUmnkfrNFx9vqXZkf6tGSpuH2LHzVs=",
           "Webhook-Timestamp": "1792922400"
          },
-         "body": "{\"specversion\":\"1.0\",\"id\":\"evt_test\",\"source\":\"telesync/telegram/channels/0\",\"type\":\"telesync.webhook.test\",\"time\":\"2026-01-01T00:00:00Z\",\"datacontenttype\":\"application/json\",\"data\":{\"source\":{\"managed_channel_id\":0,\"client_key\":\"\",\"telegram_channel_id\":0},\"message\":{\"id\":0,\"date\":\"2026-01-01T00:00:00Z\",\"text\":\"This is a test delivery from Telesync. It carries no channel content.\",\"views\":null,\"reactions\":[],\"entities\":[]}}}",
+         "body": "{\"specversion\":\"1.0\",\"id\":\"evt_test\",\"source\":\"telesync/telegram/channels/0\",\"type\":\"telesync.webhook.test\",\"time\":\"2026-01-01T00:00:00Z\",\"datacontenttype\":\"application/json\",\"data\":{\"source\":{\"managed_channel_id\":0,\"client_key\":\"\",\"telegram_channel_id\":0,\"type\":\"\",\"title\":\"\"},\"message\":{\"id\":0,\"date\":\"2026-01-01T00:00:00Z\",\"text\":\"This is a test delivery from Telesync. It carries no channel content.\",\"views\":null,\"reactions\":[],\"entities\":[]}}}",
          "body_truncated": false
         },
         "attempts": [
@@ -1528,10 +1537,10 @@
            "Content-Type": "application/json",
            "User-Agent": "telesync-webhooks/1",
            "Webhook-Id": "wbd_test_1",
-           "Webhook-Signature": "v1,JQns/C5k+MSQN/V+0rXe9smF48cgeo8RTUbWvznbeJw=",
+           "Webhook-Signature": "v1,Qoa7HBGvbr/vXXUmnkfrNFx9vqXZkf6tGSpuH2LHzVs=",
            "Webhook-Timestamp": "1792922400"
           },
-          "request_body": "{\"specversion\":\"1.0\",\"id\":\"evt_test\",\"source\":\"telesync/telegram/channels/0\",\"type\":\"telesync.webhook.test\",\"time\":\"2026-01-01T00:00:00Z\",\"datacontenttype\":\"application/json\",\"data\":{\"source\":{\"managed_channel_id\":0,\"client_key\":\"\",\"telegram_channel_id\":0},\"message\":{\"id\":0,\"date\":\"2026-01-01T00:00:00Z\",\"text\":\"This is a test delivery from Telesync. It carries no channel content.\",\"views\":null,\"reactions\":[],\"entities\":[]}}}",
+          "request_body": "{\"specversion\":\"1.0\",\"id\":\"evt_test\",\"source\":\"telesync/telegram/channels/0\",\"type\":\"telesync.webhook.test\",\"time\":\"2026-01-01T00:00:00Z\",\"datacontenttype\":\"application/json\",\"data\":{\"source\":{\"managed_channel_id\":0,\"client_key\":\"\",\"telegram_channel_id\":0,\"type\":\"\",\"title\":\"\"},\"message\":{\"id\":0,\"date\":\"2026-01-01T00:00:00Z\",\"text\":\"This is a test delivery from Telesync. It carries no channel content.\",\"views\":null,\"reactions\":[],\"entities\":[]}}}",
           "request_body_truncated": false,
           "response_status": 200,
           "response_headers": {
@@ -7984,9 +7993,15 @@
      "go_type": "[]int64",
      "items": "int64",
      "type": "array"
+    },
+    "allow_localhost": {
+     "go_type": "*bool",
+     "nullable": true,
+     "type": "boolean"
     }
    },
    "required": [
+    "allow_localhost",
     "auth_header",
     "auth_mode",
     "description",

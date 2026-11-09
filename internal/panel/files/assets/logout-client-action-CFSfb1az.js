@@ -1,1 +1,0 @@
-import{D as e}from"./utils-Ba9q0Lno.js";import{a as t}from"./session-CRMQmFL2.js";async function n(){return t(null),e(`/login`)}export{n as clientAction};

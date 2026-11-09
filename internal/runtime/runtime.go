@@ -231,12 +231,13 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		PublicBaseURL:   opts.Config.API.PublicBaseURL,
 		// The automation area, and what the status route reports about the
 		// subsystem the runner below is draining.
-		AutomationEnabled:   opts.Config.Automation.Enabled,
-		AutomationWorkers:   opts.Config.Automation.Workers,
-		AutomationWebhooks:  opts.AutomationWebhooks,
-		AutomationWorkflows: opts.AutomationWorkflows,
-		AutomationStatus:    opts.AutomationStatus,
-		Logf:                logf,
+		WebhookAllowLocalhost: opts.Config.Automation.Webhooks.AllowLocalhost,
+		AutomationEnabled:     opts.Config.Automation.Enabled,
+		AutomationWorkers:     opts.Config.Automation.Workers,
+		AutomationWebhooks:    opts.AutomationWebhooks,
+		AutomationWorkflows:   opts.AutomationWorkflows,
+		AutomationStatus:      opts.AutomationStatus,
+		Logf:                  logf,
 	})
 
 	ln, err := listen(opts.Config.API.ListenAddr)

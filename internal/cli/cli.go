@@ -1,8 +1,9 @@
 // Package cli implements the telesync command line.
 //
-// The runtime commands are daemon, worker, auth and config validate. Nothing
-// else is exposed: telesync is a supervised MTProto client runtime, not a
-// messaging client.
+// The runtime commands are daemon, worker, auth and config validate, plus
+// serve-webhook, a local receiver the delivery engine is tested against.
+// Nothing else is exposed: telesync is a supervised MTProto client runtime, not
+// a messaging client.
 package cli
 
 import (
@@ -98,6 +99,15 @@ Usage:
       the username and password (hidden), stores only a hash, and grants every
       global permission. This is the way to get the first account.
 
+  telesync serve-webhook [--host <addr>] [--port <n>] [--save-response]
+                         [--output-dir <dir>]
+      Run the local webhook test receiver: four endpoints, one per webhook
+      authentication mode, each answering with the request it received. It
+      reads no configuration, opens no database and connects no Telegram
+      client; its test credentials come from the environment. This is a
+      development tool for checking deliveries against a receiver of the same
+      build, not a production endpoint.
+
   telesync help
       Show this help.
 
@@ -137,6 +147,8 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.runAuth(ctx, args[1:])
 	case "admin":
 		return a.runAdmin(ctx, args[1:])
+	case "serve-webhook":
+		return a.runServeWebhook(ctx, args[1:])
 	default:
 		fmt.Fprintf(a.deps.Stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2

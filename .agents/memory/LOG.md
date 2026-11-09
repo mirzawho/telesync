@@ -1102,3 +1102,399 @@ clean. NOT verified: in a browser, and a live WordPress publish with links.
   checkout. `internal/worker`'s two socket tests still fail because the temp
   path (112 bytes) exceeds macOS's `sun_path` (104) — pre-existing,
   environmental, and `internal/worker` is unchanged by this release.
+
+## 2026-11-07 — the automation overview is the management screen
+
+The overview at `/automation` was a status strip and two doors: queue counters,
+a five-row preview per collection behind "همه …" buttons, and a recent-failures
+list. The two real tables lived on screens of their own. It is now one screen —
+header with a single Add button, a fit-content tab list beside a search field,
+and the open collection's full paginated table — and it reads the open
+collection only.
+
+- Removed: `وضعیت صف` (all five counters), `شکست‌های اخیر`, both preview lists,
+  and both "همه وب‌هوک‌ها" / "همه ورک‌فلوها" doors. The loader no longer calls
+  `GET /local/automation/status` at all; the queue, its API and its workers are
+  untouched and still run. `readStatus`/`statusRecord`/`StatusCount` stay in the
+  vocabulary because their own tests read them, but nothing on this page uses
+  them.
+- Added: a `clientAction` for the row intents (webhook toggle/test/delete,
+  workflow toggle/delete) that answers by redirecting back to the view the row
+  was on, so the table is re-read from the server rather than flipped in place.
+  A refused workflow switch is shown on its own row and keeps the stored state.
+- Tab, query and page are three separate facts in the address bar, and each tab
+  remembers its own — switching collections cannot carry a query over. A typed
+  search is sent after 300 ms and starts at the first page. Only the open
+  collection is fetched, so no stale rows of the other one can show under its
+  heading.
+- `WebhooksTable` and `WorkflowsTable` are reused as they are; the editor
+  screens and the standalone list routes are unchanged.
+
+**Verified** in a real browser against the dev server with a stub gateway, at
+1440×900 and 390×844: title/subtitle on the physical right and the one Add
+button on the left; the tab list is 174 px wide (fit-content, `w-fit shrink-0`)
+and shares one row with the search at both sizes; `?tab=workflows` swaps the
+Add button to `افزودن ورک‌فلو` → `/automation/workflows/new` and the placeholder
+to `جستجو در ورک‌فلوها...`; typing `خبر` on the workflows tab went out as
+`/local/automation/workflows?page=1&per_page=20&q=…` and never touched the
+webhooks endpoint; `صفحه بعد` landed on `?page=2` with `صفحه ۲ از ۲ · ۲۳ رکورد`
+and the way on disabled; no `/local/automation/status` request in the whole
+session; no horizontal document scroll on the phone, the table scrolls inside
+its own container with the actions column pinned, and the bottom navigation
+does not cover the pagination.
+
+**Verified:** `npm run typecheck`, `npm run build`, `npm test` (575 passing
+across the eight suites).
+**Not verified:** nothing ran against a live daemon — the browser pass used a
+stub gateway, so no row action, delivery or run was exercised against real
+data. The panel bundle under `internal/panel/files` was not rebuilt
+(`node web/scripts/build-panel.mjs`), so a binary built today still serves the
+old overview until it is.
+
+## 2026-11-08 — the forms are pages, and `isCreation` was not defined
+
+Two things: the dialog-based create/edit of webhooks and workflows became
+dedicated full-page forms, and a white-screen crash in the shipped bundle was
+found and fixed.
+
+**The crash.** `isCreation is not defined` in the browser, with a build that
+finished green. The route module exported `isCreation`/`validID`, and Vite's
+per-route split put the client-loader and the client-action in their own chunks
+while the exported helper landed in neither — so the chunk referenced it as a
+free variable. It builds, it typechecks, it passes every test, and it throws on
+first navigation. **Fixed** by keeping those helpers module-private (the tests
+never imported them). A scanner now walks every emitted chunk for an identifier
+that is neither declared nor imported, and the sweep over every function the app
+declares comes back clean.
+
+**The forms.** `/automation/webhooks/new`, `/automation/webhooks/:id/edit`,
+`/automation/workflows/new`, `/automation/workflows/:id/edit` — one form
+component per collection, one shared shell (`AutomationFormLayout`,
+`AutomationFormActions`). The old bare addresses redirect, so a bookmark lands
+where it always meant to; an id that was never a record is reported, not turned
+into an editor. `webhook-dialog.tsx`, `automation-webhooks.tsx`,
+`automation-workflows.tsx` and `automation-workflow-editor.tsx` are gone.
+
+**The polish.** Advanced settings (the webhook's timeout and retry) sit in a
+Base UI accordion under the shadcn `Accordion`/`AccordionItem`/`AccordionTrigger`
+/`AccordionContent` names, shut until opened and kept mounted so a collapse costs
+nothing typed into it. Source selection is connection first, channel second: the
+list is the chosen connection's own channels, read off the managed row's
+`client_key`, so it is a filter over the record and not a new field. A saved
+channel from another connection is preserved rather than trimmed; a deliberate
+connection change drops what it cannot reach. Both forms are `max-w-4xl`, and
+Cancel then Save in the DOM puts Save at the outermost physical left in RTL.
+
+**Verified** in a real browser at 1440×900 and 390×844: Save at x=144 and Cancel
+at x=212 on both forms (identical), the accordion open and shut with `12345`
+still in the timeout field after two toggles, the `custom` connection offering
+only `کانال فناوری`, and the switch to `official` clearing it with Save going
+disabled again. No horizontal overflow on the phone.
+
+**Verified:** `npx tsc --noEmit`, `npm test` (573 across eight suites),
+`npm run build`.
+**Not verified:** against a live daemon — the browser pass ran against a stub
+gateway, so no write reached real data. The workflow form takes no accordion
+because it has no advanced-only settings: source, destinations, the AI stage and
+the status are all essential and stay on the page.
+
+## 2026-11-08 — `publish_forbidden`: the background publisher had no account to run as
+
+A workflow run published nothing and reported
+`publish_forbidden` — "This deployment cannot resolve the account a background
+publication runs under."
+
+That sentence is `publishing.actorFor`'s `s.Actors == nil` branch. A background
+publication is recorded against the account it runs under — the idempotency
+record names one, so a retry with the same key cannot post twice — and the
+account's permissions are read again at execution time, so a withdrawn grant
+stops the next publication. `ActorResolver` is what does that reading.
+
+`cmd/telesync/runtime.go` built its `publishing.Service` without `Actors`. The
+interactive route never showed it, because that path passes its own actor and
+does not need the resolver; only the background engine calls `actorFor`. Every
+workflow publication was therefore refused before anything was sent.
+
+- Fixed: `newBackgroundPublisher` now sets `Actors: store`, the same
+  `channelstore.Store` the rest of the pipeline reads. Extracted as a function
+  of its own precisely because the field is load-bearing and was dropped once.
+- Pinned by `cmd/telesync/runtime_test.go`: it fails without the field ("the
+  background publisher cannot resolve the account it publishes under") and
+  passes with it — checked both ways.
+
+**Verified:** `gofmt -l`, `go vet ./...`, `go build ./...`, `go test ./...`
+(28 packages green). `internal/worker`'s two socket tests still fail on the
+pre-existing macOS `sun_path` limit — unchanged by this fix.
+**Not verified:** against a live Telegram account or a real WordPress site; no
+credentials in this checkout.
+
+## 2026-11-08 — AI polishing reported success and returned the source unchanged
+
+A workflow whose operator asked for a friendlier, longer, more detailed edit
+consumed 580 input and 26 output tokens, reported `AI: Successful`, published,
+and the run showed the polished text identical to the original.
+
+**Root cause: prompt composition, not the provider and not the plumbing.** Every
+stage after the model was traced and is correct — the prompt is persisted, the
+worker reads it (`engine_test.go` asserts `Prompt == "polish it"`), it is sent
+in the system turn, `DecodeOutput` has no fallback to the original, `result.Text`
+is what is published, and `polished_content` is stored and read back distinctly
+(`TestPolishedContentIsPublishedAndTheSourceIsUnchanged` already pins all of
+that).
+
+What was wrong is the system prompt. `DefaultPrompt` said
+"Never invent facts... **If the source does not contain something, you do not
+add it.**" and `customPromptHeader` said "where anything below conflicts with
+the rules above, **the rules above win**". Read together, "make it longer and
+add detail" is a conflict and loses — so a compliant model returns the source
+unchanged and reports a successful polish. 26 output tokens is exactly that:
+the source inside the JSON envelope.
+
+- Fixed in `internal/automation/ai/polish.go`: the no-invention rule is now
+  about **facts**, and a new rule states that how the facts are said is an
+  editing choice the operator directs — "Expanding on what the source already
+  says is not inventing a fact; inventing one is." The header now scopes its
+  precedence to the SECURITY RULES and OUTPUT FORMAT ("not negotiable, they
+  always win") and makes the EDITING RULES "the default, not a ceiling... they
+  govern the edit".
+- Bounded second attempt in `client.go`: only when the workflow has an operator
+  prompt **and** the answer is byte-identical to the source, one extra call with
+  a nudge. Identical output is **never** a failure: a message that already reads
+  as the operator wants is a legitimate no-op and is published as it stands.
+
+**Verified:** `gofmt -l`, `go vet ./...`, `go build ./...`, `go test ./...`
+(28 packages), and the frontend suite plus `tsc` — no frontend change was
+needed, the run page already reads `originalContent` and `polishedContent`
+correctly. Both the retry tests and the composition tests were checked to fail
+without the fix and pass with it.
+**Not verified:** against a real provider — no credentials in this checkout, so
+the reported case is proven against a mock, not against `openai/gpt-5.4-mini`.
+`internal/worker`'s two socket tests still fail on the pre-existing macOS
+`sun_path` limit.
+
+## 2026-11-08 — the AI "polish" was our own prompt telling the model to stop
+
+The previous fix did not work, and this time the real provider was called to
+find out why. Three calls against `sadgpt.ir` with the deployment's own
+credentials and the reported Persian prompt settled it.
+
+**What the model actually returns.** Not the original: the answer differs from
+the source in exactly two characters — two ASCII spaces become Persian ZWNJ
+(U+200C). `finish_reason: "stop"`, 39 output tokens. The model was doing
+Persian orthographic normalisation and nothing else, which reads as "the
+original message" because ZWNJ is invisible.
+
+**Why the previous fix had no effect.** Two reasons, both now fixed.
+
+1. The bounded retry compared byte-for-byte, and a normalised answer is never
+   byte-identical to the source — so the retry never fired once. `sameEdited`
+   now compares after collapsing the invisible joiners and whitespace, which is
+   the only thing a rewrite is allowed to move without changing anything.
+2. `DefaultPrompt` told the model the job was a light copy-edit. It opened with
+   "Your only task is to edit one source message" and led the editing rules with
+   "Improve spelling, punctuation, readability, and formatting" — which is
+   precisely what the model delivered. The operator's instruction sat behind a
+   "supplementary" header at the end of a 2800-character system message.
+
+**Proof that the model can do it.** A minimal prompt with the same source and no
+`DefaultPrompt` produced a warm, expanded rewrite (69 → 468 characters). So the
+model was capable and ours was suppressing it. Moving the operator's instruction
+to the user turn changed nothing; the constraint was the framing.
+
+- `DefaultPrompt` now opens with HOW MUCH TO CHANGE: with operator instructions
+  those are the brief and a copy edit does not do the job; without them, the
+  edit is a copy edit and the wording stays alone. The copy-edit rule moved out
+  of the lead position.
+- `customPromptHeader` calls the operator's instructions THE BRIEF and says they
+  govern the edit. The security and output rules keep their absolute precedence.
+- `finish_reason` is now read: an answer cut off at the output limit is refused
+  as `ai_invalid_output`, never taken as a completed edit.
+- A workflow with an operator prompt whose answer is still the source after the
+  bounded second attempt fails with `ai_unchanged`, so the workflow's own
+  fallback policy decides — the run never claims a rewrite that did not happen.
+  Unchanged output stays a legitimate success for a workflow with no
+  instructions of its own: this rule is not universal.
+
+**Verified against the real provider** (`TELESYNC_AI_LIVE=1`), two independent
+calls, both genuinely rewritten and meaning preserved — 64 and 88 output tokens.
+`bin/telesync` rebuilt from this source; the daemon needs a restart to pick it up.
+
+**Verified:** `gofmt -l`, `go vet ./...`, `go build ./...`, `go test ./...`
+(28 packages), frontend suite (573) and `tsc`. Retry, orthographic-comparison
+and truncation tests all checked to fail without their fix.
+**Not verified:** a live Workflow run against a real Telegram destination — the
+provider was called directly, not through a publication.
+
+## 2026-11-08 — webhooks may reach localhost, on two keys
+
+The webhook engine refused localhost outright: the SSRF rules treat loopback as
+"not a public address" and the URL validator required https everywhere. A
+receiver on the same machine could not be used. This adds a loopback exception
+as an explicit, two-key opt-in and leaves every other address exactly as it was.
+
+`TELESYNC_WEBHOOK_ALLOW_LOCALHOST` (off by default) is the deployment's half; a
+webhook's own `allow_localhost` (off by default, new column in migration 16) is
+the other. Both, never either. With both on, `http://localhost`, `http://127.0.0.1`
+and `http://[::1]` are delivered over plain http.
+
+**The exception is a list of three, not a range.** `isLoopbackHost` compares the
+literal host, so `127.1`, `0x7f000001`, `2130706433`, `::ffff:127.0.0.1` and
+`127.0.0.2` are refused, as is any name that merely contains "localhost". A
+loopback target must resolve to loopback and nothing else, so a DNS rebind
+cannot carry a permitted request elsewhere. Redirects are still not followed
+and no proxy is consulted. A policy refusal is recorded as `invalid_target`,
+non-retryable; a connection that simply fails keeps the ordinary retry policy.
+
+**Two real bugs the tests caught.** An update that named only `name` reset
+`allow_localhost` to false, because the update seed did not carry it — now it
+does. And `NewClient`'s test options overwrote the production defaults with nil,
+so a `webhooks.Config` with no transport or dialler produced a client with
+neither: the first real delivery panicked. A nil option is now ignored.
+
+**Verified** with real `httptest` servers and the production client: a permitted
+loopback webhook is delivered (POST, bearer token, payload, `202` and `thanks`
+recorded), and refused — without contacting the receiver — when either key is
+off. The form's switch is in `تنظیمات پیشرفته`, disabled with a reason when the
+deployment forbids it, and the form's URL rule now mirrors the server's.
+
+**Verified:** `gofmt -l`, `go vet`, `go build`, `go test` (appconfig,
+channelstore, automation/…, gateway, runtime, apidocs), frontend `npm test`
+(678) and `tsc`; `go run ./cmd/docsgen --check` after regenerating.
+**Not verified:** a delivery to a real receiver outside this machine.
+**Unrelated:** `internal/webhooktest/` appeared in the worktree mid-task while
+this was being written and did not compile yet. It is not this change and was
+left alone; it is now complete and passing (see the next entry).
+
+## 2026-11-08 — `telesync serve-webhook`, a receiver for the delivery engine
+
+The webhook engine had no way to check its own deliveries without pointing them
+at somebody else's server. This adds a receiver to the same binary: `telesync
+serve-webhook` runs an independent HTTP server with exactly four paths, one per
+authentication mode (`/webhook/hmac`, `/webhook/bearer`, `/webhook/header`,
+`/webhook/none`), each verifying the credential that mode uses and then
+answering with the request it received.
+
+**It reuses the sender's contract rather than reimplementing it.** Verification
+is `webhooks.Verify` over the raw bytes that arrived; the secret is decoded by
+`webhooks.SigningKey`, so `whsec_<base64>` and a literal passphrase behave as
+they do on the sending side; and the custom header name is validated with the
+sender's own `validAuthHeaderName`, now exported as `ValidAuthHeaderName` — a
+receiver that accepted `Authorization` or a `webhook-` name would be waiting on
+a header the sender never sets. Nothing in the delivery path changed.
+
+**The replay window is the receiver's to choose,** because none exists on the
+sending side: `Verify` takes the timestamp as given and the Standard Webhooks
+scheme does not fix a tolerance. `TimestampTolerance` is five minutes in each
+direction; a timestamp outside it is `expired_timestamp`, distinct from a
+malformed one. A request whose body was not whole is never authenticated at all
+— a signature covers bytes this receiver did not keep.
+
+**Four paths, one handler.** The path picks the mode and the method changes
+nothing, so there is no `/webhook/hmac/post` and no way for the verb to decide
+how a request is checked. HEAD carries the headers of the reply it would have
+had and no body. Everything else is 404. A body over 2 MiB is refused with 413
+without being read.
+
+**The echo is deliberately unguarded**, which is the point: headers come back
+including the authentication ones, bodies keep their exact bytes (valid JSON is
+also parsed; anything not valid UTF-8 is base64 rather than converted). That is
+why it binds loopback by default and warns loudly if asked not to, why its
+records are `0700`/`0600`, and why the console prints the method, path, verdict
+and status and never a credential or a body.
+
+**Verified** end to end against the real sender: `internal/automation/webhooks/
+receiver_compat_test.go` runs `Service.TestWebhook` and `Service.Handle` through
+the production transport into a running receiver in all four modes (and refuses
+a mismatched secret in each), asserting the body the engine signed is the body
+the receiver echoed, byte for byte. Run live against `./bin/telesync`: the four
+endpoints on 8091, a computed Standard-Webhooks signature accepted and the same
+signature refused after the body was changed, bearer and custom-header both
+valid and invalid, HEAD, 404, 413, 16 records written under
+`temp/webhook-responses` with their absolute paths on the console and no secret
+or body in it, and SIGINT exiting 0 after `stopping`.
+**Not verified:** a delivery from a live Telegram event (the queue and the
+ingest socket are not involved here), and anything beyond loopback.
+**Unrelated and pre-existing:** `internal/worker`'s two socket tests fail in
+this environment (`bind: invalid argument` at the default macOS temp path
+length, and a second-listener assertion with a short one). Nothing in this
+change touches that package.
+
+## 2026-11-09 — the loopback exception had three places it could fail to take
+
+Three separate faults, each of which looked like "localhost is still refused":
+
+1. `automation.webhooks.allow_localhost` had no field on `rawWebhooks`, and the
+   loader decodes with `DisallowUnknownFields`, so a deployment that set the
+   knob where every sibling `automation.webhooks.*` setting lives failed to
+   start. The knob is now one value with two homes — the configuration file, and
+   `TELESYNC_WEBHOOK_ALLOW_LOCALHOST` overriding it whenever the environment
+   says anything. An unrecognised environment value still fails closed rather
+   than being ignored.
+2. The form's `clientAction` re-checked the URL with `urlErrorOf(draft.url)` —
+   one argument, so the per-webhook opt-in defaulted to false and every loopback
+   address was refused at the door whatever the switch showed. The check is the
+   same one the field runs and must carry the same inputs.
+3. The refusal named only the webhook's own switch, which is disabled when the
+   deployment forbids the exception — pointing an operator at a control that
+   cannot move. The two causes now say which setting can.
+
+`urlErrorOf`'s `allowLocalhost` is now **required**, not defaulted: dropping it
+is a type error rather than a silent policy change. That is the fix for the
+class, not just the instance.
+
+**Verified:** the real `~/.telesync/config.json` loads and reports
+`webhooks.allow_localhost=true`; 580 frontend tests pass; `make panel` and
+`bin/telesync` rebuilt. **Not verified:** an end-to-end save through the browser
+behind the admin login.
+
+## 2026-11-09 — the webhook payload names the channel, not only its row ids
+
+`data.source` carried three identifiers and nothing a receiver could show. It
+now also carries `type`, `title` and `username`, so a feed can be read without
+calling back into this installation.
+
+The labels are read through a `ChannelSource` seam — the same shape as the
+existing `EventSource`, so the orchestrator wires whichever store holds the
+managed channels without that store knowing about webhooks. They are resolved at
+delivery time and not snapshotted at ingestion: this is what the channel
+messages API reports about the channel, and the request body is already frozen
+per delivery.
+
+Labels are labels and never keys: the two id fields are what a receiver matches
+on, because a title is renamed and a username is taken away. A channel row that
+is gone leaves them empty and the delivery still goes; a lookup that *fails* is
+reported, because an incomplete payload is not the same thing as an absent name.
+
+**Verified:** `go test ./...`, docsgen `--check`, `internal/apidocs`, and the
+exact JSON keys pinned by test so the contract cannot drift from the struct
+tags.
+
+## 2026-11-09 — v0.0.3 release preparation
+
+Prepared and published v0.0.3. Three release-side fixes came out of the review:
+
+- **The AI retry no longer hides a provider failure.** When the second,
+  bounded attempt broke (cut off, unparsable, empty answer), the code fell back
+  to the first unchanged answer and the run failed with `ai_unchanged` — "the
+  model declined" — when the truth was a provider error with its own retry
+  decision. The second attempt's own error is now returned. Pinned by
+  `TestABrokenSecondAttemptFailsAsTheProviderError`.
+- **A live worker socket is no longer stolen.** `worker.Listen` removed any
+  existing socket file before binding, so a second worker started on the same
+  path took it away from the one already serving. It now dials first: a socket
+  that accepts connections is refused as in use; only a dead socket is replaced.
+  This also fixes the long-known `internal/worker` test failures, whose test
+  harness was hiding the sandbox's `EINVAL` instead of skipping it.
+- **CI checks the embedded panel is current.** `go test` never noticed that
+  `internal/panel/files` was older than `web/`; a new frontend job rebuilds it
+  and fails when a tracked file changes.
+
+Also: the `allow_localhost` API refusal names both the configuration key and the
+environment variable, and the README describes v0.0.3.
+
+**Verified:** `gofmt -l`, `go vet ./...`, `go test ./...` (all packages green,
+`internal/worker` included with both the default and a short `TMPDIR`),
+`go build ./...`, `docsgen --check` (84 pages), `internal/apidocs`, web
+typecheck + build, and all eight web suites (26 + 19 + 109 + 108 + 50 + 202 +
+18 + 48). **Not verified:** anything against live Telegram, WordPress, an AI
+provider or an external webhook receiver; the panel in a browser.

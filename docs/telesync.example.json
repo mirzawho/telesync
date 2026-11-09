@@ -44,7 +44,8 @@
       "max_attempts": 5,
       "max_response_bytes": 65536,
       "max_concurrent_deliveries": 4,
-      "history_retention_days": 30
+      "history_retention_days": 30,
+      "allow_localhost": false
     },
     "ai": {
       "enabled": false,

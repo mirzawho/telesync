@@ -162,3 +162,62 @@ func TestResolvingDialDialsEveryCheckedAddressUntilOneAnswers(t *testing.T) {
 		t.Fatalf("dialled %v, want both checked addresses", d.called)
 	}
 }
+
+// --- the loopback exception, at the dialler -------------------------------
+//
+// ValidateTarget is the gate, and the dialler is the second half: a loopback
+// target is allowed to resolve to loopback and to nothing else, and nothing
+// else is ever allowed to resolve to loopback. That is what keeps a DNS
+// rebind from turning the exception for one local service into a way to reach
+// the machine's other ones.
+
+func TestALoopbackTargetDialsLoopback(t *testing.T) {
+	d := &fakeDial{}
+	lookup := &fakeLookup{addrs: []netip.Addr{netip.MustParseAddr("127.0.0.1")}}
+	fn := resolvingDial(d.dial, lookup.lookup, AllowLocalhost().ForWebhook(true))
+
+	// The fake never opens a connection. What is proved is which address was
+	// asked for, that the name was resolved exactly once, and that the refusal
+	// to connect is the fake's and not ours.
+	_, err := fn(context.Background(), "tcp", "localhost:3000")
+	if errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("a permitted loopback target was refused: %v", err)
+	}
+	if len(d.called) != 1 || d.called[0] != "127.0.0.1:3000" {
+		t.Fatalf("dialled %v, want 127.0.0.1:3000", d.called)
+	}
+	if lookup.calls != 1 {
+		t.Fatalf("resolved %d times, want 1: the address checked is the address dialled", lookup.calls)
+	}
+}
+
+func TestALoopbackTargetThatResolvesElsewhereIsRefused(t *testing.T) {
+	// The rebinding case: the name is the one on the allow list and the answer
+	// is not loopback. The address that was checked is the address that would
+	// have been dialled, so there is no window to re-resolve in.
+	d := &fakeDial{}
+	lookup := &fakeLookup{addrs: []netip.Addr{netip.MustParseAddr("93.184.216.34")}}
+	fn := resolvingDial(d.dial, lookup.lookup, AllowLocalhost().ForWebhook(true))
+
+	if _, err := fn(context.Background(), "tcp", "localhost:3000"); !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("err = %v, want ErrBlockedAddress", err)
+	}
+	if len(d.called) != 0 {
+		t.Fatalf("a rebound address was still dialled: %v", d.called)
+	}
+}
+
+func TestANonLoopbackHostMayNotReachLoopbackEvenWithTheException(t *testing.T) {
+	// The exception names three hosts. It is not a permission for any name to
+	// land on loopback.
+	d := &fakeDial{}
+	lookup := &fakeLookup{addrs: []netip.Addr{netip.MustParseAddr("127.0.0.1")}}
+	fn := resolvingDial(d.dial, lookup.lookup, AllowLocalhost().ForWebhook(true))
+
+	if _, err := fn(context.Background(), "tcp", "receiver.example.com:443"); !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("err = %v, want ErrBlockedAddress", err)
+	}
+	if len(d.called) != 0 {
+		t.Fatalf("a loopback address was still dialled: %v", d.called)
+	}
+}

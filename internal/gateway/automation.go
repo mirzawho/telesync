@@ -41,6 +41,7 @@ type webhookView struct {
 	TimeoutMS      int64                       `json:"timeout_ms"`
 	MaxAttempts    int                         `json:"max_attempts"`
 	SourceChannels []int64                     `json:"source_channel_ids"`
+	AllowLocalhost bool                        `json:"allow_localhost"`
 	CreatedAt      string                      `json:"created_at"`
 	UpdatedAt      string                      `json:"updated_at"`
 	LastDelivery   *webhookDeliverySummaryView `json:"last_delivery,omitempty"`
@@ -199,6 +200,10 @@ type statusView struct {
 	Processing     int                 `json:"processing"`
 	FailedRecent   int                 `json:"failed_recent"`
 	RecentFailures []statusFailureView `json:"recent_failures"`
+	// WebhookAllowLocalhost is the deployment's half of the loopback
+	// exception, reported so the form can say why its switch is off. It is a
+	// capability and not a setting: no credential, no path and no address.
+	WebhookAllowLocalhost bool `json:"webhook_allow_localhost"`
 }
 
 type statusFailureView struct {
@@ -224,6 +229,7 @@ type webhookRequest struct {
 	TimeoutMS        *int64  `json:"timeout_ms"`
 	MaxAttempts      *int    `json:"max_attempts"`
 	SourceChannelIDs []int64 `json:"source_channel_ids"`
+	AllowLocalhost   *bool   `json:"allow_localhost"`
 }
 
 type workflowRequest struct {
@@ -496,6 +502,9 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request, requestID
 		return
 	}
 	in := webhookInputOf(req, automation.WebhookInput{CreatedBy: actorOf(r).user.ID})
+	if !s.webhookLocalhostAllowed(w, r, requestID, in.AllowLocalhost) {
+		return
+	}
 	if !s.webhookSourcesAllowed(w, r, requestID, in.SourceChannelIDs) {
 		return
 	}
@@ -538,8 +547,14 @@ func (s *Server) updateWebhook(w http.ResponseWriter, r *http.Request, requestID
 		URL: existing.URL, Method: existing.Method, AuthMode: existing.AuthMode,
 		AuthHeader: existing.AuthHeader, Timeout: existing.Timeout,
 		MaxAttempts: existing.MaxAttempts, SourceChannelIDs: existing.SourceChannelIDs,
+		// The setting is part of the record an update starts from: a request
+		// that says nothing about it leaves it exactly where it was.
+		AllowLocalhost: existing.AllowLocalhost,
 	}
 	in := webhookInputOf(req, seed)
+	if !s.webhookLocalhostAllowed(w, r, requestID, in.AllowLocalhost) {
+		return
+	}
 	if !s.webhookSourcesAllowed(w, r, requestID, in.SourceChannelIDs) {
 		return
 	}
@@ -1018,7 +1033,11 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request, requestID string
 // --- status ---
 
 func (s *Server) automationStatus(w http.ResponseWriter, r *http.Request, requestID string) {
-	view := statusView{Enabled: s.cfg.AutomationEnabled, Workers: s.cfg.AutomationWorkers}
+	view := statusView{
+		Enabled:               s.cfg.AutomationEnabled,
+		Workers:               s.cfg.AutomationWorkers,
+		WebhookAllowLocalhost: s.cfg.WebhookAllowLocalhost,
+	}
 	if s.cfg.AutomationStatus != nil {
 		st, err := s.cfg.AutomationStatus.AutomationStatus(r.Context())
 		if err != nil {
@@ -1246,6 +1265,22 @@ func validAuthHeader(name string) bool {
 
 // webhookInputOf merges a request onto a seed. Validation that needs the
 // request context already ran in webhookPreflight, so this only copies fields.
+// webhookLocalhostAllowed answers the one rule the loopback exception has at
+// the API: a webhook may only ask for it when the deployment offers it at all.
+//
+// The request is refused rather than quietly dropped, so an operator learns
+// that the switch is off instead of finding a setting that will not stay on.
+// A client that posts allow_localhost=true to a deployment that forbids it gets
+// the same refusal as the form would.
+func (s *Server) webhookLocalhostAllowed(w http.ResponseWriter, r *http.Request, requestID string, want bool) bool {
+	if want && !s.cfg.WebhookAllowLocalhost {
+		s.fail(w, http.StatusBadRequest, CodeInvalidInput,
+			"allow_localhost needs automation.webhooks.allow_localhost (or the TELESYNC_WEBHOOK_ALLOW_LOCALHOST variable) on the deployment first.", requestID)
+		return false
+	}
+	return true
+}
+
 func webhookInputOf(req webhookRequest, seed automation.WebhookInput) automation.WebhookInput {
 	in := seed
 	if req.Name != nil {
@@ -1274,6 +1309,9 @@ func webhookInputOf(req webhookRequest, seed automation.WebhookInput) automation
 	}
 	if req.TimeoutMS != nil {
 		in.Timeout = time.Duration(*req.TimeoutMS) * time.Millisecond
+	}
+	if req.AllowLocalhost != nil {
+		in.AllowLocalhost = *req.AllowLocalhost
 	}
 	if req.MaxAttempts != nil {
 		in.MaxAttempts = *req.MaxAttempts
@@ -1407,6 +1445,7 @@ func webhookViewOf(hook automation.Webhook) webhookView {
 		AuthMode: hook.AuthMode, AuthHeader: hook.AuthHeader, HasSecret: hook.HasSecret,
 		TimeoutMS: hook.Timeout.Milliseconds(), MaxAttempts: hook.MaxAttempts,
 		SourceChannels: hook.SourceChannelIDs,
+		AllowLocalhost: hook.AllowLocalhost,
 		CreatedAt:      RFC3339String(hook.CreatedAt), UpdatedAt: RFC3339String(hook.UpdatedAt),
 	}
 	if v.SourceChannels == nil {

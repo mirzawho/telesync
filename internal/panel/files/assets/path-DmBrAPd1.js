@@ -1,0 +1,1 @@
+var e=`/admin/`,t=e.endsWith(`/`)?e.slice(0,-1):e;function n(n){return n===t?`/`:n.startsWith(e)?`/`+n.slice(7):n}function r(e){return new URL(e.url,window.location.origin)}export{n,r as t};

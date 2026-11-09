@@ -119,12 +119,13 @@ func testOpener(t *testing.T) *secrets.Encrypter {
 
 // env is one delivery engine wired to a fake store and a scripted receiver.
 type env struct {
-	t      *testing.T
-	store  *fakeStore
-	svc    *webhooks.Service
-	rt     *scriptedTransport
-	events map[string]automation.MessageEvent
-	jobs   *fakeEnqueuer
+	t        *testing.T
+	store    *fakeStore
+	svc      *webhooks.Service
+	rt       *scriptedTransport
+	events   map[string]automation.MessageEvent
+	channels map[int64]webhooks.Channel
+	jobs     *fakeEnqueuer
 }
 
 type fakeEnqueuer struct {
@@ -161,11 +162,12 @@ func newEnv(t *testing.T, responses ...scripted) *env {
 	store := newFakeStore()
 	jobs := &fakeEnqueuer{}
 	e := &env{
-		t:      t,
-		store:  store,
-		rt:     rt,
-		events: map[string]automation.MessageEvent{},
-		jobs:   jobs,
+		t:        t,
+		store:    store,
+		rt:       rt,
+		events:   map[string]automation.MessageEvent{},
+		channels: map[int64]webhooks.Channel{},
+		jobs:     jobs,
 	}
 	e.events[testEventID] = messageEvent(nil)
 
@@ -183,6 +185,10 @@ func newEnv(t *testing.T, responses ...scripted) *env {
 		Events: func(ctx context.Context, id string) (automation.MessageEvent, bool, error) {
 			ev, ok := e.events[id]
 			return ev, ok, nil
+		},
+		Channels: func(ctx context.Context, managedChannelID int64) (webhooks.Channel, bool, error) {
+			ch, ok := e.channels[managedChannelID]
+			return ch, ok, nil
 		},
 		Jobs:      jobs,
 		Transport: rt,
@@ -300,6 +306,62 @@ func TestDeliverySignsSendsAndRecordsOneAttempt(t *testing.T) {
 	}
 	if att.DurationMS < 0 || att.StartedAt.IsZero() || att.FinishedAt == nil {
 		t.Fatalf("attempt timing = %+v", att)
+	}
+}
+
+// --- what the payload says about the channel --------------------------------
+
+func TestTheSentPayloadNamesTheChannelItCameFrom(t *testing.T) {
+	e := newEnv(t, scripted{status: 200, body: "ok"})
+	e.channels[7] = webhooks.Channel{Type: "channel", Title: "کانال خبری", Username: "khabari"}
+	wh := e.webhook(webhooks.AuthHMAC)
+
+	if err := e.svc.Handler()(context.Background(), e.job(wh.ID, 1, 5)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	sent := e.rt.sentBodies()
+	if len(sent) != 1 {
+		t.Fatalf("bodies = %d", len(sent))
+	}
+	var envelope webhooks.Envelope
+	if err := json.Unmarshal([]byte(sent[0]), &envelope); err != nil {
+		t.Fatalf("body is not an envelope: %v", err)
+	}
+	src := envelope.Data.Source
+	if src.Type != "channel" || src.Title != "کانال خبری" || src.Username != "khabari" {
+		t.Fatalf("source = %+v, want the channel's own naming", src)
+	}
+	// The labels never stand in for identity: the identifiers a receiver matches
+	// on are still there and unchanged.
+	if src.ManagedChannelID != 7 || src.TelegramChannelID != -1001234 || src.ClientKey != "client-a" {
+		t.Fatalf("the identifiers moved: %+v", src)
+	}
+}
+
+func TestAMissingChannelStillDeliversWithTheIdentifiersAlone(t *testing.T) {
+	// The channel row supplies labels. One that is gone must not cost a
+	// delivery: the event already says which channel the message came from.
+	e := newEnv(t, scripted{status: 200, body: "ok"})
+	wh := e.webhook(webhooks.AuthHMAC)
+
+	if err := e.svc.Handler()(context.Background(), e.job(wh.ID, 1, 5)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	sent := e.rt.sentBodies()
+	if len(sent) != 1 {
+		t.Fatalf("bodies = %d", len(sent))
+	}
+	var envelope webhooks.Envelope
+	if err := json.Unmarshal([]byte(sent[0]), &envelope); err != nil {
+		t.Fatalf("body is not an envelope: %v", err)
+	}
+	if envelope.Data.Source.Title != "" || envelope.Data.Source.Type != "" {
+		t.Fatalf("labels appeared from nowhere: %+v", envelope.Data.Source)
+	}
+	if envelope.Data.Source.ManagedChannelID != 7 {
+		t.Fatalf("managed_channel_id = %d, want 7", envelope.Data.Source.ManagedChannelID)
 	}
 }
 
@@ -975,7 +1037,7 @@ func TestAnOriginlessDeploymentStillCreatesAndSendsAWebhook(t *testing.T) {
 
 	// The payload names the path and invents no address.
 	media := &rpc.Media{ID: "1:91", Type: "photo", Size: 4}
-	env, err := webhooks.NewBuilder("", "/admin").Build(messageEvent(media))
+	env, err := webhooks.NewBuilder("", "/admin").Build(messageEvent(media), webhooks.Channel{})
 	if err != nil {
 		t.Fatalf("Build with no origin: %v", err)
 	}
@@ -988,7 +1050,7 @@ func TestAnOriginlessDeploymentStillCreatesAndSendsAWebhook(t *testing.T) {
 	}
 
 	// Naming an origin adds the absolute address alongside the same path.
-	full, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(media))
+	full, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(media), webhooks.Channel{})
 	if err != nil {
 		t.Fatalf("Build with an origin: %v", err)
 	}

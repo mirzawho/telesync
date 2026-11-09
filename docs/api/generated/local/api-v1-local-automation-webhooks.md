@@ -143,7 +143,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>POST /api/v1/local/automation/webhooks → 201</summary>
 
 ```json
-{"data":{"webhook":{"id":1,"name":"Documented webhook","description":"Sends new messages to an external API","enabled":false,"url":"https://example.com/telesync/incoming","method":"POST","auth_mode":"hmac","auth_header":"","has_secret":true,"timeout_ms":15000,"max_attempts":5,"source_channel_ids":[1],"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z"}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"webhook":{"id":1,"name":"Documented webhook","description":"Sends new messages to an external API","enabled":false,"url":"https://example.com/telesync/incoming","method":"POST","auth_mode":"hmac","auth_header":"","has_secret":true,"timeout_ms":15000,"max_attempts":5,"source_channel_ids":[1],"allow_localhost":false,"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z"}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 

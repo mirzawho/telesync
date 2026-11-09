@@ -25,16 +25,17 @@ import (
 // layer enforces is referential integrity and the delivery rules that are not
 // expressible as a permission check.
 type Service struct {
-	cfg     Config
-	store   Store
-	events  EventSource
-	reopen  ReopenFunc
-	build   *Builder
-	secrets Secrets
-	client  *http.Client
-	sem     chan struct{}
-	now     func() time.Time
-	policy  Policy
+	cfg      Config
+	store    Store
+	events   EventSource
+	channels ChannelSource
+	reopen   ReopenFunc
+	build    *Builder
+	secrets  Secrets
+	client   *http.Client
+	sem      chan struct{}
+	now      func() time.Time
+	policy   Policy
 
 	// sigMu guards lastSigTS, the timestamp the last signature was made with.
 	sigMu     sync.Mutex
@@ -62,8 +63,16 @@ func New(cfg Config) (*Service, error) {
 		concurrency = 1
 	}
 
+	// The deployment's half of the loopback exception reaches the policy here.
+	// A webhook's own half is applied where its target is validated, so a
+	// webhook that never asked for it is unaffected whatever this says.
+	policy := cfg.Policy
+	if cfg.Webhooks.AllowLocalhost {
+		policy.allowLocalhost = true
+	}
+
 	client := NewClient(
-		WithPolicy(cfg.Policy),
+		WithPolicy(policy),
 		WithTimeout(0), // each attempt bounds itself with its own deadline
 		WithTransport(cfg.Transport),
 		WithDial(cfg.Dial),
@@ -71,16 +80,17 @@ func New(cfg Config) (*Service, error) {
 	)
 
 	return &Service{
-		cfg:     cfg,
-		store:   cfg.Store,
-		events:  cfg.Events,
-		reopen:  cfg.Reopen,
-		build:   NewBuilder(cfg.PublicBaseURL, cfg.BasePath),
-		secrets: cfg.Secrets,
-		client:  client,
-		sem:     make(chan struct{}, concurrency),
-		now:     now,
-		policy:  cfg.Policy,
+		cfg:      cfg,
+		store:    cfg.Store,
+		events:   cfg.Events,
+		channels: cfg.Channels,
+		reopen:   cfg.Reopen,
+		build:    NewBuilder(cfg.PublicBaseURL, cfg.BasePath),
+		secrets:  cfg.Secrets,
+		client:   client,
+		sem:      make(chan struct{}, concurrency),
+		now:      now,
+		policy:   policy,
 	}, nil
 }
 
@@ -273,7 +283,7 @@ func (s *Service) TestWebhook(ctx context.Context, id int64) (automation.Webhook
 	// other.
 	logicalID := deliveryIDPrefix + "test_" + strconv.FormatInt(id, 10)
 
-	target, err := ValidateTarget(wh.URL, s.policy)
+	target, err := ValidateTarget(wh.URL, s.policy.ForWebhook(wh.AllowLocalhost))
 	if err != nil {
 		return automation.WebhookTestResult{}, true, testFailure(err)
 	}
@@ -436,6 +446,7 @@ func recordOf(in automation.WebhookInput) (automation.Webhook, error) {
 		AuthHeader:       strings.TrimSpace(in.AuthHeader),
 		Timeout:          in.Timeout,
 		MaxAttempts:      in.MaxAttempts,
+		AllowLocalhost:   in.AllowLocalhost,
 		SourceChannelIDs: append([]int64{}, in.SourceChannelIDs...),
 	}
 	if rec.Method == "" {

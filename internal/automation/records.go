@@ -49,6 +49,10 @@ type Webhook struct {
 	HasSecret   bool
 	Timeout     time.Duration
 	MaxAttempts int
+	// AllowLocalhost is this webhook's half of the loopback exception. It only
+	// ever narrows the deployment's own permission: without
+	// TELESYNC_WEBHOOK_ALLOW_LOCALHOST it does nothing at all.
+	AllowLocalhost bool
 	// SourceChannelIDs are the local managed_channels.id values it subscribes
 	// to. These are local row ids, never Telegram ids.
 	SourceChannelIDs []int64
@@ -90,6 +94,7 @@ type WebhookInput struct {
 	Timeout          time.Duration
 	MaxAttempts      int
 	SourceChannelIDs []int64
+	AllowLocalhost   bool
 	CreatedBy        int64
 }
 

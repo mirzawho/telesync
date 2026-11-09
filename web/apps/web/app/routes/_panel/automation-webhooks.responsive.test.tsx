@@ -4,9 +4,9 @@ import { test } from "node:test"
 import { MemoryRouter } from "react-router"
 import { renderToStaticMarkup } from "react-dom/server"
 
-import { WebhooksTable } from "./automation-webhooks"
+import { WebhooksTable } from "@/components/automation/webhooks-table"
 import { DeliveriesTable } from "./automation-deliveries"
-import { WorkflowsTable } from "./automation-workflows"
+import { WorkflowsTable } from "@/components/automation/workflows-table"
 import { RunsTable } from "./automation-runs"
 import { faDigits } from "@/components/persian-digits"
 import {
@@ -78,6 +78,7 @@ const webhook: WebhookItem = {
   hasSecret: true,
   timeoutMs: 1000,
   maxAttempts: 3,
+  allowLocalhost: false,
   sourceChannelIds: [3, 9],
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
@@ -95,8 +96,8 @@ test("the webhook table is one scroller with a pinned actions column", () => {
     <WebhooksTable
       webhooks={[webhook]}
       channels={[
-        { id: 3, label: "کانال خبری" },
-        { id: 9, label: "کانال ورزشی" },
+        { id: 3, label: "کانال خبری", clientKey: "official" },
+        { id: 9, label: "کانال ورزشی", clientKey: "official" },
       ]}
       canManage
       onEdit={() => {}}

@@ -24,12 +24,20 @@ const (
 	DefaultWebhookMaxResponseBytes    = 64 << 10
 	DefaultWebhookMaxConcurrent       = 4
 	DefaultWebhookHistoryRetention    = 30
-	DefaultAITimeout                  = 45 * time.Second
-	DefaultAIMaxOutputTokens          = 1500
-	DefaultAIMaxInputChars            = 16000
-	DefaultAIMaxConcurrentRequests    = 2
-	DefaultAIMaxImages                = 4
-	DefaultAIMaxImageBytes            = 8 << 20
+	// DefaultWebhookAllowLocalhost is the loopback exception's starting state:
+	// off. It is a security exception, and a deployment has to say so.
+	DefaultWebhookAllowLocalhost = false
+	// AllowLocalhostEnv names the variable that overrides the deployment-wide
+	// half of that exception. The same knob is automation.webhooks.allow_localhost
+	// in the configuration file; the variable wins whenever it is set, so a
+	// deployment can force it without editing a shared or templated file.
+	AllowLocalhostEnv              = "TELESYNC_WEBHOOK_ALLOW_LOCALHOST"
+	DefaultAITimeout               = 45 * time.Second
+	DefaultAIMaxOutputTokens       = 1500
+	DefaultAIMaxInputChars         = 16000
+	DefaultAIMaxConcurrentRequests = 2
+	DefaultAIMaxImages             = 4
+	DefaultAIMaxImageBytes         = 8 << 20
 
 	MaxAutomationWorkers       = 32
 	MaxWebhookMaxConcurrent    = 32
@@ -81,6 +89,12 @@ type WebhookConfig struct {
 	MaxResponseBytes        int64
 	MaxConcurrentDeliveries int
 	HistoryRetentionDays    int
+	// AllowLocalhost is the deployment-wide half of the loopback exception: the
+	// allow_localhost key of this same block, overridden by
+	// TELESYNC_WEBHOOK_ALLOW_LOCALHOST. With it off no webhook reaches
+	// localhost whatever its own setting says; with it on, only a webhook that
+	// asked for it may. It is not a private-network allowance.
+	AllowLocalhost bool
 }
 
 // AIConfig is the OpenAI-compatible polishing service. It is server-side
@@ -139,6 +153,11 @@ type rawWebhooks struct {
 	MaxResponseBytes        *int64 `json:"max_response_bytes"`
 	MaxConcurrentDeliveries *int   `json:"max_concurrent_deliveries"`
 	HistoryRetentionDays    *int   `json:"history_retention_days"`
+	// AllowLocalhost is the same knob as AllowLocalhostEnv, held in the file
+	// beside the rest of the webhook settings. It is a pointer so that an absent
+	// key is "not said" rather than "said false": the default is false either
+	// way, but only a key that is actually there should be overridable.
+	AllowLocalhost *bool `json:"allow_localhost"`
 }
 
 type rawAI struct {
@@ -157,6 +176,25 @@ type rawAI struct {
 
 // resolve fills in defaults and reports every problem it finds, so one run of
 // the loader names all the mistakes rather than the first.
+// envFlag reads one environment flag and reports whether the environment said
+// anything at all.
+//
+// An unset or empty variable is "not said": the configuration file's own value
+// stands. Anything but a plain 1, true, yes or on is false — an unrecognised
+// value must never turn a security exception on, so it fails closed rather than
+// being ignored.
+func envFlag(lookup func(string) string, name string) (value bool, set bool) {
+	raw := strings.TrimSpace(lookup(name))
+	if raw == "" {
+		return false, false
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes", "on":
+		return true, true
+	}
+	return false, true
+}
+
 func (raw rawAutomation) resolve(base AutomationConfig, lookup func(string) string) (AutomationConfig, []string) {
 	var problems []string
 	fail := func(format string, args ...any) {
@@ -224,6 +262,19 @@ func (raw rawAutomation) resolve(base AutomationConfig, lookup func(string) stri
 	}
 	out.Webhooks.MaxConcurrentDeliveries = positive("webhooks.max_concurrent_deliveries", raw.Webhooks.MaxConcurrentDeliveries, DefaultWebhookMaxConcurrent, MaxWebhookMaxConcurrent)
 	out.Webhooks.HistoryRetentionDays = nonNegative("webhooks.history_retention_days", raw.Webhooks.HistoryRetentionDays, DefaultWebhookHistoryRetention)
+	// The loopback exception is one knob with two homes: allow_localhost here,
+	// beside the rest of the webhook settings, and AllowLocalhostEnv in the
+	// environment. The file is where an operator keeps the rest of this
+	// subsystem's settings; the variable overrides it whenever it says anything,
+	// so a deployment can force the exception on or off without editing a file
+	// that is often templated or shared. Nothing here turns it on by default.
+	out.Webhooks.AllowLocalhost = DefaultWebhookAllowLocalhost
+	if raw.Webhooks.AllowLocalhost != nil {
+		out.Webhooks.AllowLocalhost = *raw.Webhooks.AllowLocalhost
+	}
+	if fromEnv, said := envFlag(lookup, AllowLocalhostEnv); said {
+		out.Webhooks.AllowLocalhost = fromEnv
+	}
 
 	out.AI.Enabled = raw.AI.Enabled
 	out.AI.BaseURL = strings.TrimSpace(raw.AI.BaseURL)

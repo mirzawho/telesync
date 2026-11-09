@@ -4,6 +4,8 @@ import { test } from "node:test"
 import {
   aiStatusLabels,
   automationApi,
+  automationFormLinkState,
+  automationReturnTo,
   automationRoute,
   bodyView,
   bodyViewOf,
@@ -59,6 +61,7 @@ const wireWebhook = {
   has_secret: true,
   timeout_ms: 4500,
   max_attempts: 5,
+  allow_localhost: false,
   source_channel_ids: [3, 9],
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-02T00:00:00Z",
@@ -85,6 +88,7 @@ test("readWebhook maps every documented field", () => {
     hasSecret: true,
     timeoutMs: 4500,
     maxAttempts: 5,
+    allowLocalhost: false,
     sourceChannelIds: [3, 9],
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-02T00:00:00Z",
@@ -635,6 +639,7 @@ test("the panel routes are router paths, without the /admin basename", () => {
     automationRoute.delivery(7, 44),
     automationRoute.workflows,
     automationRoute.newWorkflow,
+    automationRoute.editWorkflow(12),
     automationRoute.workflow(12),
     automationRoute.runs(12),
     automationRoute.run(12, 300),
@@ -644,7 +649,55 @@ test("the panel routes are router paths, without the /admin basename", () => {
     assert.ok(!/^https?:/.test(path))
   }
   assert.equal(automationRoute.newWebhook, "/automation/webhooks/new")
-  assert.equal(automationRoute.editWebhook(42), "/automation/webhooks/42")
+  assert.equal(automationRoute.editWebhook(42), "/automation/webhooks/42/edit")
+  assert.equal(automationRoute.newWorkflow, "/automation/workflows/new")
+  assert.equal(automationRoute.editWorkflow(42), "/automation/workflows/42/edit")
+})
+
+// --- the way back to the listing ---------------------------------------------
+//
+// A form that was opened from the listing returns to the exact view it left —
+// the tab, the query, the page — and one opened straight from the address bar
+// has no such history and falls back to the collection's own tab. The listing
+// builds `from`; every form reads it through the same two helpers, so the pair
+// cannot drift apart.
+
+test("a form opened from the listing goes back to the view it left", () => {
+  const from = "/automation?tab=webhooks&q=%D8%AE%D8%A8%D8%B1&page=2"
+  assert.deepEqual(automationFormLinkState(from), { from })
+  assert.equal(
+    automationReturnTo(automationFormLinkState(from), "webhooks"),
+    from,
+    "the query and the page come back with it"
+  )
+  assert.equal(
+    automationReturnTo(automationFormLinkState("/automation?tab=workflows"), "workflows"),
+    "/automation?tab=workflows"
+  )
+})
+
+test("a form opened from an address bar falls back to its own tab", () => {
+  for (const state of [undefined, null, {}, { from: 7 }, { from: "" }]) {
+    assert.equal(automationReturnTo(state, "webhooks"), "/automation?tab=webhooks")
+    assert.equal(automationReturnTo(state, "workflows"), "/automation?tab=workflows")
+  }
+})
+
+test("a `from` that is not this area is never followed", () => {
+  // The listing is the only thing that builds one, but a crafted or stale
+  // state must not be able to send a save anywhere else.
+  assert.equal(
+    automationReturnTo({ from: "https://evil.example/collect" }, "webhooks"),
+    "/automation?tab=webhooks"
+  )
+  assert.equal(
+    automationReturnTo({ from: "//evil.example/collect" }, "webhooks"),
+    "/automation?tab=webhooks"
+  )
+  assert.equal(
+    automationReturnTo({ from: "/administrators" }, "webhooks"),
+    "/automation?tab=webhooks"
+  )
 })
 
 // --- the persistence contract ------------------------------------------------
@@ -668,6 +721,7 @@ test("a webhook save posts exactly the documented fields, in snake_case", () => 
     sourceChannelIds: [3, 9],
   }) as Record<string, unknown>
   assert.deepEqual(Object.keys(body).sort(), [
+    "allow_localhost",
     "auth_header",
     "auth_mode",
     "description",

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -40,6 +41,13 @@ func Listen(path string) (net.Listener, error) {
 	info, err := os.Lstat(cleaned)
 	switch {
 	case err == nil && info.Mode()&os.ModeSocket != 0:
+		// A live socket is somebody else's: a second worker must fail here,
+		// not steal the path from the one already serving on it.
+		if live, liveErr := isLive(cleaned); liveErr != nil {
+			return nil, fmt.Errorf("worker: inspect socket %q: %w", cleaned, liveErr)
+		} else if live {
+			return nil, fmt.Errorf("worker: socket %q is already in use", cleaned)
+		}
 		// A leftover socket from a previous process. Binding over it would work
 		// on Linux but leave a stale inode behind on some platforms.
 		if err := os.Remove(cleaned); err != nil {
@@ -60,6 +68,21 @@ func Listen(path string) (net.Listener, error) {
 		return nil, fmt.Errorf("worker: restrict socket %q: %w", cleaned, err)
 	}
 	return ln, nil
+}
+
+// isLive reports whether something is accepting connections on the Unix socket
+// at path. ECONNREFUSED is the only answer that means "nobody is there": a
+// socket file exists but no process listens on it.
+func isLive(path string) (bool, error) {
+	conn, err := net.DialTimeout("unix", path, time.Second)
+	if err == nil {
+		conn.Close()
+		return true, nil
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT) {
+		return false, nil
+	}
+	return false, err
 }
 
 // Serve answers RPC requests on ln until ctx is cancelled.

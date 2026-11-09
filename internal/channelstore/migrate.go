@@ -530,6 +530,17 @@ var migrations = []migration{
 			`CREATE INDEX automation_outbound_messages_lookup_idx ON automation_outbound_messages (client_key, channel_id, remote_message_id)`,
 		},
 	},
+	{
+		version: 16,
+		name:    "webhooks_allow_localhost",
+		stmts: []string{
+			// The per-webhook half of the loopback exception. It is off for
+			// every webhook that already exists: a record written before this
+			// column was known to it never asked for it, and a default of 1
+			// would hand the exception to every receiver already configured.
+			`ALTER TABLE webhooks ADD COLUMN allow_localhost INTEGER NOT NULL DEFAULT 0 CHECK (allow_localhost IN (0, 1))`,
+		},
+	},
 }
 
 // migrate brings the schema up to the latest version.

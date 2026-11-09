@@ -41,8 +41,57 @@ func messageEvent(media *rpc.Media) automation.MessageEvent {
 	}
 }
 
+// The JSON keys are the contract with every receiver that already parses this
+// feed, so they are pinned here and not merely read off the struct tags.
+func TestSourceCarriesTheChannelsOwnNamingUnderStableKeys(t *testing.T) {
+	env, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(
+		messageEvent(nil),
+		webhooks.Channel{Type: "group", Title: "گروه", Username: "group"},
+	)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Data struct {
+			Source map[string]any `json:"source"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]any{
+		"managed_channel_id":  float64(7),
+		"client_key":          "client-a",
+		"telegram_channel_id": float64(-1001234),
+		"type":                "group",
+		"title":               "گروه",
+		"username":            "group",
+	} {
+		if got := doc.Data.Source[key]; got != want {
+			t.Fatalf("source.%s = %v (%T), want %v", key, got, got, want)
+		}
+	}
+}
+
+func TestAnUnknownChannelLeavesTheNamingEmptyAndKeepsTheIdentifiers(t *testing.T) {
+	env, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(nil), webhooks.Channel{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if env.Data.Source.Type != "" || env.Data.Source.Title != "" {
+		t.Fatalf("labels appeared from nowhere: %+v", env.Data.Source)
+	}
+	if env.Data.Source.ManagedChannelID != 7 || env.Data.Source.TelegramChannelID != -1001234 {
+		t.Fatalf("the identifiers are what a receiver matches on: %+v", env.Data.Source)
+	}
+}
+
 func TestEnvelopeIsCloudEventsShapedAndNamesItsSource(t *testing.T) {
-	env, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(nil))
+	env, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(nil), webhooks.Channel{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -71,7 +120,7 @@ func TestEnvelopeIsCloudEventsShapedAndNamesItsSource(t *testing.T) {
 }
 
 func TestEnvelopeCarriesTheMessageFieldsTheChannelMessagesAPIExposes(t *testing.T) {
-	env, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(nil))
+	env, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(nil), webhooks.Channel{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +155,7 @@ func TestMediaIsMetadataPlusAURLAndNeverBytes(t *testing.T) {
 		ID: "91:0", Type: "photo", Label: "Photo", Filename: "shot.jpg",
 		MimeType: "image/jpeg", Size: 12345,
 	}
-	env, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(media))
+	env, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(media), webhooks.Channel{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +192,7 @@ func TestMediaWithoutFetchableBytesHasNoURL(t *testing.T) {
 	// with a URL that 404s would be worse than saying nothing.
 	for _, kind := range []string{"poll", "geo", "webpage", "other"} {
 		media := &rpc.Media{ID: "91:0", Type: kind, Label: kind}
-		env, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(media))
+		env, err := webhooks.NewBuilder("https://telesync.example.com", "/admin").Build(messageEvent(media), webhooks.Channel{})
 		if err != nil {
 			t.Fatal(err)
 		}

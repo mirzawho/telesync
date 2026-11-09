@@ -23,21 +23,29 @@ export default [
     // screen as its editor: `new` is the "no record yet" value of the id
     // segment, so there is never a second copy of a form.
     route("automation", "routes/_panel/automation.tsx"),
-    route("automation/webhooks", "routes/_panel/automation-webhooks.tsx"),
-    // Creating and editing a webhook are one screen, exactly as they are for
-    // workflows below: `new` is the one non-numeric value of the id segment and
-    // the page reads it as "no webhook yet", so a direct navigation and a
-    // refresh land on the same form. `new` is never taken for a record id, and
-    // any other non-numeric segment is not a record either — the page reports
-    // it as missing rather than inventing one. There is no separate create
-    // route, which would have no id to answer with. Both
-    //   /admin/automation/webhooks/new   (create)
-    //   /admin/automation/webhooks/7     (edit)
-    // resolve to this one entry.
+    // Creating and editing are one form component on two routes: `new` is the
+    // create page and `:id/edit` is the same form seeded from the stored row.
+    // `new` is a literal and outranks `:webhookId` below, so it is never taken
+    // for a record id.
+    route("automation/webhooks/new", "routes/_panel/automation-webhook-form.tsx"),
+    route(
+      "automation/webhooks/:webhookId/edit",
+      "routes/_panel/automation-webhook-form.tsx",
+      { id: "routes/_panel/automation-webhook-edit" }
+    ),
+    // The two addresses these screens had before: the bare collection and a
+    // bare record id. Both answer by pointing at where the content lives now,
+    // so a bookmark or a link in a message keeps working. An id that was never
+    // a record is reported, never turned into an editor.
     route(
       "automation/webhooks/:webhookId",
-      "routes/_panel/automation-webhooks.tsx",
-      { id: "routes/_panel/automation-webhook-editor" }
+      "routes/_panel/automation-legacy-redirect.tsx",
+      { id: "routes/_panel/automation-webhook-legacy" }
+    ),
+    route(
+      "automation/webhooks",
+      "routes/_panel/automation-legacy-redirect.tsx",
+      { id: "routes/_panel/automation-webhooks-legacy" }
     ),
     route(
       "automation/webhooks/:webhookId/deliveries",
@@ -47,12 +55,21 @@ export default [
       "automation/webhooks/:webhookId/deliveries/:deliveryId",
       "routes/_panel/automation-delivery.tsx"
     ),
-    route("automation/workflows", "routes/_panel/automation-workflows.tsx"),
-    // Creating and editing are one screen: `new` is the "no id yet" value of
-    // the same segment, so the editor never has two copies of its own form.
+    route("automation/workflows/new", "routes/_panel/automation-workflow-form.tsx"),
+    route(
+      "automation/workflows/:workflowId/edit",
+      "routes/_panel/automation-workflow-form.tsx",
+      { id: "routes/_panel/automation-workflow-edit" }
+    ),
     route(
       "automation/workflows/:workflowId",
-      "routes/_panel/automation-workflow-editor.tsx"
+      "routes/_panel/automation-legacy-redirect.tsx",
+      { id: "routes/_panel/automation-workflow-legacy" }
+    ),
+    route(
+      "automation/workflows",
+      "routes/_panel/automation-legacy-redirect.tsx",
+      { id: "routes/_panel/automation-workflows-legacy" }
     ),
     route(
       "automation/workflows/:workflowId/runs",

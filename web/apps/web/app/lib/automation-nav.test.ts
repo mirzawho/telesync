@@ -3,9 +3,7 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { test } from "node:test"
 
-import { createElement, type ReactNode } from "react"
-import { renderToStaticMarkup } from "react-dom/server"
-import { MemoryRouter, matchRoutes, type RouteObject } from "react-router"
+import { matchRoutes, type RouteObject } from "react-router"
 
 import {
   buildReport,
@@ -24,12 +22,7 @@ import {
   primaryNavItems,
   visibleNavItems,
 } from "@/lib/nav"
-import {
-  AutomationTabs,
-  WebhooksPanel,
-  WorkflowsPanel,
-} from "@/routes/_panel/automation"
-import type { WebhookItem, WorkflowItem } from "@/lib/automation"
+import { clientLoader as legacyLoader } from "@/routes/_panel/automation-legacy-redirect"
 import routeConfig from "@/routes"
 
 // --- navigation -------------------------------------------------------------
@@ -245,15 +238,14 @@ test("the panel's basename is the one the app is served under", () => {
 // page is a single-page app and the server answers all of them with the shell.
 const REQUIRED_URLS: [string, string, Record<string, string>][] = [
   ["/admin/automation", "routes/_panel/automation.tsx", {}],
-  ["/admin/automation/webhooks", "routes/_panel/automation-webhooks.tsx", {}],
   [
     "/admin/automation/webhooks/new",
-    "routes/_panel/automation-webhooks.tsx",
-    { webhookId: "new" },
+    "routes/_panel/automation-webhook-form.tsx",
+    {},
   ],
   [
-    "/admin/automation/webhooks/7",
-    "routes/_panel/automation-webhooks.tsx",
+    "/admin/automation/webhooks/7/edit",
+    "routes/_panel/automation-webhook-form.tsx",
     { webhookId: "7" },
   ],
   [
@@ -261,15 +253,14 @@ const REQUIRED_URLS: [string, string, Record<string, string>][] = [
     "routes/_panel/automation-deliveries.tsx",
     { webhookId: "7" },
   ],
-  ["/admin/automation/workflows", "routes/_panel/automation-workflows.tsx", {}],
   [
     "/admin/automation/workflows/new",
-    "routes/_panel/automation-workflow-editor.tsx",
-    { workflowId: "new" },
+    "routes/_panel/automation-workflow-form.tsx",
+    {},
   ],
   [
-    "/admin/automation/workflows/12",
-    "routes/_panel/automation-workflow-editor.tsx",
+    "/admin/automation/workflows/12/edit",
+    "routes/_panel/automation-workflow-form.tsx",
     { workflowId: "12" },
   ],
   [
@@ -285,43 +276,91 @@ test("every required automation URL resolves through the real routes.ts", () => 
   }
 })
 
-test("the webhook create and edit screens answer from the one webhooks page", () => {
-  assert.deepEqual(panelRoute("/admin/automation/webhooks"), {
-    file: "routes/_panel/automation-webhooks.tsx",
-    params: {},
-  })
-  // Creating is the same screen as editing: one module, two URLs, no second
-  // copy of the form to keep in step. The create URL carries the one value the
-  // page reads as "no webhook yet" (`creating = params.webhookId === "new"` in
-  // automation-webhooks.tsx), so it is never taken for a record id.
+test("creating and editing are one form module on two routes", () => {
+  // One form component, two URLs: `new` is the create page and `:id/edit` is
+  // the same form seeded from the stored row. There is no second copy of the
+  // form to keep in step, and `new` is a literal so it can never be read as a
+  // record id.
   const create = panelRoute("/admin/automation/webhooks/new")
-  assert.equal(create.file, "routes/_panel/automation-webhooks.tsx")
-  assert.deepEqual(create.params, { webhookId: "new" })
-  const edit = panelRoute("/admin/automation/webhooks/7")
-  assert.equal(edit.file, "routes/_panel/automation-webhooks.tsx")
+  assert.equal(create.file, "routes/_panel/automation-webhook-form.tsx")
+  assert.deepEqual(create.params, {}, "`new` is the create page, not a record")
+
+  const edit = panelRoute("/admin/automation/webhooks/7/edit")
+  assert.equal(edit.file, "routes/_panel/automation-webhook-form.tsx")
   assert.deepEqual(edit.params, { webhookId: "7" })
+
+  assert.equal(
+    panelRoute("/admin/automation/workflows/new").file,
+    "routes/_panel/automation-workflow-form.tsx"
+  )
+  assert.deepEqual(panelRoute("/admin/automation/workflows/12/edit").params, {
+    workflowId: "12",
+  })
 })
 
-test("the workflow editor keeps its literal `new`, and the histories resolve", () => {
-  assert.deepEqual(panelRoute("/admin/automation/workflows/new"), {
-    file: "routes/_panel/automation-workflow-editor.tsx",
-    params: { workflowId: "new" },
+test("the addresses these screens used to have still resolve, and point on", () => {
+  // A bookmark, a link in a message and a browser's back button all keep
+  // working: the bare collection and the bare record id are routes too, and
+  // they answer with where that content lives now.
+  const collection = panelRoute("/admin/automation/webhooks")
+  assert.equal(collection.file, "routes/_panel/automation-legacy-redirect.tsx")
+  assert.deepEqual(collection.params, {})
+
+  const record = panelRoute("/admin/automation/webhooks/7")
+  assert.equal(record.file, "routes/_panel/automation-legacy-redirect.tsx")
+  assert.deepEqual(record.params, { webhookId: "7" })
+
+  assert.equal(
+    panelRoute("/admin/automation/workflows").file,
+    "routes/_panel/automation-legacy-redirect.tsx"
+  )
+  assert.deepEqual(panelRoute("/admin/automation/workflows/12").params, {
+    workflowId: "12",
   })
-  assert.deepEqual(panelRoute("/admin/automation/workflows/12"), {
-    file: "routes/_panel/automation-workflow-editor.tsx",
-    params: { workflowId: "12" },
-  })
-  assert.deepEqual(panelRoute("/admin/automation/workflows/12/runs"), {
-    file: "routes/_panel/automation-runs.tsx",
-    params: { workflowId: "12" },
-  })
+})
+
+test("a legacy address answers with where the content lives now", async () => {
+  // `requestURL` resolves a loader's request against the window's origin; a
+  // loader under test needs the same one the browser would give it.
+  ;(globalThis as Record<string, unknown>).window = {
+    location: { origin: "http://panel.test" },
+  }
+  const to = async (url: string) => {
+    const response = (await legacyLoader({
+      request: new Request(`http://panel.test${url}`),
+    } as never)) as Response
+    return response.headers.get("Location")
+  }
+  assert.equal(await to("/automation/webhooks"), "/automation?tab=webhooks")
+  assert.equal(await to("/automation/workflows"), "/automation?tab=workflows")
+  assert.equal(await to("/automation/webhooks/7"), "/automation/webhooks/7/edit")
+  assert.equal(
+    await to("/automation/workflows/12"),
+    "/automation/workflows/12/edit"
+  )
+})
+
+test("an id that was never a record is reported, not turned into an editor", async () => {
+  ;(globalThis as Record<string, unknown>).window = {
+    location: { origin: "http://panel.test" },
+  }
+  const data = (await legacyLoader({
+    request: new Request("http://panel.test/automation/webhooks/abc"),
+  } as never)) as { status: string; collection: string }
+  assert.equal(data.status, "missing")
+  assert.equal(data.collection, "webhooks")
+  assert.equal(
+    (await legacyLoader({
+      request: new Request("http://panel.test/automation/workflows/abc"),
+    } as never) as { collection: string }).collection,
+    "workflows"
+  )
+})
+
+test("the histories resolve beside their record", () => {
   assert.deepEqual(panelRoute("/admin/automation/workflows/12/runs/300"), {
     file: "routes/_panel/automation-run.tsx",
     params: { workflowId: "12", runId: "300" },
-  })
-  assert.deepEqual(panelRoute("/admin/automation/webhooks/7/deliveries"), {
-    file: "routes/_panel/automation-deliveries.tsx",
-    params: { webhookId: "7" },
   })
   assert.deepEqual(panelRoute("/admin/automation/webhooks/7/deliveries/44"), {
     file: "routes/_panel/automation-delivery.tsx",
@@ -341,197 +380,6 @@ test("every route keeps its own id, so two screens may share one module", () => 
   }
   walk(routeConfig)
   assert.equal(new Set(ids).size, ids.length, "route ids are unique")
-})
-
-// --- the landing page -------------------------------------------------------
-
-// The area's front page is two tabs, one per collection. What is proved here is
-// the markup the shared Tabs paints: the workspace has no DOM to click in, so
-// the primitive's own selection is read off the attributes it renders. It
-// paints only the open panel, which is also what pins the default down.
-
-const webhookItem = (id: number, name: string): WebhookItem => ({
-  id,
-  name,
-  description: "",
-  enabled: true,
-  url: "https://example.test/hooks/telesync",
-  method: "POST",
-  authMode: "hmac",
-  authHeader: "X-Signature",
-  hasSecret: true,
-  timeoutMs: 5000,
-  maxAttempts: 3,
-  sourceChannelIds: [4],
-  createdAt: "2026-01-01T00:00:00Z",
-  updatedAt: "2026-01-02T00:00:00Z",
-  lastDelivery: {
-    status: "succeeded",
-    httpStatus: 200,
-    at: "2026-01-02T00:00:00Z",
-    attemptCount: 1,
-  },
-  summary: { succeeded: 12, failed: 1, pending: 2 },
-})
-
-const workflowItem = (id: number, title: string): WorkflowItem => ({
-  id,
-  managedChannelID: id,
-  channel: {
-    id,
-    title,
-    username: "telesync_channel",
-    clientKey: "official",
-    channelID: 100,
-  },
-  enabled: true,
-  aiEnabled: true,
-  aiPrompt: "",
-  aiSendImages: false,
-  aiPublishOnFailure: false,
-  configRevision: 3,
-  destinations: [
-    {
-      id: 1,
-      type: "telegram",
-      clientKey: "official",
-      channelID: 200,
-      siteID: 0,
-      options: {},
-      position: 0,
-      enabled: true,
-    },
-  ],
-  createdAt: "2026-01-01T00:00:00Z",
-  updatedAt: "2026-01-02T00:00:00Z",
-  lastRun: {
-    id: 9,
-    status: "published",
-    createdAt: "2026-01-02T00:00:00Z",
-    completedAt: "2026-01-02T00:00:01Z",
-  },
-})
-
-const webhooksPreview = {
-  rows: [webhookItem(1, "هوک رویدادها"), webhookItem(2, "هوک پشتیبان")],
-  total: 7,
-}
-const workflowsPreview = {
-  rows: [workflowItem(2, "کانال خبری")],
-  total: 2,
-}
-
-// Links read the router, so the panels are rendered inside one at the area's
-// own address.
-const inRouter = (node: ReactNode, at = "/automation") =>
-  renderToStaticMarkup(
-    createElement(MemoryRouter, { initialEntries: [at] }, node)
-  )
-
-// The triggers in document order, as their opening tags. Base UI marks the
-// selected one with a bare `data-active`, not Radix's `data-state`.
-const tabTags = (markup: string) =>
-  markup.match(/<button\b[^>]*role="tab"[^>]*>/g) ?? []
-
-test("the landing page is two tabs and opens on the webhooks tab", () => {
-  const markup = inRouter(
-    createElement(AutomationTabs, {
-      webhooks: webhooksPreview,
-      workflows: workflowsPreview,
-    })
-  )
-  const tabs = tabTags(markup)
-  assert.equal(tabs.length, 2, "exactly the two collections, nothing more")
-  assert.deepEqual(
-    tabs.map((tag) =>
-      markup.slice(markup.indexOf(tag) + tag.length).split("<")[0]
-    ),
-    ["وب‌هوک‌ها", "ورک‌فلوها"],
-    "webhooks first, workflows beside it"
-  )
-  assert.match(tabs[0], /aria-selected="true"/)
-  assert.match(tabs[0], /data-active=/)
-  assert.match(tabs[1], /aria-selected="false"/)
-  assert.ok(!/data-active=/.test(tabs[1]), "only one tab is selected")
-  // Only the open panel is painted, so the webhooks panel being the one on
-  // screen is the default being the webhooks tab.
-  assert.match(markup, /href="\/automation\/webhooks\/new"/)
-  assert.ok(
-    !/href="\/automation\/workflows\/new"/.test(markup),
-    "the closed tab is not painted, so webhooks is the default"
-  )
-})
-
-test("the triggers keep the shared Tabs' selected background and shadow", () => {
-  const markup = inRouter(
-    createElement(AutomationTabs, {
-      webhooks: webhooksPreview,
-      workflows: workflowsPreview,
-    })
-  )
-  for (const tag of tabTags(markup)) {
-    const classes = /class="([^"]*)"/.exec(tag)?.[1] ?? ""
-    for (const token of [
-      "data-active:bg-background",
-      "data-active:text-foreground",
-      "data-active:shadow-sm",
-      "dark:data-active:bg-input/30",
-    ]) {
-      assert.ok(classes.split(/\s+/).includes(token), `${token} is left alone`)
-    }
-  }
-  // And nothing was passed that could have overridden them.
-  const source = readFileSync(
-    resolve(process.cwd(), "app/routes/_panel/automation.tsx"),
-    "utf8"
-  )
-  assert.ok(
-    !/<TabsTrigger[^>]*className=/.test(source),
-    "the page never restyles a trigger"
-  )
-})
-
-test("each tab carries its collection's records and the way into the section", () => {
-  const hooks = inRouter(createElement(WebhooksPanel, { webhooks: webhooksPreview }))
-  // A real count against the real list, not a placeholder.
-  assert.match(hooks, /۷/)
-  assert.match(hooks, /هوک رویدادها/)
-  assert.match(hooks, /هوک پشتیبان/)
-  for (const href of [
-    "/automation/webhooks",
-    "/automation/webhooks/new",
-    "/automation/webhooks/1",
-    "/automation/webhooks/2",
-  ]) {
-    assert.ok(hooks.includes(`href="${href}"`), `${href} is linked from the tab`)
-  }
-
-  const flows = inRouter(
-    createElement(WorkflowsPanel, { workflows: workflowsPreview })
-  )
-  assert.match(flows, /۲/)
-  assert.match(flows, /کانال خبری/)
-  for (const href of [
-    "/automation/workflows",
-    "/automation/workflows/new",
-    "/automation/workflows/2",
-  ]) {
-    assert.ok(flows.includes(`href="${href}"`), `${href} is linked from the tab`)
-  }
-
-  // The doors the tabs offer are the two collections the route table serves,
-  // so a link from here is never a link to nowhere.
-  panelRoute(`${basename.slice(0, -1)}/automation/webhooks`)
-  panelRoute(`${basename.slice(0, -1)}/automation/workflows`)
-})
-
-test("an empty collection says so and still offers the way in", () => {
-  const hooks = inRouter(
-    createElement(WebhooksPanel, { webhooks: { rows: [], total: 0 } })
-  )
-  assert.match(hooks, /هنوز وب‌هوکی ثبت نشده است/)
-  assert.match(hooks, /href="\/automation\/webhooks\/new"/)
-  assert.ok(!/<ul/.test(hooks), "no empty list where the records would be")
 })
 
 // --- permissions ------------------------------------------------------------

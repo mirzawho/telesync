@@ -399,6 +399,7 @@ func autoDo(handler http.Handler, method, path, token, body string) *httptest.Re
 type autoWebhookView struct {
 	ID             int64   `json:"id"`
 	Name           string  `json:"name"`
+	AllowLocalhost bool    `json:"allow_localhost"`
 	Description    string  `json:"description"`
 	Enabled        bool    `json:"enabled"`
 	URL            string  `json:"url"`

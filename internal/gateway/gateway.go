@@ -117,6 +117,10 @@ type Config struct {
 	// to refuse enabling a webhook that would have to send a relative URL; no
 	// route returns it.
 	PublicBaseURL string
+	// WebhookAllowLocalhost is the deployment's half of the loopback exception
+	// for webhook destinations, TELESYNC_WEBHOOK_ALLOW_LOCALHOST. With it false
+	// no webhook reaches localhost, whatever its own allow_localhost says.
+	WebhookAllowLocalhost bool
 	// AutomationEnabled and AutomationWorkers describe the background
 	// subsystem for the status route. They are reporting only.
 	AutomationEnabled bool

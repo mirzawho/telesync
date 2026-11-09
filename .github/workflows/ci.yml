@@ -64,6 +64,18 @@ jobs:
       - name: documentation is current
         run: go run ./cmd/docsgen --check
 
+      # The binary embeds internal/panel/files, so a source change that was
+      # never folded in ships an old panel. The build is deterministic, so a
+      # rebuild that changes a tracked file means the committed copy is stale.
+      - name: embedded panel matches the source
+        run: |
+          node web/scripts/build-panel.mjs
+          if ! git diff --quiet -- internal/panel/files; then
+            echo "internal/panel/files is stale: rebuild the panel and commit it (make panel)"
+            git diff --stat -- internal/panel/files
+            exit 1
+          fi
+
   frontend:
     name: frontend
     runs-on: ubuntu-latest

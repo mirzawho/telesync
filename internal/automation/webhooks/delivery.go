@@ -171,11 +171,36 @@ func (s *Service) bodyFor(ctx context.Context, delivery automation.WebhookDelive
 	if !found {
 		return nil, &eventGoneError{id: eventID}
 	}
-	env, err := s.build.Build(event)
+	channel, err := s.channelFor(ctx, event.ManagedChannelID)
+	if err != nil {
+		return nil, err
+	}
+	env, err := s.build.Build(event, channel)
 	if err != nil {
 		return nil, err
 	}
 	return jsonMarshal(env)
+}
+
+// channelFor reads the labels of the managed channel an event came from.
+//
+// A channel row that is no longer there is not an error: the event's own
+// identifiers still say where the message came from, and a delivery must not
+// fail over a name the store has dropped. A lookup that fails is a real failure
+// and is reported as one, rather than quietly sending a payload missing the
+// channel the operator asked receivers to see.
+func (s *Service) channelFor(ctx context.Context, managedChannelID int64) (Channel, error) {
+	if s.channels == nil {
+		return Channel{}, nil
+	}
+	channel, found, err := s.channels(ctx, managedChannelID)
+	if err != nil {
+		return Channel{}, fmt.Errorf("webhooks: read source channel %d: %w", managedChannelID, err)
+	}
+	if !found {
+		return Channel{}, nil
+	}
+	return channel, nil
 }
 
 // attempt performs one HTTP exchange and records it.
@@ -193,7 +218,7 @@ func (s *Service) attempt(ctx context.Context, wh automation.Webhook, delivery a
 	// signature) triple must always be handed a fresh one.
 	signedAt := s.nextSignatureTime(started)
 
-	target, err := ValidateTarget(wh.URL, s.policy)
+	target, err := ValidateTarget(wh.URL, s.policy.ForWebhook(wh.AllowLocalhost))
 	if err != nil {
 		return s.record(ctx, delivery, attemptNumber, attemptResult{
 			status:    StatusFailed,
@@ -658,6 +683,18 @@ func boundString(s string, limit int) (string, bool) {
 // carries it: unix seconds.
 func signatureHeaderTimestamp(at time.Time) string {
 	return strconv.FormatInt(at.UTC().Unix(), 10)
+}
+
+// ValidAuthHeaderName reports whether name is a custom authentication header
+// this application's sender would accept for auth_mode header.
+//
+// It is the same rule the delivery path enforces, exported so a receiver can
+// reject at configuration time exactly the names the sender would refuse to
+// send under. A test receiver that accepted "Authorization" or a "webhook-"
+// name would be verifying a header the sender never sets, and would pass every
+// request while proving nothing.
+func ValidAuthHeaderName(name string) error {
+	return validAuthHeaderName(name)
 }
 
 // validAuthHeaderName refuses a custom auth header that would rewrite the

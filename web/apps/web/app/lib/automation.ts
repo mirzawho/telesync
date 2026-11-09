@@ -23,21 +23,44 @@ import type { ApiError } from "@/lib/api"
 export const automationRoute = {
   root: "/automation",
   webhooks: "/automation/webhooks",
-  // The webhook editor is a dialog on the list, addressed by its own URL so a
-  // direct navigation and a browser refresh open the same editor on the same
-  // record. `new` is the create form.
+  // Creating and editing are one form component on two routes: `new` is the
+  // create page and `:id/edit` is the same form seeded from the stored row. A
+  // bare `:id` is the old address of that editor and answers by redirecting to
+  // it, so a bookmark lands where it always meant to.
   newWebhook: "/automation/webhooks/new",
-  editWebhook: (webhookID: number) => `/automation/webhooks/${webhookID}`,
+  editWebhook: (webhookID: number) => `/automation/webhooks/${webhookID}/edit`,
   deliveries: (webhookID: number) => `/automation/webhooks/${webhookID}/deliveries`,
   delivery: (webhookID: number, deliveryID: number) =>
     `/automation/webhooks/${webhookID}/deliveries/${deliveryID}`,
   workflows: "/automation/workflows",
   newWorkflow: "/automation/workflows/new",
+  editWorkflow: (workflowID: number) => `/automation/workflows/${workflowID}/edit`,
   workflow: (workflowID: number) => `/automation/workflows/${workflowID}`,
   runs: (workflowID: number) => `/automation/workflows/${workflowID}/runs`,
   run: (workflowID: number, runID: number) =>
     `/automation/workflows/${workflowID}/runs/${runID}`,
 } as const
+
+// Where a form goes back to when it is done. A link that came from the listing
+// carries the view it was on — the tab, the query, the page — so a save or a
+// cancel lands back in that exact view; a bookmark, a paste or a refresh has no
+// such history and falls back to the collection's own tab. The listing is the
+// only caller that builds `from`, and every form reads it through here, so the
+// two halves cannot drift apart.
+export function automationReturnTo(
+  state: unknown,
+  tab: "webhooks" | "workflows"
+): string {
+  const from = (state as { from?: unknown } | null | undefined)?.from
+  return typeof from === "string" && from.startsWith(automationRoute.root)
+    ? from
+    : `${automationRoute.root}?tab=${tab}`
+}
+
+// The `state` half of the pair above, for a link out of the listing.
+export function automationFormLinkState(from: string): { from: string } {
+  return { from }
+}
 
 // ---------------------------------------------------------------------------
 // API paths, relative to API_BASE.
@@ -112,6 +135,7 @@ interface WireWebhookView {
   has_secret: boolean
   timeout_ms: number
   max_attempts: number
+  allow_localhost: boolean
   source_channel_ids: number[]
   created_at: string
   updated_at: string
@@ -307,6 +331,10 @@ export interface WebhookItem {
   hasSecret: boolean
   timeoutMs: number
   maxAttempts: number
+  // allowLocalhost is this webhook's half of the loopback exception. It only
+  // narrows the deployment's own permission: with
+  // TELESYNC_WEBHOOK_ALLOW_LOCALHOST off it does nothing at all.
+  allowLocalhost: boolean
   // Local managed_channels.id values this webhook subscribes to. Never
   // Telegram ids: a title comes from the channel rows, never from here.
   sourceChannelIds: number[]
@@ -555,6 +583,7 @@ export function readWebhook(raw: unknown): WebhookItem {
     hasSecret: bool(wire.has_secret),
     timeoutMs: num(wire.timeout_ms),
     maxAttempts: num(wire.max_attempts),
+    allowLocalhost: bool(wire.allow_localhost),
     sourceChannelIds: ids(wire.source_channel_ids),
     createdAt: str(wire.created_at),
     updatedAt: str(wire.updated_at),
@@ -1071,6 +1100,7 @@ export interface WebhookDraft {
   secret: string | null
   timeoutMs: number
   maxAttempts: number
+  allowLocalhost: boolean
   sourceChannelIds: number[]
 }
 
@@ -1084,8 +1114,9 @@ export function emptyWebhookDraft(): WebhookDraft {
     authMode: "none",
     authHeader: "",
     secret: null,
-    timeoutMs: 10_000,
+    timeoutMs: 5_000,
     maxAttempts: 3,
+    allowLocalhost: false,
     sourceChannelIds: [],
   }
 }
@@ -1103,6 +1134,7 @@ export function webhookDraftOf(webhook: WebhookItem): WebhookDraft {
     secret: null,
     timeoutMs: webhook.timeoutMs,
     maxAttempts: webhook.maxAttempts,
+    allowLocalhost: webhook.allowLocalhost,
     sourceChannelIds: [...webhook.sourceChannelIds],
   }
 }
@@ -1121,6 +1153,7 @@ export function webhookBody(draft: WebhookDraft): Record<string, unknown> {
     ...(draft.secret === null ? {} : { secret: draft.secret }),
     timeout_ms: draft.timeoutMs,
     max_attempts: draft.maxAttempts,
+    allow_localhost: draft.allowLocalhost,
     source_channel_ids: [...draft.sourceChannelIds],
   }
 }

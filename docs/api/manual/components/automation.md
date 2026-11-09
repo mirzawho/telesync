@@ -57,6 +57,14 @@ local ids. `channel_id` on a workflow destination and on a publication result is
 a Telegram peer id, always paired with a `client_key`. A WordPress destination
 names a `site_id`, which is the local id of a registered site.
 
+A webhook also carries `allow_localhost`, a boolean that is false unless it was
+set. It is one half of the permission to deliver to `localhost`, `127.0.0.1` or
+`::1` over plain http — the deployment's `TELESYNC_WEBHOOK_ALLOW_LOCALHOST` is
+the other, and both are needed. It is never a permission to reach any other
+private address. A create or update that sets it while the deployment forbids
+it is refused with `invalid_input` rather than accepted and ignored, and an
+update that does not mention it leaves the stored value alone.
+
 ## One workflow per channel
 
 A managed channel may have **no** workflow or **exactly one**. The database
@@ -84,7 +92,10 @@ key.
     "source": {
       "managed_channel_id": 7,
       "client_key": "official",
-      "telegram_channel_id": 123456789
+      "telegram_channel_id": 123456789,
+      "type": "channel",
+      "title": "Example channel",
+      "username": "example"
     },
     "message": {
       "id": 36,
@@ -104,6 +115,19 @@ key.
   }
 }
 ```
+
+### The source names the channel
+
+`data.source` carries identity and naming together. The three identifiers —
+`managed_channel_id`, `client_key` and `telegram_channel_id` — are what a
+receiver matches on. `type`, `title` and `username` are the channel naming
+itself, so a feed can be read without a second call back into this
+installation.
+
+A title can be renamed and a username can be taken away, so those three are
+labels and never keys. When the channel row is no longer stored the labels come
+through empty and the identifiers still arrive: a delivery is not held up over a
+name.
 
 ### Media is a link, never a file
 

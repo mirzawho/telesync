@@ -56,9 +56,15 @@
       "go_type": "[]int64",
       "items": "int64",
       "type": "array"
+    },
+    "allow_localhost": {
+      "go_type": "*bool",
+      "nullable": true,
+      "type": "boolean"
     }
   },
   "required": [
+    "allow_localhost",
     "auth_header",
     "auth_mode",
     "description",

@@ -47,10 +47,20 @@ type Data struct {
 // both are reported, because a receiver correlating this feed with its own
 // Telegram state needs the latter while an operator reading history needs the
 // former.
+//
+// Type, Title and Username are the channel naming itself, so a receiver can say
+// which channel a message is from without a second call back into this
+// installation. They are labels, never identifiers: the two id fields above are
+// what a receiver must match on, because a title can be renamed and a username
+// can be taken away.
 type Source struct {
 	ManagedChannelID  int64  `json:"managed_channel_id"`
 	ClientKey         string `json:"client_key"`
 	TelegramChannelID int64  `json:"telegram_channel_id"`
+	// Type is the peer kind: "channel" or "group".
+	Type     string `json:"type"`
+	Title    string `json:"title"`
+	Username string `json:"username,omitempty"`
 }
 
 // Message is one source post, in the field set the channel messages API
@@ -110,7 +120,11 @@ func NewBuilder(publicBaseURL, basePath string) *Builder {
 }
 
 // Build renders one message event as a delivery envelope.
-func (b *Builder) Build(event automation.MessageEvent) (Envelope, error) {
+//
+// channel is the managed channel the event came from, when it can still be
+// read. It contributes labels only: an empty Channel is not an error, because a
+// delivery must not fail over a name the store no longer has.
+func (b *Builder) Build(event automation.MessageEvent, channel Channel) (Envelope, error) {
 	env := Envelope{
 		SpecVersion:     "1.0",
 		ID:              event.ID,
@@ -123,6 +137,9 @@ func (b *Builder) Build(event automation.MessageEvent) (Envelope, error) {
 				ManagedChannelID:  event.ManagedChannelID,
 				ClientKey:         event.SourceClientKey,
 				TelegramChannelID: event.TelegramChannelID,
+				Type:              channel.Type,
+				Title:             channel.Title,
+				Username:          channel.Username,
 			},
 			Message: Message{
 				ID:               event.Payload.Message.ID,

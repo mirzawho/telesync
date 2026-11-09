@@ -47,3 +47,7 @@ web/apps/web/build/
 
 
 .mcp.json
+
+# Webhook test receiver records (`telesync serve-webhook --save-response`).
+# They echo each request as it arrived, authentication headers included.
+/temp/webhook-responses/

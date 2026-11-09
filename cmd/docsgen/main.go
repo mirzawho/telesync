@@ -224,9 +224,16 @@ func docWebhookService(store *channelstore.Store, box webhooks.Secrets, now func
 			MaxResponseBytes:        64 << 10,
 			MaxConcurrentDeliveries: 4,
 		},
-		Store:     store,
-		Secrets:   box,
-		Events:    store.AutomationEvent,
+		Store:   store,
+		Secrets: box,
+		Events:  store.AutomationEvent,
+		Channels: func(ctx context.Context, managedChannelID int64) (webhooks.Channel, bool, error) {
+			ch, found, err := store.GetByID(ctx, managedChannelID)
+			if err != nil || !found {
+				return webhooks.Channel{}, found, err
+			}
+			return webhooks.Channel{Type: ch.PeerType, Title: ch.Title, Username: ch.Username}, true, nil
+		},
 		Jobs:      enqueuer,
 		Reopen:    enqueuer.Reopen,
 		Now:       now,

@@ -43,6 +43,12 @@ const (
 	// CodeImagesUnsupported means the provider refused image input. Images are
 	// never dropped to make such a call succeed.
 	CodeImagesUnsupported = "ai_images_unsupported"
+	// CodeUnchanged is a run whose operator asked for a specific edit and did
+	// not get one: the answer is valid structured output, but it is the source
+	// again after a bounded second attempt. That is an AI failure and not a
+	// successful rewrite, so the workflow's own fallback policy decides what is
+	// published.
+	CodeUnchanged = "ai_unchanged"
 	// CodeUnknown is what Classify reports for an error it cannot recognise.
 	CodeUnknown = "ai_unknown"
 )

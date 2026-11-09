@@ -10,7 +10,7 @@ import {
   webhookRefusalOf,
   webhookRefusals,
 } from "@/components/automation/webhook-errors"
-import { authHeaderErrorOf, urlErrorOf } from "@/components/automation/webhook-dialog"
+import { authHeaderErrorOf, urlErrorOf } from "@/components/automation/webhook-form"
 import { ApiError } from "@/lib/api"
 
 // The refusals of this area, exactly as the gateway writes them: the code it
@@ -154,8 +154,11 @@ test("a summary with no permission list does not deny by itself", () => {
 // --- the field rules the API runs on a save ----------------------------------
 
 test("an address is refused unless it is an absolute http(s) one", () => {
-  assert.equal(urlErrorOf("https://example.com/hook"), null)
-  assert.equal(urlErrorOf("http://example.com/hook"), null)
+  assert.equal(urlErrorOf("https://example.com/hook", false), null)
+  // Plain http is a loopback destination and nothing else. The server has
+  // always required https for a public receiver; the form now says so instead
+  // of letting an operator save an address the server is about to refuse.
+  assert.match(urlErrorOf("http://example.com/hook", false) ?? "", /https/)
   for (const bad of [
     "",
     "   ",
@@ -166,7 +169,7 @@ test("an address is refused unless it is an absolute http(s) one", () => {
     "https://user:pass@example.com/hook",
     "https://example.com/hook#frag",
   ]) {
-    assert.ok(urlErrorOf(bad), `${bad || "(empty)"} must be refused`)
+    assert.ok(urlErrorOf(bad, false), `${bad || "(empty)"} must be refused`)
   }
 })
 

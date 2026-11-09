@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -827,5 +829,273 @@ func TestPolishCarriesImagesAsAnInMemoryDataURL(t *testing.T) {
 	}
 	if strings.Contains(body, os.TempDir()) {
 		t.Fatalf("the request names a filesystem path: %s", body)
+	}
+}
+
+// --- the reported reproduction ---------------------------------------------
+//
+// A workflow whose operator asked for a friendlier, longer, more detailed edit
+// of
+//
+//	سلام به نازنین آدم های دنیا که در آفرینش این کانال کت همکاری می کنند.
+//
+// recorded a successful polish with the source text unchanged. Everything
+// downstream of the model was already proven correct by the workflow tests; the
+// two things left to prove here are that the operator's instructions actually
+// reach the model, and that an unchanged answer is not simply swallowed.
+
+const reportedSource = "سلام به نازنین آدم های دنیا که در آفرینش این کانال کت همکاری می کنند."
+
+const reportedExpanded = "سلام و درود به همه آدم‌های نازنین و دوست‌داشتنی! از صمیم قلب خوشحالیم که شما عزیزان در شکل‌گیری و رشد کانال کت همراه ما هستید. حضور، حمایت و همکاری شما برای ما بسیار ارزشمند است."
+
+// chatAnswerWith wraps one structured answer in the provider's envelope.
+func chatAnswerWith(content string) string {
+	raw, _ := json.Marshal(content)
+	return `{"id":"chatcmpl-1","model":"test-model","choices":[{"index":0,` +
+		`"message":{"role":"assistant","content":` + string(raw) + `}}],` +
+		`"usage":{"prompt_tokens":580,"completion_tokens":26}}`
+}
+
+// structured is the structured output contract around one text.
+func structured(text string) string {
+	raw, _ := json.Marshal(text)
+	return `{"text":` + string(raw) + `,"title":null,"hashtags":[],"mentions":[]}`
+}
+
+// newSequence serves one body per call and then repeats the last one.
+func newSequence(bodies []string, records *[]requestRecord) *httptest.Server {
+	var mu sync.Mutex
+	next := 0
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var decoded map[string]any
+		_ = json.Unmarshal(raw, &decoded)
+		mu.Lock()
+		*records = append(*records, requestRecord{
+			Method: r.Method, Path: r.URL.Path, Header: r.Header.Clone(), Body: decoded,
+		})
+		at := next
+		if next < len(bodies)-1 {
+			next++
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(bodies[at]))
+	}))
+}
+
+func TestPolishSendsTheOperatorsEditingInstructionsAndTheSource(t *testing.T) {
+	var records []requestRecord
+	srv := newRecorder(http.StatusOK, chatAnswerWith(structured("polished")), &records)
+	defer srv.Close()
+	p, err := New(testConfig(srv.URL))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	mustPolish(t, p, automation.PolishInput{WorkflowID: 1, Prompt: reportedPrompt, Text: reportedSource})
+
+	sys := systemMessage(t, records[0])
+	if !strings.Contains(sys, reportedPrompt) {
+		t.Fatalf("the operator's editing instructions never reached the model:\n%s", sys)
+	}
+	user := fmt.Sprint(userMessage(t, records[0]))
+	if !strings.Contains(user, reportedSource) {
+		t.Fatalf("the source message was not sent:\n%s", user)
+	}
+	// The two must not be interchangeable: the operator's instructions are said
+	// to the model, the source is the content being edited.
+	if !strings.Contains(user, "<source>") {
+		t.Fatal("the source must travel inside its own delimiters")
+	}
+	if strings.Contains(user, reportedPrompt) {
+		t.Fatal("the operator's instructions must never be sent as content to edit")
+	}
+}
+
+func TestAnUnchangedAnswerIsAskedOnceMoreWhenTheOperatorAskedForAnEdit(t *testing.T) {
+	var records []requestRecord
+	srv := newSequence([]string{
+		chatAnswerWith(structured(reportedSource)),
+		chatAnswerWith(structured(reportedExpanded)),
+	}, &records)
+	defer srv.Close()
+	p, err := New(testConfig(srv.URL))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	got := mustPolish(t, p, automation.PolishInput{
+		WorkflowID: 1, Prompt: reportedPrompt, Text: reportedSource,
+	})
+	if got.Text != reportedExpanded {
+		t.Fatalf("the second answer was not taken, got %q", got.Text)
+	}
+	if len(records) != 2 {
+		t.Fatalf("want exactly one extra attempt, got %d calls", len(records))
+	}
+	// The nudge is said to the model and stays outside the content being edited.
+	second := fmt.Sprint(userMessage(t, records[1]))
+	if !strings.Contains(second, reportedSource) {
+		t.Fatal("the second attempt must still carry the source")
+	}
+	if strings.Contains(strings.Split(second, "</source>")[0], "previous answer") {
+		t.Fatal("the nudge must not end up inside the source block")
+	}
+}
+
+func TestABrokenSecondAttemptFailsAsTheProviderError(t *testing.T) {
+	// The retry is the only chance the operator's instructions get. If it
+	// breaks — cut off, unparsable — the run must report that as the provider
+	// failing, not as the model declining to edit: one is retried or surfaced
+	// to the operator, the other publishes the source under the fallback policy.
+	for name, second := range map[string]string{
+		"cut off":  `{"choices":[{"finish_reason":"length","message":{"content":"{\"text\":\"سلام"}}]}`,
+		"not json": `{"choices":[{"finish_reason":"stop","message":{"content":"not json at all"}}]}`,
+		"empty":    `{"choices":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var records []requestRecord
+			srv := newSequence([]string{chatAnswerWith(structured(reportedSource)), second}, &records)
+			defer srv.Close()
+			p, err := New(testConfig(srv.URL))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			_, polishErr := p.Polish(context.Background(), automation.PolishInput{
+				WorkflowID: 1, Prompt: reportedPrompt, Text: reportedSource,
+			})
+			if polishErr == nil {
+				t.Fatal("a broken second attempt is a failed polish, never the unchanged answer")
+			}
+			var jobErr *automation.JobError
+			if !errors.As(polishErr, &jobErr) || jobErr.Code == CodeUnchanged {
+				t.Fatalf("want the provider's own failure, got %v", polishErr)
+			}
+			if len(records) != 2 {
+				t.Fatalf("the retry is bounded to one extra call, got %d", len(records))
+			}
+		})
+	}
+}
+
+func TestAnUnchangedAnswerStaysValidWhenThereIsNoOperatorPrompt(t *testing.T) {
+	// A message that already reads correctly is a legitimate no-op: with no
+	// operator instructions there is nothing to be unmet, and an identical
+	// answer must not become a failure or a second call.
+	var records []requestRecord
+	srv := newRecorder(http.StatusOK, chatAnswerWith(structured(reportedSource)), &records)
+	defer srv.Close()
+	p, err := New(testConfig(srv.URL))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	got := mustPolish(t, p, automation.PolishInput{WorkflowID: 1, Text: reportedSource})
+	if got.Text != reportedSource {
+		t.Fatalf("a no-op polish must keep the text it was given, got %q", got.Text)
+	}
+	if len(records) != 1 {
+		t.Fatalf("identical output is not a failure and must not be retried, got %d calls", len(records))
+	}
+}
+
+func TestTheSecondAttemptIsMadeAtMostOnce(t *testing.T) {
+	// Two unchanged answers are the end of it, and they are not a successful
+	// rewrite: an operator who asked for an edit did not get one, so the AI
+	// stage fails and the workflow's own fallback policy decides what is
+	// published. The answer is never dressed up as an edit that happened.
+	var records []requestRecord
+	srv := newRecorder(http.StatusOK, chatAnswerWith(structured(reportedSource)), &records)
+	defer srv.Close()
+	p, err := New(testConfig(srv.URL))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, polishErr := p.Polish(context.Background(), automation.PolishInput{
+		WorkflowID: 1, Prompt: reportedPrompt, Text: reportedSource,
+	})
+	if polishErr == nil {
+		t.Fatal("an unmet operator instruction must not be reported as a successful rewrite")
+	}
+	var jobErr *automation.JobError
+	if !errors.As(polishErr, &jobErr) || jobErr.Code != CodeUnchanged {
+		t.Fatalf("want %s, got %v", CodeUnchanged, polishErr)
+	}
+	if jobErr.Retryable {
+		t.Fatal("another queue attempt would ask for the same edit again")
+	}
+	if len(records) != 2 {
+		t.Fatalf("the second attempt is bounded to one extra call, got %d", len(records))
+	}
+}
+
+func TestAnOrthographicOnlyAnswerIsStillTheSameEdit(t *testing.T) {
+	// This is the comparison the bounded retry used to get wrong. The provider
+	// normalises Persian orthography on the way through — a plain space becomes
+	// the ZWNJ between the halves of a compound word — so an answer that
+	// changes nothing still differs string for string, and a byte comparison
+	// never notices that no edit happened.
+	const source = "سلام به نازنین آدم های دنیا که در آفرینش این کانال کت همکاری می کنند."
+	const normalised = "سلام به نازنین آدم‌های دنیا که در آفرینش این کانال کت همکاری می‌کنند."
+	if source == normalised {
+		t.Fatal("the fixture must differ byte for byte")
+	}
+	if !sameEdited(source, normalised) {
+		t.Fatal("an answer that only moves the orthography is the same edit")
+	}
+	if sameEdited(source, "یک متن کاملاً دیگر دربارهٔ چیز دیگری است.") {
+		t.Fatal("a different message is not the same edit")
+	}
+}
+
+func TestACutOffAnswerIsNeverACompletedEdit(t *testing.T) {
+	// The provider can stop at the output limit with the JSON still closing.
+	// What is inside it is a fragment, and a fragment is not a rewrite.
+	const truncated = `{"id":"chatcmpl-1","model":"test-model","choices":[{"index":0,` +
+		`"finish_reason":"length","message":{"role":"assistant","content":` +
+		`"{\"text\":\"سلام به نازنین آدم های دنیا\"}"}}],"usage":{"prompt_tokens":100,"completion_tokens":1500}}`
+
+	var records []requestRecord
+	srv := newRecorder(http.StatusOK, truncated, &records)
+	defer srv.Close()
+	p, err := New(testConfig(srv.URL))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, polishErr := p.Polish(context.Background(), automation.PolishInput{
+		WorkflowID: 1, Text: reportedSource,
+	})
+	if polishErr == nil {
+		t.Fatal("a cut-off answer must not be accepted as polished content")
+	}
+	var jobErr *automation.JobError
+	if !errors.As(polishErr, &jobErr) || jobErr.Code != CodeInvalidOutput {
+		t.Fatalf("want %s, got %v", CodeInvalidOutput, polishErr)
+	}
+}
+
+func TestAFinishedAnswerIsAcceptedAtTheOutputLimit(t *testing.T) {
+	// The other side of the same rule: `stop` with a full answer is a
+	// completed edit whatever the token count says.
+	const finished = `{"id":"chatcmpl-1","model":"test-model","choices":[{"index":0,` +
+		`"finish_reason":"stop","message":{"role":"assistant","content":` +
+		`"{\"text\":\"polished\",\"title\":null,\"hashtags\":[],\"mentions\":[]}"}}],` +
+		`"usage":{"prompt_tokens":100,"completion_tokens":1500}}`
+
+	var records []requestRecord
+	srv := newRecorder(http.StatusOK, finished, &records)
+	defer srv.Close()
+	p, err := New(testConfig(srv.URL))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	got := mustPolish(t, p, automation.PolishInput{WorkflowID: 1, Text: reportedSource})
+	if got.Text != "polished" {
+		t.Fatalf("a completed answer must be taken as it is, got %q", got.Text)
 	}
 }

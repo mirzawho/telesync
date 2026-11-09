@@ -145,6 +145,9 @@ func TestListenRemovesADeadSocket(t *testing.T) {
 	// must replace it.
 	ln2, err := worker.Listen(path)
 	if err != nil {
+		if isSandboxDenied(err) {
+			t.Skipf("the sandbox forbids binding Unix sockets: %v", err)
+		}
 		t.Fatalf("Listen after Close: %v", err)
 	}
 	ln2.Close()
@@ -165,7 +168,9 @@ func TestWriteConfigIsNotPartOfTheWorker(t *testing.T) {
 	}
 }
 
+// isSandboxDenied also covers EINVAL: this sandbox refuses a Unix bind for a
+// path it will not create the socket at, which the kernel reports that way.
 func isSandboxDenied(err error) bool {
 	return errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) ||
-		errors.Is(err, os.ErrPermission)
+		errors.Is(err, syscall.EINVAL) || errors.Is(err, os.ErrPermission)
 }

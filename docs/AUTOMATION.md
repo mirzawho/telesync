@@ -160,6 +160,12 @@ A webhook posts a CloudEvents-shaped envelope to a URL of your choosing. The
 event `id` is stable and derived, so a receiver can use it as an idempotency
 key.
 
+`data.source` says where the message came from: the local `managed_channel_id`,
+the `client_key` and Telegram's own `telegram_channel_id` are the identifiers to
+match on, and `type`, `title` and `username` are the channel naming itself so a
+feed can be read without calling back. A title can be renamed and a username can
+be taken away, so the names are labels and never keys.
+
 **Media is a link, never a file.** No uploads, no base64, no multipart, no
 binary in the JSON. The payload carries type, filename, MIME type, size and an
 address for the existing media endpoint.
@@ -191,6 +197,37 @@ Outbound requests are SSRF-restricted and checked **at delivery time**, not only
 when the URL is saved: HTTPS by default, no loopback, private, link-local or
 metadata addresses, no unsafe IPv6, no redirects, and DNS resolved then the
 validated address dialled with TLS hostname verification.
+
+### Sending to localhost
+
+A webhook target is checked twice: when it is saved and again before every
+attempt. The rules are the SSRF ones — resolve once, check every answer, dial
+the address that was checked, never a redirect, never a proxy, https only.
+
+The one exception is loopback, and it takes two settings to reach it:
+
+1. the deployment must allow it at all — `automation.webhooks.allow_localhost`
+   in the configuration file, or `TELESYNC_WEBHOOK_ALLOW_LOCALHOST=true` in the
+   environment to override that file wherever it is set;
+2. the webhook must ask for it — `allow_localhost`, in the form's
+   `تنظیمات پیشرفته`.
+
+Both, never either. With both on, `http://localhost:3000/webhook`,
+`http://127.0.0.1:8080/hook` and `http://[::1]:8080/webhook` are delivered over
+plain http. Nothing else changes: `http://192.168.1.10`, `http://10.0.0.5` and
+the cloud metadata address are refused exactly as before, and so is any other
+member of `127.0.0.0/8` — the exception is a list of three addresses, not a
+range. A name that merely contains "localhost", and a disguised spelling such
+as `127.1` or `::ffff:127.0.0.1`, are not on it.
+
+A loopback target must resolve to loopback and to nothing else, so a DNS
+rebind cannot carry a permitted request somewhere else. A refusal is recorded
+as `invalid_target` and is not retried: it is a policy, not a network blip. A
+connection that simply fails — nothing listening — is an ordinary failure and
+takes the usual retry policy.
+
+The setting is off for every webhook that already exists, and turning it off
+stops the next attempt of a delivery already queued.
 
 ## Workflows
 
@@ -264,6 +301,12 @@ ambiguous. There is no key management UI.
 | Messages are missing after a restart | the queue's high-water mark and the gap record; recovery is bounded, not unlimited |
 
 ## Configuration
+
+Webhook destinations are configured in the JSON file under `automation.webhooks`,
+which also holds the deployment's half of the loopback exception as
+`allow_localhost`; `TELESYNC_WEBHOOK_ALLOW_LOCALHOST` overrides that from the
+environment (see "Sending to localhost" above). It defaults to off, and the
+per-webhook setting cannot override it.
 
 Everything lives in the configuration file under `automation` (see
 [`docs/telesync.example.json`](telesync.example.json)); only the AI key is an

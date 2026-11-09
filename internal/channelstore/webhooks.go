@@ -72,13 +72,14 @@ func (s *Store) CreateWebhook(ctx context.Context, createdBy int64, rec automati
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO webhooks (name, description, enabled, url, method, auth_mode, auth_header,
 	secret_version, secret_nonce, secret_ciphertext, secret_sealed_at,
-	timeout_ms, max_attempts, created_by, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	timeout_ms, max_attempts, allow_localhost, created_by, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.rec.Name, row.rec.Description, boolInt(row.rec.Enabled), row.rec.URL,
 		row.rec.Method, row.rec.AuthMode, row.rec.AuthHeader,
 		row.secret.Version, row.secret.Nonce, row.secret.Ciphertext,
 		nullableTime(row.secret.SealedAt),
-		row.rec.Timeout.Milliseconds(), row.rec.MaxAttempts, nullableUserID(row.createdBy),
+		row.rec.Timeout.Milliseconds(), row.rec.MaxAttempts, boolInt(row.rec.AllowLocalhost),
+		nullableUserID(row.createdBy),
 		formatTime(row.rec.CreatedAt), formatTime(row.rec.UpdatedAt))
 	if err != nil {
 		return automation.Webhook{}, fmt.Errorf("channelstore: create webhook: %w", err)
@@ -310,11 +311,12 @@ func (s *Store) UpdateWebhook(ctx context.Context, rec automation.Webhook, secre
 	}
 	args := append([]any{row.rec.Name, row.rec.Description, boolInt(row.rec.Enabled), row.rec.URL,
 		row.rec.Method, row.rec.AuthMode, row.rec.AuthHeader}, secretArgs...)
-	args = append(args, row.rec.Timeout.Milliseconds(), row.rec.MaxAttempts, formatTime(now), rec.ID)
+	args = append(args, row.rec.Timeout.Milliseconds(), row.rec.MaxAttempts,
+		boolInt(row.rec.AllowLocalhost), formatTime(now), rec.ID)
 
 	res, err := tx.ExecContext(ctx, `
 UPDATE webhooks SET name = ?, description = ?, enabled = ?, url = ?, method = ?, auth_mode = ?, auth_header = ?, `+
-		secretSQL+`timeout_ms = ?, max_attempts = ?, updated_at = ? WHERE id = ?`, args...)
+		secretSQL+`timeout_ms = ?, max_attempts = ?, allow_localhost = ?, updated_at = ? WHERE id = ?`, args...)
 	if err != nil {
 		return automation.Webhook{}, false, fmt.Errorf("channelstore: update webhook %d: %w", rec.ID, err)
 	}
@@ -462,13 +464,14 @@ INSERT INTO webhook_sources (webhook_id, managed_channel_id, created_at) VALUES 
 
 const selectWebhookColumns = `SELECT id, name, description, enabled, url, method, auth_mode, auth_header,
 	secret_version, secret_nonce, secret_ciphertext, secret_sealed_at,
-	timeout_ms, max_attempts, created_by, created_at, updated_at FROM webhooks`
+	timeout_ms, max_attempts, allow_localhost, created_by, created_at, updated_at FROM webhooks`
 
 func scanWebhookRow(row scanner) (webhookRow, error) {
 	var (
 		out                        webhookRow
 		enabled                    int
 		timeoutMS                  int64
+		allowLocalhost             int
 		createdBy                  sql.NullInt64
 		sealedAt, created, updated sql.NullString
 		nonce, ciphertext          []byte
@@ -476,11 +479,12 @@ func scanWebhookRow(row scanner) (webhookRow, error) {
 	if err := row.Scan(&out.rec.ID, &out.rec.Name, &out.rec.Description, &enabled,
 		&out.rec.URL, &out.rec.Method, &out.rec.AuthMode, &out.rec.AuthHeader,
 		&out.secret.Version, &nonce, &ciphertext, &sealedAt,
-		&timeoutMS, &out.rec.MaxAttempts, &createdBy, &created, &updated); err != nil {
+		&timeoutMS, &out.rec.MaxAttempts, &allowLocalhost, &createdBy, &created, &updated); err != nil {
 		return webhookRow{}, err
 	}
 	out.createdBy = createdBy.Int64
 	out.rec.Enabled = enabled != 0
+	out.rec.AllowLocalhost = allowLocalhost != 0
 	out.rec.Timeout = time.Duration(timeoutMS) * time.Millisecond
 	out.secret.Nonce = nonce
 	out.secret.Ciphertext = ciphertext

@@ -88,6 +88,31 @@ func panelBuilt() bool {
 }
 
 // runDaemon supervises worker processes and serves the public API.
+// newBackgroundPublisher builds the pipeline the background jobs publish
+// through. It is a function of its own because one field here is load-bearing
+// and easy to drop: a publication is recorded against the account it runs
+// under, so the service has to be able to resolve that account again at
+// execution time. Without a resolver every background publish is refused with
+// "this deployment cannot resolve the account a background publication runs
+// under" — the interactive route passes its own actor and would not notice.
+func newBackgroundPublisher(
+	registry publishing.Registry,
+	store *channelstore.Store,
+	secrets publishing.SecretBox,
+	logf func(string, ...any),
+) *publishing.Service {
+	return &publishing.Service{
+		Workers:    registry,
+		Channels:   store,
+		Publishes:  store,
+		Sites:      store,
+		SiteClient: wordpress.NewClient(),
+		Secrets:    secrets,
+		Actors:     store,
+		Logf:       logf,
+	}
+}
+
 func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) error {
 	cfg := req.Config
 	workers := make(map[string]gateway.Worker, len(cfg.Clients))
@@ -226,8 +251,19 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 			Store:         store,
 			Secrets:       seal,
 			Events:        store.AutomationEvent,
-			Jobs:          enqueuer,
-			Reopen:        enqueuer.Reopen,
+			// The payload names the channel it came from, so a receiver can tell
+			// which channel a message belongs to without calling back into this
+			// installation. The labels come from the managed row; the
+			// identifiers stay on the event.
+			Channels: func(ctx context.Context, managedChannelID int64) (webhooks.Channel, bool, error) {
+				ch, found, err := store.GetByID(ctx, managedChannelID)
+				if err != nil || !found {
+					return webhooks.Channel{}, found, err
+				}
+				return webhooks.Channel{Type: ch.PeerType, Title: ch.Title, Username: ch.Username}, true, nil
+			},
+			Jobs:   enqueuer,
+			Reopen: enqueuer.Reopen,
 		})
 		if err != nil {
 			return fmt.Errorf("configure webhooks: %w", err)
@@ -240,15 +276,7 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 			w, ok := workers[key]
 			return w, ok
 		})
-		publisher := &publishing.Service{
-			Workers:    registry,
-			Channels:   store,
-			Publishes:  store,
-			Sites:      store,
-			SiteClient: wordpress.NewClient(),
-			Secrets:    seal,
-			Logf:       logger.Printf,
-		}
+		publisher := newBackgroundPublisher(registry, store, seal, logger.Printf)
 
 		var processor automation.AIProcessor
 		if cfg.Automation.AI.Enabled {

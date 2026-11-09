@@ -26,6 +26,12 @@ site.** Reading never marks messages as read; publishing is always an explicit
 user action. The status of every capability is the matrix in
 [PROJECT_BRIEF.md](PROJECT_BRIEF.md#9-implementation-status).
 
+v0.0.3 adds **background automation**: new messages in a managed channel become
+durable events that drive outbound **webhooks** and per-channel publishing
+**workflows** (optionally polished by an OpenAI-compatible model first), with no
+browser open and no HTTP request made. See [docs/AUTOMATION.md](docs/AUTOMATION.md).
+`telesync serve-webhook` runs a local receiver for testing deliveries.
+
 The binary also carries the admin panel at `/admin`: `make build` builds it and
 folds it in, so one process serves the panel, its API and the documentation.
 

@@ -5,7 +5,7 @@
 // app so node finds the workspace's own react, and is removed afterwards.
 import { execFileSync } from "node:child_process"
 import { mkdirSync, readdirSync, rmSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { dirname, isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -14,16 +14,27 @@ const webDir = resolve(appDir, "../..")
 const esbuild = resolve(webDir, "node_modules/.bin/esbuild")
 // Its own output directory: a concurrent test run in this app writes to the
 // same shape of path, and a shared one would make each run see the other's
-// bundles.
-const outDir = join(appDir, ".test-out-automation")
+// bundles. The process id is what keeps two runs apart — two agents, or an
+// agent and its reviewer, may run this at the same moment.
+const outDir = join(appDir, `.test-out-automation-${process.pid}`)
 
-const tests = [
+// Usage:
+//   node scripts/test-automation.mjs                    # every automation test
+//   node scripts/test-automation.mjs path/to/a.test.tsx # only the named files
+//
+// Arguments are resolved against the app directory (apps/web), so one file can
+// be run on its own while other work is in flight.
+const named = process.argv.slice(2)
+
+const tests = named.length
+  ? named.map((arg) => (isAbsolute(arg) ? arg : join(appDir, arg)))
+  : [
   join(appDir, "app/lib/automation.test.ts"),
   join(appDir, "app/lib/automation-nav.test.ts"),
+  join(appDir, "app/routes/_panel/automation.test.tsx"),
   join(appDir, "app/components/automation/automation.test.tsx"),
-  join(appDir, "app/components/automation/automation-routes.test.tsx"),
-  join(appDir, "app/components/automation/webhook-dialog.test.tsx"),
-  join(appDir, "app/components/automation/workflow-editor.test.tsx"),
+  join(appDir, "app/components/automation/webhook-form.test.tsx"),
+  join(appDir, "app/components/automation/workflow-form.test.tsx"),
 ]
 
 try {

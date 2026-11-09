@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mirza/telesync/internal/appconfig"
 )
 
 // This file is the outbound request discipline for webhook delivery. It mirrors
@@ -64,6 +66,10 @@ type Policy struct {
 	// allowHTTP and allowPrivate are only set by TestPolicy.
 	allowHTTP    bool
 	allowPrivate bool
+	// allowLocalhost permits the loopback exception: the three loopback
+	// targets isLoopbackHost names, and plain http to them. It is not a
+	// private-network allowance and never becomes one.
+	allowLocalhost bool
 }
 
 // TestPolicy permits plain http and loopback/private addresses.
@@ -71,6 +77,35 @@ type Policy struct {
 // It is exported for tests in other packages. It is never read from
 // configuration and no constructor in the daemon offers it.
 func TestPolicy() Policy { return Policy{allowHTTP: true, allowPrivate: true} }
+
+// AllowLocalhost permits the loopback exception and nothing wider.
+//
+// It is what TELESYNC_WEBHOOK_ALLOW_LOCALHOST turns on. A webhook reaches it
+// only if it asked for it as well, which ForWebhook is the answer to: the
+// deployment's permission and the webhook's own opt-in are both required.
+func AllowLocalhost() Policy { return Policy{allowLocalhost: true} }
+
+// ForWebhook narrows the policy to one webhook's own opt-in.
+func (p Policy) ForWebhook(allowLocalhost bool) Policy {
+	p.allowLocalhost = p.allowLocalhost && allowLocalhost
+	return p
+}
+
+// isLoopbackHost reports whether host is exactly one of the three loopback
+// targets the exception covers.
+//
+// It is a list and not a range on purpose. A name that merely contains
+// "localhost", a dotted or decimal or v4-mapped spelling of a loopback
+// address, and every other member of 127.0.0.0/8 are refused: widening this to
+// "anything loopback" is how an exception for one local service turns into an
+// exception for everything behind the same boundary.
+func isLoopbackHost(host string) bool {
+	switch strings.ToLower(host) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
+}
 
 // dialFunc is net.Dialer's signature, so a test can supply its own.
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
@@ -172,7 +207,19 @@ func resolvingDial(tcp dialFunc, lookup lookupFunc, policy Policy) dialFunc {
 		if len(addrs) == 0 {
 			return nil, fmt.Errorf("%w: %s has no address", ErrUnreachable, host)
 		}
+		// A loopback target resolves to loopback and to nothing else. A name
+		// that comes back with any other answer is not the host it says it is —
+		// that is what a DNS rebinding attack does — so it is refused rather
+		// than followed. This is the whole width of the exception: nothing
+		// outside loopback becomes reachable because of it.
+		loopbackTarget := policy.allowLocalhost && isLoopbackHost(host)
 		for _, a := range addrs {
+			if loopbackTarget {
+				if !a.Unmap().IsLoopback() {
+					return nil, fmt.Errorf("%w: %s resolved to a non-loopback address", ErrBlockedAddress, host)
+				}
+				continue
+			}
 			if why := blockedIP(a); why != "" {
 				return nil, fmt.Errorf("%w: %s is %s", ErrBlockedAddress, host, why)
 			}
@@ -226,10 +273,26 @@ func ValidateTarget(raw string, policy Policy) (string, error) {
 	if u.Opaque != "" {
 		return "", refuseTarget("the webhook url must be an absolute http(s) address")
 	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return "", refuseTarget("the webhook url has no host")
+	}
+	loopback := isLoopbackHost(host)
+
+	// The loopback exception is a policy decision and is reported as one: the
+	// URL is not malformed, it is not permitted. Saying "must use https" here
+	// would send an operator looking in the wrong place.
+	if loopback && !policy.allowLocalhost && !policy.allowPrivate {
+		return "", refuseTarget("the webhook url points at localhost and the loopback exception is not enabled for it: it needs allow_localhost on this webhook and " + appconfig.AllowLocalhostEnv + " on the deployment")
+	}
+
 	switch strings.ToLower(u.Scheme) {
 	case "https":
 	case "http":
-		if !policy.allowHTTP {
+		// Plain http is only reachable where it cannot be a mistake: the test
+		// policy, or one of the three loopback targets both the deployment and
+		// this webhook opted into. Every other address stays https-only.
+		if !policy.allowHTTP && !(policy.allowLocalhost && loopback) {
 			return "", refuseTarget("the webhook url must use https")
 		}
 	default:
@@ -242,10 +305,6 @@ func ValidateTarget(raw string, policy Policy) (string, error) {
 		return "", refuseTarget("the webhook url must not have a fragment")
 	}
 
-	host := strings.ToLower(u.Hostname())
-	if host == "" {
-		return "", refuseTarget("the webhook url has no host")
-	}
 	if err := validHost(host, policy); err != nil {
 		return "", err
 	}
@@ -280,6 +339,12 @@ var ipLiteral = regexp.MustCompile(`^[0-9.]+$`)
 // zone. A public name is resolved only at dial time, where every answer is
 // checked again.
 func validHost(host string, policy Policy) error {
+	// The loopback exception is answered on its own terms, before any of the
+	// public-name rules below: "localhost" is not a public domain name and
+	// never will be, and 127.0.0.1 is not a hostname.
+	if policy.allowLocalhost && isLoopbackHost(host) {
+		return nil
+	}
 	if ipLiteral.MatchString(host) || strings.Contains(host, ":") || strings.ContainsAny(host, "[]") {
 		if !policy.allowPrivate {
 			return refuseTarget("the webhook url must name a hostname, not an IP address")
@@ -338,15 +403,37 @@ func WithTimeout(d time.Duration) ClientOption { return func(c *clientConfig) { 
 // WithTransport replaces the HTTP transport. This package's tests use it so the
 // request is answered by a scripted handler rather than a server: a test must
 // not bind a port or reach the network.
+//
+// A nil transport is ignored rather than stored: these options are passed
+// through from a configuration whose optional fields are nil when unset, and
+// taking "unset" for "replace with nothing" would leave the client with no
+// transport at all.
 func WithTransport(rt http.RoundTripper) ClientOption {
-	return func(c *clientConfig) { c.transport = rt }
+	return func(c *clientConfig) {
+		if rt != nil {
+			c.transport = rt
+		}
+	}
 }
 
-// WithDial replaces the TCP dialler (tests).
-func WithDial(d dialFunc) ClientOption { return func(c *clientConfig) { c.tcp = d } }
+// WithDial replaces the TCP dialler (tests). A nil dialler is ignored.
+func WithDial(d dialFunc) ClientOption {
+	return func(c *clientConfig) {
+		if d != nil {
+			c.tcp = d
+		}
+	}
+}
 
-// WithLookup replaces DNS resolution (tests).
-func WithLookup(l lookupFunc) ClientOption { return func(c *clientConfig) { c.lookup = l } }
+// WithLookup replaces DNS resolution (tests). A nil lookup is ignored: the
+// resolve-once dialler falls back to the system resolver.
+func WithLookup(l lookupFunc) ClientOption {
+	return func(c *clientConfig) {
+		if l != nil {
+			c.lookup = l
+		}
+	}
+}
 
 // NewClient builds the one client every webhook request uses.
 //

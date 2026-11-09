@@ -154,12 +154,12 @@ func (p *Processor) Polish(ctx context.Context, input automation.PolishInput) (a
 	images := selectImages(input.Images, p.cfg.MaxImages, p.cfg.MaxImageBytes)
 
 	start := time.Now()
-	answer, jobErr := p.complete(ctx, input, images, true)
+	answer, jobErr := p.complete(ctx, input, images, true, false)
 	if jobErr != nil && jobErr.Code == codeResponseFormatUnsupported {
 		// Documented fallback: this provider has no response_format. Ask again
 		// without it; the prompt still demands a JSON object, and the answer is
 		// still held to the same contract.
-		answer, jobErr = p.complete(ctx, input, images, false)
+		answer, jobErr = p.complete(ctx, input, images, false, false)
 	}
 	if jobErr != nil {
 		if jobErr.Code == codeResponseFormatUnsupported {
@@ -172,6 +172,37 @@ func (p *Processor) Polish(ctx context.Context, input automation.PolishInput) (a
 	if err != nil {
 		return zero, err
 	}
+
+	// One bounded second attempt, and only for a workflow that asked for
+	// something specific. The operator's instructions can only be unmet if
+	// there are any, and an answer that is the source again is a model
+	// declining the edit rather than deciding none is needed. Ask once more,
+	// saying so, and take the second answer as it stands.
+	if input.Prompt != "" && sameEdited(result.Text, input.Text) {
+		again, againErr := p.complete(ctx, input, images, true, true)
+		if againErr != nil {
+			// A retry that broke is the provider's failure, reported as itself
+			// and not as "the model declined": the two get different retry
+			// decisions, and an operator must be able to tell them apart.
+			return zero, againErr
+		}
+		decoded, decErr := DecodeOutput(again.Content)
+		if decErr != nil {
+			return zero, decErr
+		}
+		answer, result = again, decoded
+		// The operator asked for a specific edit and did not get one. That is a
+		// failed AI stage, not a successful rewrite: the workflow's own fallback
+		// policy decides whether the source is published instead. An unchanged
+		// answer stays a legitimate success for a workflow with no instructions
+		// of its own, where a copy edit that found nothing to fix is the job
+		// done properly — this rule is not universal.
+		if sameEdited(result.Text, input.Text) {
+			return zero, newError(CodeUnchanged,
+				"the AI answered with the source message unchanged, so the operator's instructions were not carried out", false)
+		}
+	}
+
 	result.Model = answer.Model
 	if result.Model == "" {
 		result.Model = p.cfg.Model
@@ -217,7 +248,8 @@ type chatAnswer struct {
 type chatResponse struct {
 	Model   string `json:"model"`
 	Choices []struct {
-		Message struct {
+		FinishReason string `json:"finish_reason"`
+		Message      struct {
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
@@ -229,8 +261,8 @@ type chatResponse struct {
 
 // complete performs one Chat Completions call and classifies everything that
 // can go wrong with it. It never retries.
-func (p *Processor) complete(ctx context.Context, input automation.PolishInput, images []automation.ImageInput, withResponseFormat bool) (chatAnswer, *automation.JobError) {
-	body, jobErr := p.buildRequest(input, images, withResponseFormat)
+func (p *Processor) complete(ctx context.Context, input automation.PolishInput, images []automation.ImageInput, withResponseFormat, askAgain bool) (chatAnswer, *automation.JobError) {
+	body, jobErr := p.buildRequest(input, images, withResponseFormat, askAgain)
 	if jobErr != nil {
 		return chatAnswer{}, jobErr
 	}
@@ -279,6 +311,13 @@ func (p *Processor) complete(ctx context.Context, input automation.PolishInput, 
 	if jobErr != nil {
 		return chatAnswer{}, jobErr
 	}
+	// A cut-off answer is not an edit. The JSON may happen to close, but what
+	// is in it is a fragment of whatever the model was going to say, and a
+	// fragment is never a completed rewrite.
+	if len(parsed.Choices) > 0 && parsed.Choices[0].FinishReason == "length" {
+		return chatAnswer{}, newError(CodeInvalidOutput,
+			"the AI provider stopped at the output limit: the answer is cut off and is not a completed edit", false)
+	}
 
 	return chatAnswer{
 		Model:            parsed.Model,
@@ -289,10 +328,16 @@ func (p *Processor) complete(ctx context.Context, input automation.PolishInput, 
 }
 
 // buildRequest assembles the request body.
-func (p *Processor) buildRequest(input automation.PolishInput, images []automation.ImageInput, withResponseFormat bool) ([]byte, *automation.JobError) {
-	var userContent any = buildSourceBlock(input.Text)
+func (p *Processor) buildRequest(input automation.PolishInput, images []automation.ImageInput, withResponseFormat, askAgain bool) ([]byte, *automation.JobError) {
+	// The nudge sits outside the <source> delimiters on purpose: it is said to
+	// the model, and the text between the delimiters stays content to edit.
+	userText := buildSourceBlock(input.Text)
+	if askAgain {
+		userText += "\n\n" + unchangedNudge
+	}
+	var userContent any = userText
 	if len(images) > 0 {
-		parts := []any{map[string]any{"type": "text", "text": buildSourceBlock(input.Text)}}
+		parts := []any{map[string]any{"type": "text", "text": userText}}
 		for _, img := range images {
 			part := imageContentPart(img)
 			if part == nil {

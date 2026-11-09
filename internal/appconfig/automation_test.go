@@ -205,3 +205,81 @@ func TestAnAmbiguousAIKeyDoesNotAlsoComplainThatTheVariableIsUnset(t *testing.T)
 		t.Fatalf("the refusal does not name both sources: %v", err)
 	}
 }
+
+// --- the loopback exception's two homes --------------------------------------
+//
+// It is one knob with two places to say it: allow_localhost beside the rest of
+// the webhook settings, and AllowLocalhostEnv in the environment. The file is
+// where an operator keeps the rest of this subsystem's settings and the loader
+// refuses any key it does not know, so an exception that existed only as a
+// variable would be a startup failure waiting for anyone who reached for the
+// obvious place.
+
+func TestTheLoopbackExceptionIsOffUntilSomethingTurnsItOn(t *testing.T) {
+	path := aiConfig(t, `{"enabled": true}`, nil)
+	cfg, err := appconfig.Load(path, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Automation.Webhooks.AllowLocalhost {
+		t.Fatal("the loopback exception came on by itself")
+	}
+}
+
+func TestTheLoopbackExceptionMayBeSetInTheConfigurationFile(t *testing.T) {
+	path := aiConfig(t, `{"enabled": true, "webhooks": {"allow_localhost": true}}`, nil)
+	cfg, err := appconfig.Load(path, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Automation.Webhooks.AllowLocalhost {
+		t.Fatal("automation.webhooks.allow_localhost in the file was ignored")
+	}
+}
+
+func TestTheEnvironmentOverridesTheFileForTheLoopbackException(t *testing.T) {
+	// A deployment that templates or shares its configuration file still gets
+	// the last word, in whichever direction it wants it.
+	for _, tc := range []struct {
+		name string
+		file string
+		env  string
+		want bool
+	}{
+		{"the variable turns it off over a file that turned it on", "true", "false", false},
+		{"the variable turns it on over a file that left it off", "false", "true", true},
+		{"an unset variable leaves the file's word alone", "true", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{}
+			if tc.env != "" {
+				env[appconfig.AllowLocalhostEnv] = tc.env
+			}
+			path := aiConfig(t, `{"enabled": true, "webhooks": {"allow_localhost": `+tc.file+`}}`, env)
+			cfg, err := appconfig.Load(path, lookup)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Automation.Webhooks.AllowLocalhost != tc.want {
+				t.Fatalf("allow_localhost = %v, want %v", cfg.Automation.Webhooks.AllowLocalhost, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnUnrecognisedEnvironmentValueNeverTurnsTheExceptionOn(t *testing.T) {
+	// "maybe" is not permission. It fails closed against the file as well: a
+	// variable that says nothing comprehensible is not a way to leave a security
+	// exception wherever a shared file happened to put it.
+	for _, file := range []string{"true", "false"} {
+		path := aiConfig(t, `{"enabled": true, "webhooks": {"allow_localhost": `+file+`}}`,
+			map[string]string{appconfig.AllowLocalhostEnv: "maybe"})
+		cfg, err := appconfig.Load(path, lookup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Automation.Webhooks.AllowLocalhost {
+			t.Fatalf("an unrecognised value turned the exception on (the file said %s)", file)
+		}
+	}
+}

@@ -36,7 +36,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>operator: GET /api/v1/local/automation → 200</summary>
 
 ```json
-{"data":{"status":{"enabled":true,"workers":2,"pending_jobs":0,"retry_backlog":0,"processing":0,"failed_recent":0,"recent_failures":[]}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"status":{"enabled":true,"workers":2,"pending_jobs":0,"retry_backlog":0,"processing":0,"failed_recent":0,"recent_failures":[],"webhook_allow_localhost":false}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -54,7 +54,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>administrator: GET /api/v1/local/automation → 200</summary>
 
 ```json
-{"data":{"status":{"enabled":true,"workers":2,"pending_jobs":0,"retry_backlog":0,"processing":0,"failed_recent":0,"recent_failures":[]}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"status":{"enabled":true,"workers":2,"pending_jobs":0,"retry_backlog":0,"processing":0,"failed_recent":0,"recent_failures":[],"webhook_allow_localhost":false}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -67,7 +67,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>GET /api/v1/local/automation → 200</summary>
 
 ```json
-{"data":{"status":{"enabled":true,"workers":2,"pending_jobs":0,"retry_backlog":0,"processing":0,"failed_recent":0,"recent_failures":[]}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"status":{"enabled":true,"workers":2,"pending_jobs":0,"retry_backlog":0,"processing":0,"failed_recent":0,"recent_failures":[],"webhook_allow_localhost":false}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 

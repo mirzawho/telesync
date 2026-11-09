@@ -57,6 +57,10 @@ type Config struct {
 	// Events reads one stored event's message snapshot. The engine never
 	// queries the event table itself and never talks to Telegram.
 	Events EventSource
+	// Channels names the channel an event came from, so the payload says which
+	// channel it is and not only which row it has. Optional: without it the
+	// source block keeps its identifiers and nothing more.
+	Channels ChannelSource
 	// Jobs schedules delivery work, so a retry is durable rather than an
 	// in-process loop.
 	Jobs automation.JobEnqueuer
@@ -95,6 +99,29 @@ type ReopenFunc func(ctx context.Context, eventID string, kind automation.JobKin
 // know about webhooks. Returning found=false means the event is gone: the
 // delivery is then cancelled, because there is nothing left to send.
 type EventSource func(ctx context.Context, eventID string) (automation.MessageEvent, bool, error)
+
+// ChannelSource reads the managed channel one event came from.
+//
+// It is a function for the same reason EventSource is: the orchestrator wires
+// whichever store this release ends up with without that store having to know
+// about webhooks. found=false means the channel row is gone — the event still
+// delivers, carrying its identifiers alone, because a delivery must not fail
+// over a missing label.
+type ChannelSource func(ctx context.Context, managedChannelID int64) (Channel, bool, error)
+
+// Channel is how a receiver recognises the channel a message came from: what
+// kind of peer it is and what it is called.
+//
+// The identifiers are deliberately not here. They are the payload's source
+// block, and repeating them would give one document two answers to the same
+// question. The field set is the managed_channels one the channel messages API
+// already reports, so the two cannot drift.
+type Channel struct {
+	// Type is the peer kind: "channel" or "group".
+	Type     string `json:"type"`
+	Title    string `json:"title"`
+	Username string `json:"username,omitempty"`
+}
 
 // Secrets seals a webhook secret for storage and opens a stored one. It is the
 // same pair internal/secrets offers, narrowed so this package cannot read any
