@@ -1,0 +1,319 @@
+# telesync — demo deployment for Kubernetes.
+#
+# Demo only: one replica, Recreate strategy (two daemons must never share the
+# same SQLite database or worker sockets), and no Ingress/host. The panel is
+# reached by port-forward on /admin.
+#
+# The image is ghcr.io/mirzawho/telesync:development, pulled on every start. If
+# the package is private, the namespace needs a pull secret:
+#
+#   kubectl -n telesync create secret docker-registry ghcr-pull \
+#     --docker-server=ghcr.io --docker-username=<user> \
+#     --docker-password=<PAT with read:packages>
+#
+# and the Deployment needs `imagePullSecrets: [{name: ghcr-pull}]`.
+#
+# Fill the Secrets below before applying. They are placeholders; nothing here
+# decrypts a real Telegram, WordPress or AI credential.
+#
+# One-time setup after the pod is running:
+#
+#   kubectl -n telesync exec -it deploy/telesync -c telesync -- /usr/local/bin/telesync admin
+#   kubectl -n telesync exec -it deploy/telesync -c telesync -- /usr/local/bin/telesync auth --key official
+#
+# `auth` is interactive: it asks for the login code on stdin. The pod keeps a
+# TTY for exactly that (stdin: true, tty: true), which the distroless image
+# needs because it has no shell to attach a terminal to.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: telesync
+  labels:
+    app.kubernetes.io/name: telesync
+    app.kubernetes.io/part-of: telesync-demo
+---
+# ---------------------------------------------------------------------------
+# Credentials. Every value is a placeholder; replace before applying.
+# Env vars here are named by the configuration file, which never holds values.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telesync-credentials
+  namespace: telesync
+  labels:
+    app.kubernetes.io/name: telesync
+    app.kubernetes.io/part-of: telesync-demo
+type: Opaque
+stringData:
+  # From https://my.telegram.org/apps. The phone values may stay empty; `auth`
+  # prompts for them. They are deliberately not stored as demo data.
+  OFFICIAL_API_HASH: "replace-with-official-api-hash"
+  OFFICIAL_PHONE: ""
+---
+# Signing key for access tokens (HS256, >= 32 bytes): openssl rand -base64 48.
+# Required because the API binds 0.0.0.0 inside the cluster.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telesync-jwt
+  namespace: telesync
+  labels:
+    app.kubernetes.io/name: telesync
+    app.kubernetes.io/part-of: telesync-demo
+type: Opaque
+stringData:
+  TELESYNC_JWT_SECRET: "replace-with-at-least-32-bytes-of-random-base64"
+---
+# AES-256 key for WordPress application passwords: openssl rand -base64 32.
+# The configuration below names this with api.wordpress.encryption_key_env, so
+# the key arrives as an env var rather than a mounted file.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telesync-wordpress
+  namespace: telesync
+  labels:
+    app.kubernetes.io/name: telesync
+    app.kubernetes.io/part-of: telesync-demo
+type: Opaque
+stringData:
+  TELESYNC_WORDPRESS_KEY: "replace-with-32-bytes-of-random-base64"
+---
+# ---------------------------------------------------------------------------
+# The configuration file (TELESYNC_CONFIG). Relative paths resolve against this
+# file's directory, so every runtime path is absolute and lives under /data.
+# Secrets arrive as env vars; nothing is mounted under /run/secrets.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: telesync-config
+  namespace: telesync
+  labels:
+    app.kubernetes.io/name: telesync
+    app.kubernetes.io/part-of: telesync-demo
+data:
+  telesync.json: |
+    {
+      "api": {
+        "listen_addr": "0.0.0.0:8080",
+        "request_timeout": "30s",
+        "jwt": {
+          "secret_env": "TELESYNC_JWT_SECRET",
+          "token_ttl": "1h"
+        },
+        "wordpress": {
+          "encryption_key_env": "TELESYNC_WORDPRESS_KEY"
+        }
+      },
+      "runtime": {
+        "run_dir": "/data/run",
+        "session_dir": "/data/sessions",
+        "data_dir": "/data/db",
+        "cache_dir": "/data/cache/avatars",
+        "peer_dir": "/data/peers",
+        "avatar_ttl": "24h",
+        "reconnect": 10,
+        "restart_initial_delay": "1s",
+        "restart_max_delay": "30s",
+        "max_restart_attempts": 10,
+        "startup_timeout": "60s",
+        "shutdown_timeout": "15s"
+      },
+      "automation": {
+        "enabled": true,
+        "workers": 2,
+        "poll_interval": "1s",
+        "publish_interval": "2s",
+        "max_attempts": 5,
+        "retry_delay": "10s",
+        "job_lease": "2m",
+        "history_retention_days": 30,
+        "recovery": {
+          "enabled": true,
+          "batch_size": 20,
+          "interval": "5s"
+        },
+        "webhooks": {
+          "timeout": "15s",
+          "max_attempts": 5,
+          "max_response_bytes": 65536,
+          "max_concurrent_deliveries": 4,
+          "history_retention_days": 30,
+          "allow_localhost": false
+        },
+        "ai": {
+          "enabled": false
+        }
+      },
+      "clients": [
+        {
+          "key": "official",
+          "type": "official",
+          "enabled": true,
+          "app_id": 123456,
+          "app_hash_env": "OFFICIAL_API_HASH",
+          "phone_env": "OFFICIAL_PHONE"
+        }
+      ]
+    }
+---
+# ---------------------------------------------------------------------------
+# Persistent state: sessions (credentials), worker sockets, SQLite, avatars and
+# peer caches. Without this the daemon loses its Telegram sessions on restart.
+# A demo cluster may use hostPath instead; note the non-root uid (65532) needs
+# write access to that path.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: telesync-sessdata
+  namespace: telesync
+  labels:
+    app.kubernetes.io/name: telesync
+    app.kubernetes.io/part-of: telesync-demo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: telesync
+  namespace: telesync
+  labels:
+    app.kubernetes.io/name: telesync
+    app.kubernetes.io/part-of: telesync-demo
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: telesync
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telesync
+  namespace: telesync
+  labels:
+    app.kubernetes.io/name: telesync
+    app.kubernetes.io/part-of: telesync-demo
+spec:
+  # One daemon per database: SQLite and worker sockets do not tolerate a second
+  # writer, so scale only over a single pod.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: telesync
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: telesync
+        app.kubernetes.io/part-of: telesync-demo
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: telesync
+          image: ghcr.io/mirzawho/telesync:development
+          # The development tag moves; always fetch the current one.
+          imagePullPolicy: Always
+          args: ["daemon"]
+          env:
+            - name: TELESYNC_CONFIG
+              value: /etc/telesync/telesync.json
+            - name: OFFICIAL_API_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: telesync-credentials
+                  key: OFFICIAL_API_HASH
+            - name: OFFICIAL_PHONE
+              valueFrom:
+                secretKeyRef:
+                  name: telesync-credentials
+                  key: OFFICIAL_PHONE
+            - name: TELESYNC_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: telesync-jwt
+                  key: TELESYNC_JWT_SECRET
+            - name: TELESYNC_WORDPRESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: telesync-wordpress
+                  key: TELESYNC_WORDPRESS_KEY
+            # Set to "1" to send gotd's handshake logs to stderr.
+            # - name: TELESYNC_DEBUG
+            #   value: "1"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # `telesync auth` and `telesync admin` read stdin and prompt; the
+          # distroless image has no shell, so this TTY is how they are run.
+          stdin: true
+          tty: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: config
+              mountPath: /etc/telesync
+              readOnly: true
+            - name: sessdata
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /admin/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /admin/healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Workers get shutdown_timeout (15s) plus the HTTP server's close;
+          # give them room before SIGKILL.
+          terminationGracePeriodSeconds: 45
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: telesync-config
+            items:
+              - key: telesync.json
+                path: telesync.json
+        - name: sessdata
+          persistentVolumeClaim:
+            claimName: telesync-sessdata
