@@ -25,11 +25,16 @@ already look.
 
 ## Telegram
 
-`POST /api/v1/telegram/{key}/messages` sends through the connection named by
+`POST /api/v1/telegram/{key}/messages/copy` sends through the connection named by
 `{key}` and nowhere else. Before the message goes out the backend resolves the
 destination on **that** connection and asks Telegram whether the account may
 post there. Reading a channel, being a member of it, or holding a local record
 of it is not proof of being able to post to it.
+
+The route is named `copy` because that is what it does: the body must name a
+`source` message that already exists, and it carries no file of its own. A
+request to the same path with the `copy` segment left off answers
+`404 not_found` and names this route; there is no free-text send beside it.
 
 A connection that cannot post answers `publish_permission_denied`. A custom
 MTProto backend that does not implement the send answers an error; it is never

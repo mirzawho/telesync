@@ -105,7 +105,7 @@ func TestPublishReadsSourceMediaThroughTheSourceConnectionNotTheDestination(t *t
 	withSourcePhoto(source)
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/cat/messages", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
+		"/api/v1/telegram/cat/messages/copy", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -157,7 +157,7 @@ func TestPublishReadsTheSameSourceMediaWhoeverTheDestinationIs(t *testing.T) {
 	source.channel = dest.channel
 	source.send = dest.send
 
-	for _, path := range []string{"/api/v1/telegram/cat/messages", "/api/v1/telegram/official/messages"} {
+	for _, path := range []string{"/api/v1/telegram/cat/messages/copy", "/api/v1/telegram/official/messages/copy"} {
 		before := source.mediaCalls
 		resp := env.send(t, defaultCaller, http.MethodPost, path,
 			publishCrossBody(row.ID, mediaModePreserve, "555:9"))
@@ -186,7 +186,7 @@ func TestPublishRefusesToSendTextAloneWhenTheSourceAttachmentCannotBeRead(t *tes
 	source.mediaE = rpc.NewError(rpc.CodeNotFound, "gone", 0)
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/cat/messages", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
+		"/api/v1/telegram/cat/messages/copy", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502, body = %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -211,7 +211,7 @@ func TestPublishRefusesWhenTheSourceConnectionIsUnavailable(t *testing.T) {
 	row := env.channelRow(t, "gone-client", 555)
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/cat/messages", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
+		"/api/v1/telegram/cat/messages/copy", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503, body = %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -232,7 +232,7 @@ func TestPublishReportsADestinationFailureSeparatelyFromASourceReadFailure(t *te
 	dest.sendE = rpc.NewError(rpc.CodeSendForbidden, "not a channel admin", 0)
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/cat/messages", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
+		"/api/v1/telegram/cat/messages/copy", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403, body = %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -257,7 +257,7 @@ func TestPublishOmitsMediaOnlyWhenTheSourceMessageHasNone(t *testing.T) {
 	dest.sendCalls = 0
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/cat/messages", publishCrossBody(row.ID, mediaModePreserve, ""))
+		"/api/v1/telegram/cat/messages/copy", publishCrossBody(row.ID, mediaModePreserve, ""))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -277,7 +277,7 @@ func TestPublishHonoursAnExplicitDetachWithoutReadingTheSourceMedia(t *testing.T
 	withSourcePhoto(source)
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/cat/messages", publishCrossBody(row.ID, mediaModeOmit, ""))
+		"/api/v1/telegram/cat/messages/copy", publishCrossBody(row.ID, mediaModeOmit, ""))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -309,7 +309,7 @@ func TestPublishClassifiesASendFailureTheSameHoweverTheWorkerReportedIt(t *testi
 		dest.sendE = failure.err
 
 		resp := env.send(t, defaultCaller, http.MethodPost,
-			"/api/v1/telegram/cat/messages", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
+			"/api/v1/telegram/cat/messages/copy", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
 		if resp.StatusCode != http.StatusForbidden {
 			t.Fatalf("%s: status = %d, want 403, body = %s", failure.name, resp.StatusCode, readBody(t, resp))
 		}
@@ -330,7 +330,7 @@ func TestPublishNamesAFailedMediaSendAsADestinationFailure(t *testing.T) {
 	dest.sendE = errors.New("the upload died halfway")
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/cat/messages", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
+		"/api/v1/telegram/cat/messages/copy", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502, body = %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -440,7 +440,7 @@ func TestPublishNeverUsesTheDestinationConnectionToResolveAMediaID(t *testing.T)
 	// The id names a different message entirely. It is refused on identity,
 	// and the destination is not consulted to find out what it is.
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/cat/messages", publishCrossBody(row.ID, mediaModePreserve, "555:77"))
+		"/api/v1/telegram/cat/messages/copy", publishCrossBody(row.ID, mediaModePreserve, "555:77"))
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400, body = %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -471,7 +471,7 @@ func TestPublishLogsTheSourceConnectionWhenTheAttachmentCannotBeRead(t *testing.
 	env.useConfig(cfg)
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/cat/messages", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
+		"/api/v1/telegram/cat/messages/copy", publishCrossBody(row.ID, mediaModePreserve, "555:9"))
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, readBody(t, resp))
 	}

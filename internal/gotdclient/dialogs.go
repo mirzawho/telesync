@@ -67,6 +67,8 @@ func normalizeMessage(msg *tg.Message, users map[int64]*tg.User) tgapi.Message {
 			Filename: MediaFileName(msg.Media),
 			MimeType: MediaMimeType(msg.Media),
 			Size:     MediaSize(msg.Media),
+			Duration: MediaDuration(msg.Media),
+			Waveform: MediaWaveform(msg.Media),
 		}
 	}
 	return out

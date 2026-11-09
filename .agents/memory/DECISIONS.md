@@ -1226,3 +1226,39 @@ Two stages, two codes, never interchangeable: `publish_source_media_unavailable`
 (nothing was sent anywhere; retry or `media.mode: "omit"`) and
 `publish_media_upload_failed` (the attachment was read and the destination
 would not take it). See `docs/api/manual/components/publishing.md`.
+
+## D67 — Voice and audio are their own send kinds, taken from the source attributes
+
+**Decision.** An outgoing attachment's kind is read from the source message's
+own classification and nowhere else. `tgapi.SendMedia.Kind` and
+`rpc.SendMedia.Kind` gained `audio` and `voice` beside `photo` and `document`,
+carrying `Duration` and `Waveform` with them. `gotdclient.sendMediaInput` writes
+`documentAttributeAudio{voice, duration, waveform}` for both, with `ForceFile`
+false, and adds a `documentAttributeFilename` for a voice recording only when
+the sender actually named one.
+
+**Why.** A Telegram voice message is a document whose
+`documentAttributeAudio` carries `voice=true`, and that one flag is what makes a
+client draw a round play button instead of a download card. Publishing was
+collapsing every non-photo attachment to `kind := "document"`, and the outgoing
+`inputMediaUploadedDocument` carried only a filename attribute — so the
+destination was told nothing about what the media was. The fallback filename was
+`Label`, which is why the republished recording arrived *named* «پیام صوتی».
+
+The kind must not be inferred. `audio/ogg` is what a voice recording is stored
+as and also what an ordinary OGG file is stored as, and a file called
+`voice.ogg` is not necessarily a voice message. The MIME type, the extension,
+the filename and the UI label are all equally useless; only the source
+document's attributes distinguish them. Nothing in this pipeline fabricates a
+duration or a waveform either — an absent waveform is sent as absent.
+
+**How to apply.** Never derive a media kind from a MIME type, a name or a label
+anywhere in the publish path. Never set `ForceFile` on voice or audio: it forces
+the upload to arrive as a plain document whatever the attributes say. Never
+invent a filename for a recording — Telegram's own voice messages carry no
+`documentAttributeFilename`, and adding one is what turns a recording into a
+file with a name. A caller is never asked for a kind or an `is_voice` flag:
+`preserve_source` means the source's own semantics travel with the bytes. If a
+destination refuses a voice send, the publication fails
+(`publish_unsupported`) and is never retried as a plain document — a silent
+downgrade reported as a success is the one outcome worse than the bug.

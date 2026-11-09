@@ -64,17 +64,43 @@ func (s *Service) buildSend(ctx context.Context, source sourceMessage, req Reque
 		}
 		return rpc.SendRequest{}, s.sourceMediaFailure(source, err)
 	}
-	kind := "document"
-	if source.message.Media.Type == "photo" {
-		kind = "photo"
-	}
 	send.Media = &rpc.SendMedia{
-		Kind:     kind,
+		Kind:     sendKind(source.message.Media),
 		Name:     sendFileName(source.message.Media),
 		MimeType: stream.MimeType,
 		Data:     data,
+		Duration: source.message.Media.Duration,
+		Waveform: source.message.Media.Waveform,
 	}
 	return send, nil
+}
+
+// sendKind is the outgoing media kind of a source attachment.
+//
+// It is the source's own classification, taken from the document attributes the
+// source connection reported and never from the MIME type, the file name or the
+// label: audio/ogg is what a voice recording is stored as and also what an
+// ordinary OGG file is stored as. A recording is "voice" and only a recording
+// is, so a destination draws a play button for one and a download card for the
+// other — which is the whole difference between the two messages.
+//
+// Anything this build does not describe sends as a document, which is what it
+// already did: photos are photos, audio is audio, voice is voice, and every
+// other attachment keeps its existing behaviour.
+func sendKind(m *rpc.Media) string {
+	if m == nil {
+		return "document"
+	}
+	switch m.Type {
+	case "photo":
+		return "photo"
+	case "voice":
+		return "voice"
+	case "audio":
+		return "audio"
+	default:
+		return "document"
+	}
 }
 
 // sourceMediaFailure is the answer for an attachment the source connection
@@ -117,12 +143,20 @@ func mediaHasBytes(mediaType string) bool {
 // document that arrived as "original-app-name.apk" must not go out as "فایل".
 // The label is a description of the media kind, and is only ever a fallback for
 // an attachment Telegram never named.
+//
+// A voice recording is the exception. Telegram's own voice messages carry no
+// documentAttributeFilename at all, and putting a name on one is what turns a
+// recording into a file that happens to be named "پیام صوتی". So a recording
+// keeps the name the sender gave it, if any, and is otherwise sent unnamed.
 func sendFileName(m *rpc.Media) string {
 	if m == nil {
 		return "attachment"
 	}
 	if m.Filename != "" {
 		return sanitiseFileName(m.Filename)
+	}
+	if m.Type == "voice" {
+		return ""
 	}
 	if m.Label != "" {
 		return sanitiseFileName(m.Label)

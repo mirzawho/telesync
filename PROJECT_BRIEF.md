@@ -207,7 +207,7 @@ way to use them; the JSON API is the integration surface.
 ### 7.2 The publishing workflow (IMPLEMENTED 2026-10-31, not live-verified)
 
 The flow below is the product's workflow and is what the publish routes
-implement: `POST /api/v1/telegram/{key}/messages` (Telegram destination) and
+implement: `POST /api/v1/telegram/{key}/messages/copy` (Telegram destination) and
 `POST /api/v1/local/wordpress/{id}/posts` (WordPress destination). Live
 publication against real Telegram or a real WordPress site is **not verified**.
 No `/api/v1/content/publish` envelope route exists; the two destination
@@ -331,7 +331,7 @@ a new permission model opportunistically.
 | WordPress registration / metadata / authz | Destination management | IMPLEMENTED | probe, sealed credential, per-site grants; publishing writes posts/media through the sealed credential (2026-10-31) |
 | Server status | Operations | IMPLEMENTED | `GET /api/v1/telegram` behind `servers.view`; dashboard card |
 | Content preparation (hashtags / mentions / text, separate from the source) | Distribution | IMPLEMENTED | Editor in the panel; `content` carries text + entities; the source is never modified |
-| Telegram message publishing | Distribution | IMPLEMENTED | `POST /api/v1/telegram/{key}/messages`; gated by `content.publish`; live Telegram **not verified** |
+| Telegram message publishing | Distribution | IMPLEMENTED | `POST /api/v1/telegram/{key}/messages/copy`; gated by `content.publish`; live Telegram **not verified** |
 | WordPress post publishing | Distribution | IMPLEMENTED | `POST /api/v1/local/wordpress/{id}/posts` with tags and media; live site **not verified** |
 | Media transfer during publishing | Distribution | IMPLEMENTED | Source read → destination upload; 32 MiB cap; live transfer **not verified** |
 | Publication history | Operations | IMPLEMENTED (2026-11-06, for automation) | `workflow_runs` + `workflow_publications` and `webhook_deliveries` + `webhook_attempts`; manual publishing still records only its idempotency row |
@@ -406,7 +406,7 @@ message_id}, …}`. **That route does not exist.** What is implemented is two
 destination-specific routes sharing one request shape
 (`internal/gateway/publish.go` `publishRequest`):
 
-- `POST /api/v1/telegram/{key}/messages` — Telegram destination. Body:
+- `POST /api/v1/telegram/{key}/messages/copy` — Telegram destination. Body:
   `source: {local_channel_id, message_id}` (a local id, never a Telegram id),
   `destination: {channel_id}`, `content: {text, entities}` (UTF-16 offsets),
   `media: {mode}` (`preserve_source` | `omit`), `options: {silent,

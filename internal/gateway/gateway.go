@@ -371,16 +371,27 @@ func (s *Server) serveTelegram(w http.ResponseWriter, r *http.Request, requestID
 // routeTelegram is the per-resource part of the Telegram routes.
 func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *http.Request,
 	key string, worker Worker, resource string, segments []string, requestID string) {
-	// join and publish are the only state-changing routes. Everything else is
+	// join and copy are the only state-changing routes. Everything else is
 	// read-only and answers 405 to anything but GET.
+	//
+	// /messages is no longer a route: copying a message lives at /messages/copy.
+	// It is named here rather than left to the GET-only gate below, which would
+	// answer 405 to a POST at a path that supports no method at all.
 	if resource == "messages" && len(segments) == 2 {
+		s.fail(w, http.StatusNotFound, CodeNotFound,
+			"Unknown resource "+strconv.Quote("messages")+". "+
+				"Use /api/v1/telegram/"+key+"/messages/copy to copy a message and "+
+				"/api/v1/telegram/"+key+"/channels/{channel_id}/messages to read them.", requestID)
+		return
+	}
+	if resource == "messages" && len(segments) == 3 && segments[2] == "copy" {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
-				"Publishing changes state and must be sent as POST.", requestID)
+				"Copying a message changes state and must be sent as POST.", requestID)
 			return
 		}
-		s.publishTelegram(ctx, w, r, key, worker, requestID)
+		s.copyTelegramMessage(ctx, w, r, key, worker, requestID)
 		return
 	}
 	if resource == "channels" && len(segments) == 4 && segments[3] == "join" {

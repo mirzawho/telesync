@@ -27,20 +27,32 @@ type SendRequest struct {
 
 // SendMedia is the attachment of an outgoing post.
 type SendMedia struct {
-	// Kind is "photo" or "document".
+	// Kind is "photo", "document", "audio" or "voice". A voice recording is
+	// its own kind and never a document: the destination draws a play button
+	// or a download card according to it.
 	Kind string
-	// Name is the file name presented for a document.
+	// Name is the file name presented for a document. A voice recording
+	// carries no name the sender chose, and none is invented for it.
 	Name string
-	// MimeType is the attachment's content type.
+	// MimeType is the attachment's content type. It is the content type of the
+	// bytes as they are sent: nothing here re-encodes.
 	MimeType string
 	// Data is the file's bytes.
 	Data []byte
+	// Duration is the recording length in seconds, for "audio" and "voice".
+	// Zero means unknown and is sent as no length rather than as a guess.
+	Duration int
+	// Waveform is the voice message's own bitpacked amplitude samples, for
+	// "voice" only. Nil sends none; a waveform is never made up.
+	Waveform []byte
 }
 
 // Media kinds an outgoing attachment can be sent as.
 const (
 	SendMediaPhoto    = "photo"
 	SendMediaDocument = "document"
+	SendMediaAudio    = "audio"
+	SendMediaVoice    = "voice"
 )
 
 // SendResult is what the destination confirmed about the sent message.

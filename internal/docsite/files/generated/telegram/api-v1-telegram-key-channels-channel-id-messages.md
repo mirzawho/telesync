@@ -14,7 +14,6 @@
 - **Handler:** `Server.messages` (gateway.go)
 - **Success:** `writeJSON` with `envelope{ Data: map[string]any{"messages": views}, Meta: pageMeta(requestID, s.cfg.Now(), result.Page, false), }`, status `StatusOK (200)`
 - **Documentation:** [telegram](../../manual/components/telegram.md)
-- **Documentation:** [publishing](../../manual/components/publishing.md)
 
 ### Authorization conditions in the source
 

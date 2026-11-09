@@ -518,7 +518,7 @@ async function publish(
       const body = bodies[index]
       const label = labels.get(body.destination.channel_id) ?? body.destination.channel_id
       try {
-        await apiRequest("POST", `/telegram/${encodeURIComponent(clientKey)}/messages`, {
+        await apiRequest("POST", `/telegram/${encodeURIComponent(clientKey)}/messages/copy`, {
           token,
           body,
           headers: {

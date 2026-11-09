@@ -219,6 +219,14 @@ type Media struct {
 	MimeType string `json:"mime_type,omitempty"`
 	// Size is the byte size the backend reported, when known.
 	Size int64 `json:"size,omitempty"`
+	// Duration is the recording length in seconds from the document's
+	// documentAttributeAudio. Zero is omitted: it means the attachment is not
+	// audio, or the backend reported no length, and is never a byte count.
+	Duration int `json:"duration,omitempty"`
+	// Waveform is the voice message's own bitpacked amplitude samples, from
+	// the same attribute. It is omitted when the message is not a voice
+	// recording or the backend reported none: a waveform is never invented.
+	Waveform []byte `json:"waveform,omitempty"`
 }
 
 // MediaFile is the downloaded content of one attachment.
@@ -407,15 +415,23 @@ type SendRequest struct {
 // The bytes are not part of the JSON body: they travel beside it in the
 // request, so a large attachment never rides a text document.
 type SendMedia struct {
-	// Kind is "photo" or "document".
+	// Kind is "photo", "document", "audio" or "voice". A voice recording is
+	// its own kind and never a document: it is what makes the destination draw
+	// a play button instead of a download card.
 	Kind string `json:"kind"`
-	// Name is the file name Telegram shows for a document.
+	// Name is the file name Telegram shows for a document. A voice recording
+	// carries none the sender chose and none is invented for it.
 	Name string `json:"name,omitempty"`
 	// MimeType is the attachment's content type.
 	MimeType string `json:"mime_type"`
 	// Data is the file's bytes. It is filled from the transfer beside the
 	// request and never serialized into it.
 	Data []byte `json:"-"`
+	// Duration is the recording length in seconds, for "audio" and "voice".
+	Duration int `json:"duration,omitempty"`
+	// Waveform is the voice message's own bitpacked amplitude samples, for
+	// "voice" only.
+	Waveform []byte `json:"waveform,omitempty"`
 }
 
 // SendResult is what the destination confirmed about the sent message.

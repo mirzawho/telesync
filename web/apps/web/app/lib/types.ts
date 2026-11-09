@@ -149,6 +149,16 @@ export interface MessageMedia {
   filename?: string
   mime_type?: string
   size?: number
+  // duration is a recording's length in seconds, for audio and voice, from the
+  // document's documentAttributeAudio. It is a length in time and never a byte
+  // count: size is the byte count. The API omits it when the attachment is not
+  // audio or the backend reported no length.
+  duration?: number
+  // waveform is a voice message's own bitpacked amplitude samples, from the
+  // same attribute, sent as base64 the way Go encodes a byte string. The API
+  // omits it when the message is not a voice recording or the backend reported
+  // none; it is never invented.
+  waveform?: string
   url?: string
 }
 

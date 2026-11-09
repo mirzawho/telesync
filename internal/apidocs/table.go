@@ -51,7 +51,7 @@ var gatewayRoutes = []Route{
 	{Pattern: "/api/v1/telegram/{key}/channels/{channel_id}/avatar", Methods: []string{http.MethodGet}, Probe: telegramKey},
 	{Pattern: "/api/v1/telegram/{key}/custom_emoji/{document_id}", Methods: []string{http.MethodGet}, Probe: telegramKey},
 	{Pattern: "/api/v1/telegram/{key}/channels/{channel_id}/join", Methods: []string{http.MethodPost}, Probe: telegramKey},
-	{Pattern: "/api/v1/telegram/{key}/messages", Methods: []string{http.MethodPost}, Probe: telegramKey},
+	{Pattern: "/api/v1/telegram/{key}/messages/copy", Methods: []string{http.MethodPost}, Probe: telegramKey},
 
 	{Pattern: "/api/v1/local/channels", Methods: []string{http.MethodGet}},
 	{Pattern: "/api/v1/local/channels/{id}", Methods: []string{http.MethodGet}},

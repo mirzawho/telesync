@@ -1,8 +1,10 @@
 package publishing_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -19,12 +21,33 @@ import (
 // account that is gone publishes nothing at all.
 
 // fakeWorker is one Telegram connection that accepts every send.
+//
+// The source message and its attachment are served from page and the media
+// fields, so a test can publish a real attachment and still see exactly what
+// the destination was handed. A worker that has no page answers with the plain
+// post, and a worker that has no media refuses the attachment read: that is
+// what makes "the destination never reads the source" visible in a test rather
+// than merely intended.
 type fakeWorker struct {
 	sends   []rpc.SendRequest
 	sendErr error
+
+	page      rpc.MessagePage
+	media     []byte
+	mediaType string
+	mediaName string
+	mediaSize int64
+	mediaErr  error
+	// mediaReads counts the attachment reads this connection answered. Only the
+	// connection that recorded the source message should ever move this.
+	mediaReads int
+	sendCalls  int
 }
 
 func (w *fakeWorker) Message(_ context.Context, channelID int64, messageID int) (rpc.MessagePage, error) {
+	if w.page.Messages != nil {
+		return w.page, nil
+	}
 	return rpc.MessagePage{
 		Channel:  rpc.Channel{ID: channelID},
 		Messages: []rpc.Message{{ID: messageID, Text: "hello"}},
@@ -32,7 +55,23 @@ func (w *fakeWorker) Message(_ context.Context, channelID int64, messageID int) 
 }
 
 func (w *fakeWorker) Media(context.Context, int64, int, int, rpc.MediaSlice) (rpc.MediaStream, error) {
-	return rpc.MediaStream{}, errors.New("not used")
+	w.mediaReads++
+	if w.mediaErr != nil {
+		return rpc.MediaStream{}, w.mediaErr
+	}
+	if w.media == nil {
+		return rpc.MediaStream{}, errors.New("not used")
+	}
+	size := w.mediaSize
+	if size == 0 {
+		size = int64(len(w.media))
+	}
+	return rpc.MediaStream{
+		MimeType: w.mediaType,
+		Filename: w.mediaName,
+		Size:     size,
+		Body:     io.NopCloser(bytes.NewReader(w.media)),
+	}, nil
 }
 
 func (w *fakeWorker) Channel(context.Context, rpc.ChannelRef) (rpc.ChannelResult, error) {
@@ -42,12 +81,22 @@ func (w *fakeWorker) Channel(context.Context, rpc.ChannelRef) (rpc.ChannelResult
 }
 
 func (w *fakeWorker) SendMessage(_ context.Context, req rpc.SendRequest) (rpc.SendResult, error) {
+	w.sendCalls++
 	w.sends = append(w.sends, req)
 	if w.sendErr != nil {
 		return rpc.SendResult{}, w.sendErr
 	}
 	return rpc.SendResult{Message: &rpc.Message{ID: 4321, Text: req.Text},
 		ChannelID: strconv.FormatInt(req.ChannelID, 10)}, nil
+}
+
+// keyedRegistry hands out one connection per configured client key, so a test
+// can hold the source and the destination on genuinely separate connections.
+type keyedRegistry map[string]publishing.Worker
+
+func (k keyedRegistry) Worker(key string) (publishing.Worker, bool) {
+	w, ok := k[key]
+	return w, ok
 }
 
 // registry hands out the one connection above under its configured key.

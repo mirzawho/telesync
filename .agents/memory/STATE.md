@@ -1,6 +1,11 @@
 # Current state
 
-**Updated:** 2026-11-08 (`telesync serve-webhook` adds a local receiver for the webhook delivery engine — see the last section. Webhook and workflow create/edit are dedicated
+**Updated:** 2026-11-09 (prepare only — no production code changed. The rename
+of `POST /api/v1/telegram/{key}/messages` to `/messages/copy` is prepared and
+awaiting approval in `.agents/handoffs/telegram-messages-copy-route.md`: failing
+tests written, every reference in the brief re-verified against the source, and
+two gaps the brief missed recorded. See the last section). On 2026-11-08
+`telesync serve-webhook` adds a local receiver for the webhook delivery engine — see the last section. Webhook and workflow create/edit are dedicated
 full-page forms at `/automation/{webhooks,workflows}/{new,:id/edit}`, with one
 shared shell, a connection-first source picker and an accordion for the
 webhook's advanced tuning. A shipped-bundle crash — `isCreation is not defined`,
@@ -769,3 +774,167 @@ beyond loopback (deliberately — this is a development tool).
 **Pre-existing and unrelated:** `internal/worker`'s two Unix-socket tests fail
 in this environment (path length at the default macOS temp directory; a
 second-listener assertion at a shorter one). That package is untouched.
+
+## `POST /messages` → `/messages/copy` (2026-11-09, implemented)
+
+Handoff: `.agents/handoffs/telegram-messages-copy-route.md`, `status: DONE`,
+baseline `887910f`. Prepared first (failing tests + plan), then implemented on
+the user's instruction. The route is now `POST /api/v1/telegram/{key}/messages/copy`;
+`POST /api/v1/telegram/{key}/messages` answers `404 not_found` on every method
+and names the copy route. No alias, no redirect. The handler is
+`Server.copyTelegramMessage`.
+
+**Verified.** `publishing.Validate` refuses any request whose
+`source.local_channel_id` or `source.message_id` is not positive
+(`publishing/request.go:113`), so the route can only ever copy an existing
+message — the rename is a correction, not a rebrand. `PublishTelegram` has
+exactly two production callers: `gateway/publish.go:131` (this route) and
+`publishing/automation.go:32` (the workflow engine, via
+`workflows/publish.go:172`). Nothing in `publishing/` imports the gateway, so
+the whole package stays live and untouched.
+
+**Idempotency is path-independent, confirmed at the source.** `requestHash`
+(`publishing/send.go:163`) is `sha256(json.Marshal(Request))`; the path is not
+a field and `IdempotencyKey` is `json:"-"`. The operation key is
+`clientKey+":"+destination.channel_id` (`publishing/telegram.go:77`). A stored
+attempt therefore survives the move unchanged.
+
+**Error codes, restated from source** — there is no `publish_source_missing`:
+`publish_source_unavailable` (`CodePublishSourceMissing`),
+`publish_source_forbidden`, `publish_destination_unavailable`,
+`publish_destination_forbidden`, `publish_forbidden`,
+`publish_permission_denied`, `publish_idempotency_conflict`,
+`publish_media_too_large`. The last one **is** live on this route —
+`publishing/send.go:59-62` and `publishing/errors.go:192-193` — contrary to the
+task brief.
+
+**Two gaps the task brief missed.** (1) `docs/api/examples/README.md:27` names
+the old route; `TestIndexCoversEveryRoute` and `TestExamplesAreValidAndIndexed`
+both fail without it. (2) `componentOf` (`internal/docsgen/render.go:297`)
+selects the `publishing` paragraph by `HasSuffix(pattern, "/messages")`, which
+also wrongly gives it to the read route `GET .../channels/{channel_id}/messages`
+(visible in the committed page for that route). The correct predicate is
+`"/messages/copy"`, which fixes both at once.
+
+**Deleting the arm does not yield 404.** Without a dedicated arm, `POST /messages`
+falls to the GET-only gate at `gateway.go:396` and answers `405 method_not_allowed`
+with `Allow: GET`. The handoff specifies a `404 not_found` arm placed before that
+gate, naming `/messages/copy` — the same shape `gateway.go:462-468` already uses
+for a misspelled resource. The brief's option B (405 with `Allow: POST`) is not
+implementable: RFC 9110 §15.5.6 requires `Allow` to list methods the resource
+*does* support.
+
+**Decisions recorded:** 404-with-hint for `/messages` on every verb; handler
+renamed `publishTelegram` → `copyTelegramMessage` (forced coupling: docsgen
+resolves that literal and writes an unresolved item if it drifts); panel Persian
+copy left as «ارسال» (the operator's action is unchanged; the copy/send
+distinction only becomes user-visible when a real send route lands).
+
+**Verified this session:** `go test ./...` 30 packages ok,
+`go run ./cmd/docsgen --check` up to date, `gofmt -l .` empty, `go vet ./...`
+clean — all before the test changes. Red captured: 29 failing in
+`internal/gateway` (7 new + 22 retargeted), all at `405`/`404`/`200` as recorded
+in handoff §F. All 14 `TestWordPressPublish*` and all `TestBackgroundPublishing*`
+green and unedited.
+**Not verified:** live Telegram behavior. No handshake against a real client.
+
+**Graph refreshed.** `graphify-out/` had been built at `45db19d` — 447 files and
+~79k lines behind HEAD, missing the whole v0.0.3 automation series. Rebuilt
+code-only (8803 nodes / 36886 edges / 236 communities, now at `887910f`) and
+reclustered. The `--update` run without `--code-only` is blocked in this sandbox
+for want of an LLM API key, so 212 doc/paper files keep their stale semantic
+edges; code extraction is current.
+
+**Implemented and validated.** `gofmt`, `go vet ./...`, `go build ./...`,
+`go test ./...` (30 packages), `docsgen --check`, `go test ./internal/apidocs`,
+`npm run typecheck`, `make web-test` (48 tests) and `make panel` all green.
+Docsgen created `api-v1-telegram-key-messages-copy.md`, deleted the old
+`api-v1-telegram-key-messages.md`, and — via the `componentOf` correction —
+dropped the wrongly-attached `publishing` paragraph from the read route
+`.../channels/{channel_id}/messages`. Unresolved items stayed at 23, which
+confirms the handler rename and the docsgen handler map stayed coupled.
+
+`TestLinkedRoutesExist` failed once and was right: the new prose in
+`publishing.md` named the retired path in a code span, which that test reads as
+a claim that a route exists. Reworded to describe the behaviour instead; the
+test was not weakened and no route was added to `table.go` to satisfy it.
+
+**⚠ Not this change: a voice-message feature landed in the same working tree
+mid-implementation.** It is not attributed to this task and has zero overlap
+with its source files, but it does edit `internal/automation/publishing/send.go`
+(adds `sendKind`, `Duration`, `Waveform`), `rpc/rpc.go`, `worker/{send,worker}.go`,
+`tgapi/{send,tgapi}.go`, `gotdclient/{channel,dialogs,send,updates}.go`, plus
+four new `voice_test.go` files (~236 insertions, 11 files). It violates this
+handoff's "must not change `internal/automation/publishing/**`" — but not
+through this implementation, whose diff in that package is empty. The full
+suite was measured with both present and is green. Nothing committed; HEAD is
+still `887910f`. Separate the two diffs before committing.
+
+## Voice messages published as documents (2026-11-09, fixed)
+
+**Problem.** A real Telegram voice message republished to another channel
+arrived as a generic downloadable file. Bytes crossed intact (~1.3 KB, ~5 s);
+only the media semantics were lost. The destination document was even *named*
+«پیام صوتی».
+
+**Root cause — a chain, not one point.** Source classification was already
+right: `gotdclient.documentType` returns `"voice"` on
+`DocumentAttributeAudio.Voice` (`channel.go:84-97`). It died at
+`publishing/buildSend` (`send.go:67-70`), which set `kind := "document"` for
+anything that was not a photo; `sendFileName` then fell back to `Label`, giving
+the outgoing file the name «پیام صوتی». And even had the kind survived,
+`gotdclient/send.go:59-67` built `inputMediaUploadedDocument` with one attribute
+— `documentAttributeFilename` — and **never wrote `documentAttributeAudio`**,
+so the destination was told nothing about what the media was. `tgapi.SendMedia`
+had only `Kind/Name/MimeType/Data` and no way to express it.
+
+**Fix** (smallest correct change, shared pipeline, no schema/FFmpeg/new service):
+`Duration` + `Waveform` added to `tgapi.Media`, `rpc.Media`, `tgapi.SendMedia`,
+`rpc.SendMedia`; `SendMediaAudio` / `SendMediaVoice` kinds added. Read side:
+new `gotdclient.MediaDuration` / `MediaWaveform` beside the existing
+`MediaSize`, wired through `normalizeMessage`, the `updates.go` DTO and
+`worker.messageDTO`. Pipeline: new `publishing.sendKind` maps the *source* type
+(photo/voice/audio pass through, everything else stays `document` as before);
+`sendFileName` returns `""` for a recording the sender never named. Destination:
+new `gotdclient.sendMediaInput` writes
+`documentAttributeAudio{voice, duration, waveform}` for `voice` and `audio`,
+`ForceFile` **false** for both (true for `document`, unchanged), and a filename
+attribute for `voice` only when the sender actually gave one.
+
+Music stays `audio`, ordinary uploads stay `document`, photos stay photos,
+video/sticker/gif outgoing shaping is untouched. Nothing is re-encoded.
+
+**Verified:** `gofmt -l internal/ cmd/` empty, `go vet ./...` clean,
+`go build ./...` ok, `go test ./...` all packages ok,
+`go run ./cmd/docsgen --check` up to date, `go test ./internal/apidocs` ok,
+`npm run typecheck` and `npm run build` in `web/` ok. Regression tests cover the
+brief's A–J: source voice detection, music-not-voice, document-stays-document,
+metadata round trip across `tgapi`/`rpc`/worker boundaries, the outgoing
+MTProto request (decoded from a fake MTProto server via `tgtest`, asserting
+`Voice`/`Duration`/`Waveform`/`ForceFile` — not a filename check), manual
+publishing, workflow publishing (with AI-polished text), cross-connection
+transfer, no-silent-downgrade, and other-media regression.
+
+**Not verified:** live Telegram. No MTProto test credentials here, so no message
+was sent to a real channel and the round play button was never observed. `cat`
+goes through the same `gotdclient.SendMessage` as the official profile (one
+adapter, one send path), so it is sent the same attribute; whether a backend
+honours it is a destination property that cannot be established here. A refusal
+is `publish_unsupported` and is never retried as a plain document.
+
+**Docs:** `docs/api/manual/components/telegram.md` gains `duration` and
+`waveform` rows (the generator does not know these fields) and a note that
+`type` comes from the source attributes and from nothing else. Mirrored into
+`internal/docsite/files` by `go run ./cmd/docsgen`.
+
+**Handoff record:** `.agents/handoffs/telegram-voice-message-publishing.md`
+(status DONE). Written as the session channel; `approval: not_requested`,
+because no instruction named it — the user's mission brief directed the whole
+task in one session, so prepare/handoff/implement was not used.
+
+**Coordination.** A peer session was implementing `telegram-messages-copy-route`
+in the same tree while this ran (moving the publish route to
+`POST /messages/copy`); none of that work was touched.
+`internal/gateway/publish_voice_test.go` resolves the live publish path at run
+time (`/messages/copy`, falling back to `/messages`) so it is not coupled to
+which address wins.

@@ -192,3 +192,33 @@ Verified in tgtest against a fake MTProto server (`net.Pipe`, no network), not
 against live Telegram: whole-file download, byte ranges, a 1.2 MB file fetched in
 three parts, a suffix range, an empty slice past EOF, and the file-reference
 refresh.
+
+## Voice and audio documents (2026-11-09)
+
+- A Telegram voice message is a *document*. What makes it a voice message is one
+  flag on one attribute: `tg.DocumentAttributeAudio.Voice`, which
+  `SetFlags()` encodes as **bit 10** of `flags`. `EncodeBare` calls `SetFlags()`
+  itself, so setting the struct field is enough to get the right wire form.
+- `tg.DocumentAttributeAudio` also carries `Duration` (seconds, an `int` — never
+  a byte count), `Title`, `Performer` and `Waveform []byte` (bitpacked 5-bit
+  amplitude values; `SetFlags()` sets bit 2 when it is non-nil).
+- `tg.InputMediaUploadedDocument.ForceFile` is `force_file:flags.4?true` — "Force
+  the media file to be uploaded as document". **It must be false for both voice
+  and audio**, or the recording arrives as a downloadable file whatever the
+  attributes say.
+- Telegram's own voice messages carry **no** `documentAttributeFilename`. Adding
+  one turns a recording into a file that happens to have a name.
+- The MIME type decides nothing. `audio/ogg` is what a voice recording is stored
+  as and also what an ordinary OGG file is stored as; a file called `voice.ogg`
+  is not necessarily a voice message. Only the attribute tells them apart.
+- `github.com/gotd/td v0.162.0` does ship a voice-aware builder —
+  `telegram/message`'s `AudioDocumentBuilder` with `.Voice()`,
+  `.DurationSeconds()`, `.Waveform()`, and `DefaultVoiceMIME = "audio/ogg"`
+  (`telegram/message/audio.go`, `mime.go`). This project builds raw
+  `tg.InputMediaUploadedDocument` in `internal/gotdclient/send.go` instead; the
+  raw construction now produces the same shape that builder would.
+- Verified in tgtest against a fake MTProto server: the decoded
+  `MessagesSendMediaRequest` arriving at the "destination" carries
+  `documentAttributeAudio{voice=true, duration, waveform}` and `ForceFile=false`
+  (`TestSendAVoiceMessageCarriesTheVoiceAttribute`). Not verified against live
+  Telegram.

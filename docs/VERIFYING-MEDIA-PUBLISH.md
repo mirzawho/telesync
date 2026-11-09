@@ -300,7 +300,7 @@ Back in the dialog:
 Check the operation record and the response:
 
 ```bash
-curl -s -X POST "$API/telegram/cat/messages" \
+curl -s -X POST "$API/telegram/cat/messages/copy" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: verify-media-1" \
@@ -367,7 +367,7 @@ source message — never `client=cat`.
 3. Publish to `کت فیلم` with a different caption.
 
 ```bash
-curl -s -X POST "$API/telegram/cat/messages" \
+curl -s -X POST "$API/telegram/cat/messages/copy" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: verify-media-omit" \
@@ -401,7 +401,7 @@ is to delete the source message in Telegram after the dialog is opened:
 3. Publish.
 
 ```bash
-curl -s -o /tmp/err.json -w '%{http_code}\n' -X POST "$API/telegram/cat/messages" \
+curl -s -o /tmp/err.json -w '%{http_code}\n' -X POST "$API/telegram/cat/messages/copy" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: verify-media-unreadable" \
@@ -465,7 +465,7 @@ channels this account may post in, so this one is an API call: use a `cat`
 channel the account can read but cannot post in.
 
 ```bash
-curl -s -X POST "$API/telegram/cat/messages" \
+curl -s -X POST "$API/telegram/cat/messages/copy" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: verify-media-denied" \
@@ -505,7 +505,7 @@ Then press publish again **without changing anything**, with the same
 `Idempotency-Key`:
 
 ```bash
-curl -s -D - -X POST "$API/telegram/cat/messages" \
+curl -s -D - -X POST "$API/telegram/cat/messages/copy" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: verify-media-1" \

@@ -7238,22 +7238,22 @@
    ]
   },
   {
-   "pattern": "/api/v1/telegram/{key}/messages",
+   "pattern": "/api/v1/telegram/{key}/messages/copy",
    "method": "POST",
-   "handler": "publishTelegram",
+   "handler": "copyTelegramMessage",
    "file": "publish.go",
    "line": 0,
    "response": "answer",
    "status_name": "StatusOK",
    "status": 200,
    "credentials": [
-    "a.auth.Global(channelstore.PermissionContentPublish)  (publish.go:publishTelegram)"
+    "a.auth.Global(channelstore.PermissionContentPublish)  (publish.go:copyTelegramMessage)"
    ],
    "credential_count": 1,
    "probe": [
     {
      "caller": "anonymous",
-     "request": "POST /api/v1/telegram/official/messages",
+     "request": "POST /api/v1/telegram/official/messages/copy",
      "status": 401,
      "code": "unauthorized",
      "headers": {
@@ -7271,7 +7271,7 @@
     },
     {
      "caller": "operator",
-     "request": "POST /api/v1/telegram/official/messages",
+     "request": "POST /api/v1/telegram/official/messages/copy",
      "status": 415,
      "code": "invalid_input",
      "headers": {
@@ -7288,7 +7288,7 @@
     },
     {
      "caller": "limited user",
-     "request": "POST /api/v1/telegram/official/messages",
+     "request": "POST /api/v1/telegram/official/messages/copy",
      "status": 403,
      "code": "publish_forbidden",
      "headers": {
@@ -7305,7 +7305,7 @@
     },
     {
      "caller": "administrator",
-     "request": "POST /api/v1/telegram/official/messages",
+     "request": "POST /api/v1/telegram/official/messages/copy",
      "status": 415,
      "code": "invalid_input",
      "headers": {
@@ -7324,7 +7324,7 @@
    "example": [
     {
      "caller": "operator",
-     "request": "POST /api/v1/telegram/official/messages",
+     "request": "POST /api/v1/telegram/official/messages/copy",
      "status": 400,
      "code": "invalid_input",
      "json": true,

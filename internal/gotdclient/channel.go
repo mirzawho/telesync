@@ -310,6 +310,56 @@ func MediaSize(media tg.MessageMediaClass) int64 {
 	return 0
 }
 
+// MediaDuration reports the recording length of an audio attachment in seconds,
+// when the backend reports one.
+//
+// The number comes from documentAttributeAudio's duration and from nothing
+// else. It is a length in time and never a byte count: a 1.3 KB recording is
+// about five seconds long and must not be reported as 1300 of anything.
+func MediaDuration(media tg.MessageMediaClass) int {
+	attr := mediaAudioAttribute(media)
+	if attr == nil {
+		return 0
+	}
+	return attr.Duration
+}
+
+// MediaWaveform reports a voice message's own amplitude samples, when the
+// backend sent them.
+//
+// The bytes are carried across untouched and are never invented: a message
+// whose attribute has none is reported as having none, and a destination that
+// receives none draws what its client supports rather than a made-up wave.
+func MediaWaveform(media tg.MessageMediaClass) []byte {
+	attr := mediaAudioAttribute(media)
+	if attr == nil {
+		return nil
+	}
+	return attr.Waveform
+}
+
+// mediaAudioAttribute finds the documentAttributeAudio of an attachment.
+//
+// Only the attribute decides: a MIME type of audio/ogg is what a voice
+// recording is stored as and also what an ordinary OGG file is stored as, so
+// neither that nor a file name can say what the attachment is.
+func mediaAudioAttribute(media tg.MessageMediaClass) *tg.DocumentAttributeAudio {
+	doc, ok := media.(*tg.MessageMediaDocument)
+	if !ok {
+		return nil
+	}
+	document, ok := doc.Document.(*tg.Document)
+	if !ok {
+		return nil
+	}
+	for _, attr := range document.Attributes {
+		if a, ok := attr.(*tg.DocumentAttributeAudio); ok {
+			return a
+		}
+	}
+	return nil
+}
+
 // largestPhoto returns the thumbnail type of the biggest PhotoSize that carries
 // dimensions, which is what InputPhotoFileLocation.ThumbSize wants, together
 // with that size's byte length.

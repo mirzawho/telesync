@@ -79,7 +79,7 @@ GET /api/v1/telegram/official/channels/1671633563/messages/1233/media
 
 # --- telegram: publishing ------------------------------------------------
 
-POST /api/v1/telegram/official/messages
+POST /api/v1/telegram/official/messages/copy
 Content-Type: application/json
 Idempotency-Key: publish-example-1
 

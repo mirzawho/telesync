@@ -228,6 +228,8 @@ func rpcMessageFromTG(msg *tg.Message, users map[int64]*tg.User, channelID int64
 			Filename: base.Media.Filename,
 			MimeType: base.Media.MimeType,
 			Size:     base.Media.Size,
+			Duration: base.Media.Duration,
+			Waveform: base.Media.Waveform,
 		}
 	}
 	return out

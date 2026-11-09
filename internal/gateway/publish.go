@@ -107,8 +107,12 @@ func localChannelsOf(store ManagedStore) publishing.ManagedChannels {
 	return local
 }
 
-// publishTelegram serves POST /api/v1/telegram/{client_key}/messages.
-func (s *Server) publishTelegram(ctx context.Context, w http.ResponseWriter, r *http.Request,
+// copyTelegramMessage serves POST /api/v1/telegram/{client_key}/messages/copy.
+//
+// It copies a message that already exists on a source channel to a
+// destination: the request names that message, and the body carries no file.
+// A send of free text is a different route, and one this handler does not serve.
+func (s *Server) copyTelegramMessage(ctx context.Context, w http.ResponseWriter, r *http.Request,
 	key string, worker Worker, requestID string) {
 
 	a := actorOf(r)

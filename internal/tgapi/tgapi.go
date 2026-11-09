@@ -72,6 +72,14 @@ type Media struct {
 	// MimeType and Size come from the backend when it reports them.
 	MimeType string
 	Size     int64
+	// Duration is the recording length in seconds, from the document's
+	// documentAttributeAudio. Zero means the attachment is not audio, or the
+	// backend reported no length; it is never a byte count.
+	Duration int
+	// Waveform is the voice message's own bitpacked amplitude samples, from
+	// the same attribute. Nil when the message is not a voice recording or the
+	// backend reported none: a waveform is never invented to fill the field.
+	Waveform []byte
 }
 
 // MediaFile is the downloaded content of one attachment.

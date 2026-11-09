@@ -400,7 +400,7 @@ func routeHandlers(proj *project) map[string]map[string]handlerRef {
 		"/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/media": {http.MethodGet: h("media")},
 		"/api/v1/telegram/{key}/channels/{channel_id}/avatar":                      {http.MethodGet: h("avatar")},
 		"/api/v1/telegram/{key}/channels/{channel_id}/join":                        {http.MethodPost: h("join")},
-		"/api/v1/telegram/{key}/messages":                                          {http.MethodPost: h("publishTelegram")},
+		"/api/v1/telegram/{key}/messages/copy":                                     {http.MethodPost: h("copyTelegramMessage")},
 		"/api/v1/local/channels":                                                   {http.MethodGet: h("listLocalChannels")},
 		"/api/v1/local/channels/{id}":                                              {http.MethodGet: h("getLocalChannel")},
 		"/api/v1/local/channels/{id}/messages":                                     {http.MethodGet: h("localChannelMessages")},

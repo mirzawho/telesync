@@ -81,7 +81,7 @@ func grantPublish(t *testing.T, env *accountEnv, who identity) {
 
 func TestPublishNeedsACredential(t *testing.T) {
 	env, _, row := publishEnv(t)
-	resp := env.sendWith(t, "", http.MethodPost, "/api/v1/telegram/official/messages", nil,
+	resp := env.sendWith(t, "", http.MethodPost, "/api/v1/telegram/official/messages/copy", nil,
 		publishBody(row.ID, 9, "hello"))
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
@@ -93,7 +93,7 @@ func TestPublishNeedsThePublishingPermission(t *testing.T) {
 	// A caller with the ordinary rights but not the publishing one.
 	plain := env.account(t, "plain", channelstore.PermissionChannelsView)
 	resp := env.send(t, plain.token, http.MethodPost,
-		"/api/v1/telegram/official/messages", publishBody(row.ID, 9, "hello"))
+		"/api/v1/telegram/official/messages/copy", publishBody(row.ID, 9, "hello"))
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
@@ -110,7 +110,7 @@ func TestPublishSendsThePreparedTextThroughTheNamedConnection(t *testing.T) {
 	grantPublish(t, env, env.defaults)
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/official/messages", publishBody(row.ID, 9, "edited #news"))
+		"/api/v1/telegram/official/messages/copy", publishBody(row.ID, 9, "edited #news"))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -143,7 +143,7 @@ func TestPublishRefusesASourceTheCallerCannotRead(t *testing.T) {
 	})
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/official/messages", publishBody(row.ID, 9, "hello"))
+		"/api/v1/telegram/official/messages/copy", publishBody(row.ID, 9, "hello"))
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
@@ -161,7 +161,7 @@ func TestPublishRefusesASourceMessageThatIsNotThere(t *testing.T) {
 	worker.messageE = rpc.NewError(rpc.CodeNotFound, "not found", 0)
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/official/messages", publishBody(row.ID, 9, "hello"))
+		"/api/v1/telegram/official/messages/copy", publishBody(row.ID, 9, "hello"))
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
@@ -175,7 +175,7 @@ func TestPublishRefusesAnUnknownDestinationConnection(t *testing.T) {
 	grantPublish(t, env, env.defaults)
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/missing/messages", publishBody(row.ID, 9, "hello"))
+		"/api/v1/telegram/missing/messages/copy", publishBody(row.ID, 9, "hello"))
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
@@ -193,7 +193,7 @@ func TestPublishRefusesADestinationTheAccountCannotPostTo(t *testing.T) {
 	worker.channel.Channel.Permissions.New = false
 
 	resp := env.send(t, defaultCaller, http.MethodPost,
-		"/api/v1/telegram/official/messages", publishBody(row.ID, 9, "hello"))
+		"/api/v1/telegram/official/messages/copy", publishBody(row.ID, 9, "hello"))
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
@@ -220,7 +220,7 @@ func TestPublishRefusesADestinationTheCallerCannotSee(t *testing.T) {
 	worker.channel.Channel.ID = "777"
 
 	body := strings.Replace(publishBody(row.ID, 9, "hello"), `"channel_id": "555"`, `"channel_id": "777"`, 1)
-	resp := env.send(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages", body)
+	resp := env.send(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages/copy", body)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
@@ -237,7 +237,7 @@ func TestPublishReplaysAConfirmedResultInsteadOfSendingAgain(t *testing.T) {
 	grantPublish(t, env, env.defaults)
 	body := publishBody(row.ID, 9, "hello")
 
-	first := env.sendWith(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages",
+	first := env.sendWith(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages/copy",
 		map[string]string{"Idempotency-Key": "op-1"}, body)
 	if first.StatusCode != http.StatusOK {
 		t.Fatalf("first status = %d", first.StatusCode)
@@ -245,7 +245,7 @@ func TestPublishReplaysAConfirmedResultInsteadOfSendingAgain(t *testing.T) {
 	var firstOut publishResponse
 	decodeBody(t, first, &firstOut)
 
-	again := env.sendWith(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages",
+	again := env.sendWith(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages/copy",
 		map[string]string{"Idempotency-Key": "op-1"}, body)
 	if again.StatusCode != http.StatusOK {
 		t.Fatalf("second status = %d", again.StatusCode)
@@ -264,12 +264,12 @@ func TestPublishRefusesAnIdempotencyKeyUsedForADifferentRequest(t *testing.T) {
 	env, worker, row := publishEnv(t)
 	grantPublish(t, env, env.defaults)
 
-	first := env.sendWith(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages",
+	first := env.sendWith(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages/copy",
 		map[string]string{"Idempotency-Key": "op-1"}, publishBody(row.ID, 9, "hello"))
 	if first.StatusCode != http.StatusOK {
 		t.Fatalf("first status = %d", first.StatusCode)
 	}
-	other := env.sendWith(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages",
+	other := env.sendWith(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages/copy",
 		map[string]string{"Idempotency-Key": "op-1"}, publishBody(row.ID, 9, "different"))
 	if other.StatusCode != http.StatusConflict {
 		t.Fatalf("second status = %d, want 409", other.StatusCode)
@@ -287,7 +287,7 @@ func TestPublishRejectsAnUnknownBodyField(t *testing.T) {
 	grantPublish(t, env, env.defaults)
 	body := strings.Replace(publishBody(row.ID, 9, "hello"),
 		`"options"`, `"unexpected": true, "options"`, 1)
-	resp := env.send(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages", body)
+	resp := env.send(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages/copy", body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
@@ -389,7 +389,7 @@ func TestPublishReadsTheSourceAttachmentAtTheLargestSize(t *testing.T) {
 		"options": {"silent": false, "disable_web_page_preview": false}
 	}`, row.ID)
 
-	resp := env.send(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages", body)
+	resp := env.send(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages/copy", body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, readBody(t, resp))
 	}
@@ -419,7 +419,7 @@ func TestPublishRefusesAnAttachmentOfAnotherMessage(t *testing.T) {
 		"options": {"silent": false, "disable_web_page_preview": false}
 	}`, row.ID)
 
-	resp := env.send(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages", body)
+	resp := env.send(t, defaultCaller, http.MethodPost, "/api/v1/telegram/official/messages/copy", body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, readBody(t, resp))
 	}

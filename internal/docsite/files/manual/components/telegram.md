@@ -149,10 +149,19 @@ has bytes (photo, video, document, audio, voice, sticker, gif).
 | `filename` | the name the sender gave the file, exactly as Telegram reported it (`documentAttributeFilename`). **Omitted when Telegram never named it** — never filled in from the label, the MIME type or anything else. Only document-based media can carry one, so audio, video and other documents report it and a photo never does. |
 | `mime_type` | the content type the backend reported; omitted when it reported none. |
 | `size` | the attachment's size in bytes; omitted when the backend reported none. It is the size of the whole attachment, and is what makes a range satisfiable or not. |
+| `duration` | the recording's length in **seconds**, for `audio` and `voice`, from the document's `documentAttributeAudio`. Omitted when the attachment is not audio or the backend reported no length. It is a length in time and never a byte count: a 1.3 KB recording is about five seconds long and reports `5`. |
+| `waveform` | a voice message's own amplitude samples (bitpacked 5-bit values), base64 in JSON, from the same attribute. Omitted when the message is not a `voice` recording or the backend reported none — it is never invented to fill the field. |
 | `url` | where the bytes are; omitted for media that has none to fetch (a poll, a location, a link preview). |
 
 `filename` is a separate fact from `label` and never replaces it: a message may
 carry both "فایل" and "original-app-name.apk", and both are reported.
+
+`duration` and `waveform` are what keep a recording a recording. `type` is read
+from the source document's attributes and from nothing else — `audio/ogg` is
+what a voice message is stored as and also what an ordinary OGG file is stored
+as, so neither the MIME type nor a file name says which one this is. Publishing
+a message with `media.mode` set to `preserve_source` sends those attributes back
+out on the destination, so a voice message arrives there as a voice message.
 
 ### Fetching the bytes
 

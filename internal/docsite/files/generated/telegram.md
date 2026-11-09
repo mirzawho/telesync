@@ -19,5 +19,5 @@
 | GET | `/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/media` | `Server.media` | — | 6 | [api-v1-telegram-key-channels-channel-id-messages-message-id-media](telegram/api-v1-telegram-key-channels-channel-id-messages-message-id-media.md) |
 | GET | `/api/v1/telegram/{key}/custom_emoji/{document_id}` | `Server.` | — | 5 | [api-v1-telegram-key-custom-emoji-document-id](telegram/api-v1-telegram-key-custom-emoji-document-id.md) |
 | GET | `/api/v1/telegram/{key}/health` | `Server.health` | `200` | 6 | [api-v1-telegram-key-health](telegram/api-v1-telegram-key-health.md) |
-| POST | `/api/v1/telegram/{key}/messages` | `Server.publishTelegram` | `200` | 5 | [api-v1-telegram-key-messages](telegram/api-v1-telegram-key-messages.md) |
+| POST | `/api/v1/telegram/{key}/messages/copy` | `Server.copyTelegramMessage` | `200` | 5 | [api-v1-telegram-key-messages-copy](telegram/api-v1-telegram-key-messages-copy.md) |
 | GET | `/api/v1/telegram/{key}/profile` | `Server.profile` | `200` | 6 | [api-v1-telegram-key-profile](telegram/api-v1-telegram-key-profile.md) |

@@ -56,15 +56,8 @@ func (m *Manager) SendMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 		switch req.Media.Kind {
 		case tgapi.SendMediaPhoto:
 			input = &tg.InputMediaUploadedPhoto{File: file}
-		case tgapi.SendMediaDocument, "":
-			input = &tg.InputMediaUploadedDocument{
-				File:     file,
-				MimeType: req.Media.MimeType,
-				Attributes: []tg.DocumentAttributeClass{
-					&tg.DocumentAttributeFilename{FileName: sendFileName(req.Media)},
-				},
-				ForceFile: req.Media.Kind == tgapi.SendMediaDocument,
-			}
+		case tgapi.SendMediaDocument, tgapi.SendMediaAudio, tgapi.SendMediaVoice, "":
+			input = sendMediaInput(file, req.Media)
 		default:
 			return tgapi.SendResult{}, fmt.Errorf("%w: media kind %q", tgapi.ErrSendUnsupported, req.Media.Kind)
 		}
@@ -100,6 +93,52 @@ func (m *Manager) SendMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 		result.Message = &normalized
 	}
 	return result, nil
+}
+
+// sendMediaInput builds the media object of one outgoing attachment.
+//
+// A voice recording is not an attachment that happens to hold an OGG file. It
+// is a document whose documentAttributeAudio carries voice=true, and that one
+// flag is what makes a client draw the round play button instead of a download
+// card. The attribute is therefore written from the source's own classification
+// and never inferred from the MIME type, the file name or a label: audio/ogg is
+// what a voice recording is stored as and also what an ordinary OGG file is
+// stored as, and only the source's attributes told them apart.
+//
+// The same attribute without the flag is what a music file is, so one is built
+// for "audio" too and the flag stays off. Everything else keeps the behaviour
+// it had: an ordinary upload is sent as a file.
+//
+// A recording also carries no name the sender never chose. Telegram's own voice
+// messages have no documentAttributeFilename at all, and putting one on a
+// recording is what turns it into a file that happens to be called "پیام
+// صوتی". The name is added only when the source message really had one.
+func sendMediaInput(file tg.InputFileClass, m *tgapi.SendMedia) tg.InputMediaClass {
+	doc := &tg.InputMediaUploadedDocument{
+		File:     file,
+		MimeType: m.MimeType,
+	}
+	switch m.Kind {
+	case tgapi.SendMediaVoice, tgapi.SendMediaAudio:
+		// Audio and voice are media a client plays. Forcing either to a file
+		// sends it as an ordinary attachment instead.
+		doc.Attributes = append(doc.Attributes, &tg.DocumentAttributeAudio{
+			Voice:    m.Kind == tgapi.SendMediaVoice,
+			Duration: m.Duration,
+			Waveform: m.Waveform,
+		})
+		if m.Name != "" {
+			doc.Attributes = append([]tg.DocumentAttributeClass{
+				&tg.DocumentAttributeFilename{FileName: m.Name},
+			}, doc.Attributes...)
+		}
+	default:
+		doc.Attributes = []tg.DocumentAttributeClass{
+			&tg.DocumentAttributeFilename{FileName: sendFileName(m)},
+		}
+		doc.ForceFile = m.Kind == tgapi.SendMediaDocument
+	}
+	return doc
 }
 
 // sendFileName gives the upload a file name Telegram can show. A blank name is

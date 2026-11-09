@@ -54,6 +54,8 @@ func sendMediaFromWire(m *rpc.SendMedia) *tgapi.SendMedia {
 		Name:     m.Name,
 		MimeType: m.MimeType,
 		Data:     m.Data,
+		Duration: m.Duration,
+		Waveform: m.Waveform,
 	}
 }
 

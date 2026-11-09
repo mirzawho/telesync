@@ -438,6 +438,8 @@ func (s *Service) messageDTO(channelID int64, m tgapi.Message) rpc.Message {
 			Filename: m.Media.Filename,
 			MimeType: m.Media.MimeType,
 			Size:     m.Media.Size,
+			Duration: m.Media.Duration,
+			Waveform: m.Media.Waveform,
 		}
 	}
 	return out

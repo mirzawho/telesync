@@ -1498,3 +1498,164 @@ environment variable, and the README describes v0.0.3.
 typecheck + build, and all eight web suites (26 + 19 + 109 + 108 + 50 + 202 +
 18 + 48). **Not verified:** anything against live Telegram, WordPress, an AI
 provider or an external webhook receiver; the panel in a browser.
+
+## 2026-11-09 — prepare: `POST /messages` becomes `/messages/copy` (not implemented)
+
+Preparation session only. Handoff
+`.agents/handoffs/telegram-messages-copy-route.md` is `AWAITING_APPROVAL` at
+baseline `887910f`; no production code was edited. Changes on disk are one new
+test file (`internal/gateway/publish_route_test.go`), the path literals in
+`publish_test.go` / `publish_media_test.go`, and a refreshed `graphify-out/`.
+
+- **The rename is a correction, not a rebrand.** `publishing.Validate`
+  (`publishing/request.go:113`) refuses any request whose `source.local_channel_id`
+  or `source.message_id` is not positive, so the route can only ever copy an
+  existing message. The name promised a free-text send the body has no way to
+  express, and left no room to add one beside it.
+- **`publishing/` is untouched and stays live.** `PublishTelegram` has exactly
+  two production callers: `gateway/publish.go:131` and
+  `publishing/automation.go:32` (the workflow engine, via
+  `workflows/publish.go:172`). Nothing in `publishing/` imports the gateway.
+- **Idempotency is path-independent, confirmed at the source, not assumed.**
+  `requestHash` is `sha256(json.Marshal(Request))` with `IdempotencyKey` marked
+  `json:"-"`; the operation key is `clientKey+":"+destination.channel_id`. A
+  stored attempt survives the move unchanged.
+- **Deleting the route arm does not produce a 404.** `POST /messages` would fall
+  to the GET-only gate at `gateway.go:396` and answer `405` with `Allow: GET`.
+  The plan places a `404 not_found` arm before that gate naming `/messages/copy`
+  — the shape `gateway.go:462-468` already uses for a misspelled resource. The
+  brief's option B (405 + `Allow: POST`) is unimplementable: RFC 9110 §15.5.6
+  requires `Allow` to list methods the resource supports.
+- **Two gaps the brief missed.** `docs/api/examples/README.md:27` names the old
+  route and is enforced by `TestIndexCoversEveryRoute` plus
+  `TestExamplesAreValidAndIndexed`. And `componentOf`
+  (`internal/docsgen/render.go:297`) picks the `publishing` paragraph by
+  `HasSuffix(pattern, "/messages")`, which also wrongly gives it to the read
+  route `GET .../channels/{channel_id}/messages`; the predicate must become
+  `"/messages/copy"`, which fixes both.
+- **`publish_media_too_large` is live on this route**, contrary to the brief —
+  `publishing/send.go:59-62` and `publishing/errors.go:192-193`. Also confirmed
+  there is no `publish_source_missing`; the values are `publish_source_unavailable`
+  and `publish_source_forbidden`.
+- **Graph was 447 files stale.** `graphify-out/` had been built at `45db19d`,
+  missing the entire v0.0.3 automation series. Rebuilt code-only to `887910f`
+  (8803 nodes / 36886 edges / 236 communities) and reclustered. A full
+  `--update` is blocked in this sandbox for want of an LLM API key, so 212
+  doc/paper files keep stale semantic edges.
+
+**Verified:** baseline before any edit — `go test ./...` 30 packages ok,
+`docsgen --check` up to date, `gofmt -l .` empty, `go vet ./...` clean. Red
+captured afterwards: 29 failing in `internal/gateway` (7 new + 22 retargeted),
+every one at `405`/`404`/`200` exactly as recorded in handoff §F. All 14
+`TestWordPressPublish*` and all `TestBackgroundPublishing*` green and unedited.
+**Not verified:** live Telegram behavior; no handshake against a real client was
+performed.
+
+## 2026-11-09 — `POST /messages` is now `/messages/copy`; the old path is gone
+
+Implemented on the user's instruction, after the prepared handoff
+(`.agents/handoffs/telegram-messages-copy-route.md`, now `DONE`).
+
+- **The route moved.** `POST /api/v1/telegram/{key}/messages/copy` does exactly
+  what `POST /api/v1/telegram/{key}/messages` did. The handler is
+  `Server.copyTelegramMessage`; its body is unchanged (permission → decode →
+  `Validate` → `Idempotency-Key` → `PublishTelegram` → `Idempotent-Replay`).
+- **The old address answers 404 on every method**, naming the copy route —
+  the same shape `gateway.go` already uses for a misspelled resource. No alias,
+  no redirect, no shim. The arm sits before the GET-only gate: without that,
+  `POST /messages` would have answered `405` with `Allow: GET`, claiming GET
+  works at a path where GET also 404s.
+- **`GET /messages/copy` is `405` with `Allow: POST`** — the route's own method
+  rule, as before.
+- **`componentOf` was wrong twice.** `HasSuffix(pattern, "/messages")` gave the
+  `publishing` paragraph to the read-only listing
+  `GET .../channels/{channel_id}/messages` as well as to the publish route, and
+  would have given the new `/messages/copy` neither. The predicate is now
+  `"/messages/copy"`. Docsgen output confirms both corrections: the copy page
+  carries `telegram` + `publishing`, the read page carries `telegram` alone.
+- **Idempotency is untouched and proven, not assumed.** `requestHash` is
+  `sha256(json.Marshal(Request))` with `IdempotencyKey` as `json:"-"`, and the
+  operation key is `clientKey+":"+destination.channel_id`. `TestIdempotencySurvivesRouteRename`
+  asserts `Idempotent-Replay: true` and `sendCalls == 1` across the new path.
+- Panel path updated in `publish-dialog.tsx` and the bundle rebuilt
+  (`channel-messages-main-BLaX3XW9.js` → `channel-messages-main-D_qgOEFd.js`).
+  Hand-written docs updated: `docs/api/examples/{api.http,README.md}`,
+  `docs/api/manual/components/publishing.md`, `PROJECT_BRIEF.md`,
+  `docs/VERIFYING-MEDIA-PUBLISH.md`.
+
+**One test bit back and was right.** `TestLinkedRoutesExist` failed on the first
+`publishing.md` wording — `manual/components/publishing.md: /api/v1/telegram/{key}/messages
+matches no route` — because the prose named the retired path in a code span,
+which that test reads as a claim that a route exists. Reworded to describe the
+behaviour instead of the path. The test was not weakened; no route was added to
+`table.go` to satisfy it.
+
+**⚠ Concurrent, unrelated work in the same tree.** A voice-message feature
+appeared mid-implementation — `publishing/send.go` (`sendKind`, `Duration`,
+`Waveform`), `rpc/rpc.go`, `worker/{send,worker}.go`, `tgapi/{send,tgapi}.go`,
+`gotdclient/{channel,dialogs,send,updates}.go` and four new `voice_test.go`
+files (~236 insertions over 11 files). It is **not** this change and does not
+overlap its source files, but it does edit the package this handoff forbade
+touching — through no act of this implementation, whose diff there is empty.
+Nothing is committed; HEAD is still `887910f`. Separate the two diffs before
+committing.
+
+**Verified:** `gofmt -l .`, `go vet ./...`, `go build ./...`, `go test ./...`
+(30 packages, with the voice work present), `docsgen --check` (84 pages,
+unresolved items still 23), `go test ./internal/apidocs`, `npm run typecheck`,
+`make web-test` (48 tests), `make panel`. All 14 `TestWordPressPublish*` and all
+`TestBackgroundPublishing*` green and unedited by this change.
+**Not verified:** live Telegram — no handshake against a real client; the codes
+`publish_destination_unavailable` and `publish_media_too_large` are unchanged by
+construction (their producing code is outside this diff) rather than re-proven
+by a test.
+
+## 2026-11-09 — Voice messages stop being published as documents
+
+- **Bug.** A real Telegram voice message republished to another channel arrived
+  as a generic downloadable file named «پیام صوتی» instead of a playable voice
+  message. Bytes crossed intact; only the media semantics were lost.
+- **Where it was lost** — a chain, not one point. Source classification was
+  already correct (`gotdclient.documentType` reads `DocumentAttributeAudio.Voice`
+  and returns `"voice"`). It died in `publishing/buildSend`, which set
+  `kind := "document"` for anything that was not a photo and named the outgoing
+  attachment from `Label` (hence «پیام صوتی» as a *filename*). And the
+  destination had no way to hear about it either way: `gotdclient/send.go` built
+  `inputMediaUploadedDocument` with one attribute, `documentAttributeFilename`,
+  and never wrote `documentAttributeAudio` at all.
+- **Fix.** `Duration` + `Waveform` added to `tgapi.Media`, `rpc.Media`,
+  `tgapi.SendMedia`, `rpc.SendMedia`, and `SendMediaAudio`/`SendMediaVoice`
+  kinds. New `gotdclient.MediaDuration`/`MediaWaveform` read the source
+  attribute and are wired through `normalizeMessage`, the `updates.go` DTO and
+  `worker.messageDTO`. New `publishing.sendKind` maps the *source* type
+  (photo/voice/audio pass through; everything else stays `document`, unchanged).
+  New `gotdclient.sendMediaInput` writes
+  `documentAttributeAudio{voice, duration, waveform}` for voice and audio with
+  `ForceFile` **false**, and gives a recording a filename attribute only when
+  the sender actually named it. Music stays audio, uploads stay documents,
+  photos stay photos; video/sticker/gif shaping untouched; nothing re-encoded;
+  no schema change.
+- **TDD.** Tests written first. Red captured in `internal/automation/publishing`:
+  `kind = "document", want voice` across seven cases (manual, workflow,
+  cross-connection, no-downgrade, media-kind table). The `gotdclient`/`worker`
+  contract tests could not compile at red time because `Duration`/`Waveform` did
+  not exist yet — recorded as such rather than implied to have been behavioural.
+- **Verified.** `gofmt -l internal/ cmd/` empty, `go vet ./...` clean,
+  `go build ./...` ok, `go test ./...` all packages ok,
+  `docsgen --check` up to date, `go test ./internal/apidocs` ok, `web`
+  typecheck + build ok. The outgoing MTProto request is decoded from a fake
+  MTProto server (`tgtest`) and its `Voice`/`Duration`/`Waveform`/`ForceFile`
+  asserted — not a filename check.
+- **Not verified.** Live Telegram: no MTProto credentials here, so nothing was
+  sent to a real channel and the play button was never seen. `cat` shares the
+  one `gotdclient.SendMessage` path with the official profile and is sent the
+  same attribute; whether a backend honours it is a destination property. A
+  refusal fails with `publish_unsupported` and is never retried as a document.
+- **Docs.** `docs/api/manual/components/telegram.md` gains `duration` and
+  `waveform` (base64 in JSON) and a note that `type` comes from the source
+  attributes alone. Mirrored via `go run ./cmd/docsgen`.
+- **Record.** `.agents/handoffs/telegram-voice-message-publishing.md` (DONE).
+- **Coordination.** A peer session moved the publish route to
+  `POST /messages/copy` in this same tree while this ran; untouched here. The
+  new `internal/gateway/publish_voice_test.go` resolves the live publish path at
+  run time so it does not depend on which address wins.
