@@ -223,7 +223,11 @@ type Config struct {
 	// Automation is the background automation subsystem: event ingestion, the
 	// durable job queue, webhooks, workflows and AI polishing.
 	Automation AutomationConfig
-	Clients    []Client
+	// Send is direct message sending: messages a caller composed and files they
+	// uploaded, accepted over HTTP and delivered in the background by the same
+	// durable queue the automation subsystem runs on.
+	Send    SendConfig
+	Clients []Client
 }
 
 // Loopback reports whether the API listens on a loopback address only.
@@ -335,6 +339,7 @@ type rawConfig struct {
 	API        rawAPI        `json:"api"`
 	Runtime    rawRuntime    `json:"runtime"`
 	Automation rawAutomation `json:"automation"`
+	Send       rawSend       `json:"send"`
 	Clients    []rawClient   `json:"clients"`
 }
 
@@ -848,6 +853,11 @@ func build(raw rawConfig, baseDir string, lookup func(string) string) (Config, e
 	automation, automationProblems := raw.Automation.resolve(AutomationConfig{}, lookup)
 	problems = append(problems, automationProblems...)
 	cfg.Automation = automation
+
+	// --- direct sending ---
+	send, sendProblems := raw.Send.resolve(SendConfig{}, lookup)
+	problems = append(problems, sendProblems...)
+	cfg.Send = send
 
 	if len(problems) > 0 {
 		return Config{}, fmt.Errorf("configuration is invalid: %s", strings.Join(problems, "; "))

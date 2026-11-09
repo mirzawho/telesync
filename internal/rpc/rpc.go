@@ -415,12 +415,13 @@ type SendRequest struct {
 // The bytes are not part of the JSON body: they travel beside it in the
 // request, so a large attachment never rides a text document.
 type SendMedia struct {
-	// Kind is "photo", "document", "audio" or "voice". A voice recording is
-	// its own kind and never a document: it is what makes the destination draw
-	// a play button instead of a download card.
+	// Kind is "photo", "video", "document", "audio" or "voice". A voice
+	// recording is its own kind and is never a document: the destination draws
+	// a play button or a download card according to it.
 	Kind string `json:"kind"`
 	// Name is the file name Telegram shows for a document. A voice recording
-	// carries none the sender chose and none is invented for it.
+	// carries none the sender chose and none is invented for it, because a name
+	// is what turns a recording into a file that happens to be audio.
 	Name string `json:"name,omitempty"`
 	// MimeType is the attachment's content type.
 	MimeType string `json:"mime_type"`
@@ -428,9 +429,10 @@ type SendMedia struct {
 	// request and never serialized into it.
 	Data []byte `json:"-"`
 	// Duration is the recording length in seconds, for "audio" and "voice".
+	// Zero means unknown and is sent as no length rather than as a guess.
 	Duration int `json:"duration,omitempty"`
-	// Waveform is the voice message's own bitpacked amplitude samples, for
-	// "voice" only.
+	// Waveform is a voice message's own bitpacked amplitude samples, for
+	// "voice" only. Nil sends none: a waveform is never made up.
 	Waveform []byte `json:"waveform,omitempty"`
 }
 

@@ -27,9 +27,9 @@ type SendRequest struct {
 
 // SendMedia is the attachment of an outgoing post.
 type SendMedia struct {
-	// Kind is "photo", "document", "audio" or "voice". A voice recording is
-	// its own kind and never a document: the destination draws a play button
-	// or a download card according to it.
+	// Kind is "photo", "video", "document", "audio" or "voice". A voice
+	// recording is its own kind and never a document: what the destination
+	// draws — a play button or a download card — is decided by it alone.
 	Kind string
 	// Name is the file name presented for a document. A voice recording
 	// carries no name the sender chose, and none is invented for it.
@@ -50,6 +50,7 @@ type SendMedia struct {
 // Media kinds an outgoing attachment can be sent as.
 const (
 	SendMediaPhoto    = "photo"
+	SendMediaVideo    = "video"
 	SendMediaDocument = "document"
 	SendMediaAudio    = "audio"
 	SendMediaVoice    = "voice"
@@ -82,3 +83,10 @@ var (
 
 // MaxMessageRunes is the longest message text Telegram accepts.
 const MaxMessageRunes = 4096
+
+// MaxCaptionRunes is the longest caption Telegram accepts beside an
+// attachment. It is shorter than a message body and is a limit of its own: a
+// caption the caller wrote in good faith must be refused here with the reason,
+// not truncated into something they did not write and not sent to be rejected
+// later by the destination.
+const MaxCaptionRunes = 1024

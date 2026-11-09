@@ -77,6 +77,29 @@ GET /api/v1/telegram/official/channels/1671633563/messages/1233
 
 GET /api/v1/telegram/official/channels/1671633563/messages/1233/media
 
+# --- telegram: direct sending --------------------------------------------
+
+# A message composed for this channel, with no source message behind it. The
+# send is accepted and scheduled; 202 means it is safe with us, not that it has
+# happened.
+POST /api/v1/telegram/official/channels/1671633563/messages/send
+Content-Type: application/json
+Idempotency-Key: hello-example-1
+
+	{
+	  "text": "A message composed for this channel #news",
+	  "entities": [{"type": "hashtag", "offset": 36, "length": 4}],
+	  "options": {"silent": false, "disable_web_page_preview": false}
+	}
+
+# The same send carrying an attachment is multipart/form-data with exactly two
+# fields, "payload" and "file". The runnable form of it is in the publishing
+# component under docs/api/manual/, beside the other media examples, because
+# this file's requests are sent as JSON.
+
+# What became of an accepted send. Reading it never sends anything.
+GET /api/v1/telegram/official/channels/1671633563/messages/send/send_01EXAMPLE
+
 # --- telegram: publishing ------------------------------------------------
 
 POST /api/v1/telegram/official/messages/copy

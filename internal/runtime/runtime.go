@@ -18,6 +18,7 @@ import (
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/gateway"
 	"github.com/mirza/telesync/internal/rpc"
+	"github.com/mirza/telesync/internal/sending"
 	"github.com/mirza/telesync/internal/tgapi"
 	"github.com/mirza/telesync/internal/worker"
 )
@@ -106,6 +107,9 @@ type DaemonOptions struct {
 	Users gateway.UserStore
 	// Publishes records publishing attempts so a retry cannot post twice.
 	Publishes gateway.PublishStore
+	// Send accepts and performs direct sends in the background. Nil answers the
+	// send routes with 503 and changes nothing else.
+	Send *sending.Service
 	// WordPress is the local WordPress site store. Nil answers the WordPress
 	// site routes with 503.
 	WordPress gateway.WordPressStore
@@ -221,6 +225,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		Channels:        opts.Channels,
 		Categories:      opts.Categories,
 		Publishes:       opts.Publishes,
+		Send:            opts.Send,
 		WordPress:       opts.WordPress,
 		WordPressClient: opts.WordPressClient,
 		Secrets:         opts.Secrets,

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
@@ -52,14 +53,9 @@ func (m *Manager) SendMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 		if err != nil {
 			return tgapi.SendResult{}, classifySendError(err)
 		}
-		var input tg.InputMediaClass
-		switch req.Media.Kind {
-		case tgapi.SendMediaPhoto:
-			input = &tg.InputMediaUploadedPhoto{File: file}
-		case tgapi.SendMediaDocument, tgapi.SendMediaAudio, tgapi.SendMediaVoice, "":
-			input = sendMediaInput(file, req.Media)
-		default:
-			return tgapi.SendResult{}, fmt.Errorf("%w: media kind %q", tgapi.ErrSendUnsupported, req.Media.Kind)
+		input, err := sendMediaInput(file, req.Media)
+		if err != nil {
+			return tgapi.SendResult{}, err
 		}
 		updates, err = api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
 			Peer:     peer,
@@ -103,25 +99,32 @@ func (m *Manager) SendMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 // card. The attribute is therefore written from the source's own classification
 // and never inferred from the MIME type, the file name or a label: audio/ogg is
 // what a voice recording is stored as and also what an ordinary OGG file is
-// stored as, and only the source's attributes told them apart.
+// stored as, and only the attributes told them apart.
 //
 // The same attribute without the flag is what a music file is, so one is built
-// for "audio" too and the flag stays off. Everything else keeps the behaviour
-// it had: an ordinary upload is sent as a file.
+// for "audio" too and the flag stays off. A video carries its own
+// documentAttributeVideo; a document keeps the sender's file name; everything
+// else keeps the behaviour it had.
 //
 // A recording also carries no name the sender never chose. Telegram's own voice
 // messages have no documentAttributeFilename at all, and putting one on a
 // recording is what turns it into a file that happens to be called "پیام
-// صوتی". The name is added only when the source message really had one.
-func sendMediaInput(file tg.InputFileClass, m *tgapi.SendMedia) tg.InputMediaClass {
-	doc := &tg.InputMediaUploadedDocument{
-		File:     file,
-		MimeType: m.MimeType,
+// صوتی". The name is added only when the source really had one.
+//
+// ForceFile is left unset for both audio and voice. It is force_file: "plain
+// file, not media", and only gotd's File() helper sets it — its Voice(file)
+// builder, which is the reference shape for a recording, sets neither this nor
+// a filename. Forcing either kind to a file sends it as an ordinary attachment
+// whatever the attributes say.
+func sendMediaInput(file tg.InputFileClass, m *tgapi.SendMedia) (tg.InputMediaClass, error) {
+	if m.Kind == tgapi.SendMediaPhoto {
+		return &tg.InputMediaUploadedPhoto{File: file}, nil
 	}
+
+	doc := &tg.InputMediaUploadedDocument{File: file}
 	switch m.Kind {
 	case tgapi.SendMediaVoice, tgapi.SendMediaAudio:
-		// Audio and voice are media a client plays. Forcing either to a file
-		// sends it as an ordinary attachment instead.
+		doc.MimeType = mimeTypeOr(m, defaultAudioMIME(m.Kind))
 		doc.Attributes = append(doc.Attributes, &tg.DocumentAttributeAudio{
 			Voice:    m.Kind == tgapi.SendMediaVoice,
 			Duration: m.Duration,
@@ -132,13 +135,49 @@ func sendMediaInput(file tg.InputFileClass, m *tgapi.SendMedia) tg.InputMediaCla
 				&tg.DocumentAttributeFilename{FileName: m.Name},
 			}, doc.Attributes...)
 		}
-	default:
+
+	case tgapi.SendMediaVideo:
+		// Dimensions are read from the file by the destination; none are
+		// claimed here that this build has not measured.
+		doc.MimeType = mimeTypeOr(m, "video/mp4")
+		doc.Attributes = []tg.DocumentAttributeClass{
+			&tg.DocumentAttributeVideo{Duration: float64(m.Duration)},
+			&tg.DocumentAttributeFilename{FileName: sendFileName(m)},
+		}
+
+	case tgapi.SendMediaDocument, "":
+		doc.MimeType = m.MimeType
 		doc.Attributes = []tg.DocumentAttributeClass{
 			&tg.DocumentAttributeFilename{FileName: sendFileName(m)},
 		}
 		doc.ForceFile = m.Kind == tgapi.SendMediaDocument
+
+	default:
+		// A kind this build cannot represent is refused. Sending it as a
+		// document instead would be a message the caller did not ask for.
+		return nil, fmt.Errorf("%w: media kind %q", tgapi.ErrSendUnsupported, m.Kind)
 	}
-	return doc
+	return doc, nil
+}
+
+// defaultAudioMIME is the content type an audio attachment is sent under when
+// the caller gave none. A voice recording is OGG/Opus and stays that way:
+// nothing here re-encodes.
+func defaultAudioMIME(kind string) string {
+	if kind == tgapi.SendMediaVoice {
+		return "audio/ogg"
+	}
+	return "audio/mpeg"
+}
+
+// mimeTypeOr is the content type an attachment is sent under. The caller's own
+// type is what is used when it gave one; the fallback only fills a silence, and
+// only for kinds where sending no type at all would misdescribe the bytes.
+func mimeTypeOr(m *tgapi.SendMedia, fallback string) string {
+	if t := strings.TrimSpace(m.MimeType); t != "" {
+		return t
+	}
+	return fallback
 }
 
 // sendFileName gives the upload a file name Telegram can show. A blank name is

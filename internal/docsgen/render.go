@@ -294,9 +294,11 @@ func componentOf(pattern string) []string {
 	case strings.HasPrefix(pattern, "/api/v1/auth/"):
 		return []string{"authentication"}
 	case strings.HasPrefix(pattern, "/api/v1/telegram/"):
-		// Only the copy route publishes. A suffix of "/messages" would also
-		// match the read-only listing under /channels/{channel_id}/messages.
-		if strings.HasSuffix(pattern, "/messages/copy") {
+		// Only a route that writes a message belongs to the publishing
+		// component: the copy route and the direct send. A suffix of
+		// "/messages" would also match the read-only listing under
+		// /channels/{channel_id}/messages, and a send's status is a read.
+		if strings.HasSuffix(pattern, "/messages/copy") || strings.HasSuffix(pattern, "/messages/send") {
 			return []string{"telegram", "publishing"}
 		}
 		return []string{"telegram"}

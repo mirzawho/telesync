@@ -119,6 +119,19 @@ type EnqueueJobRequest struct {
 	AvailableAt time.Time
 }
 
+// knownJobKind reports whether a job kind is one this queue carries.
+//
+// The list is closed on purpose: a row whose kind nothing executes would be
+// claimed and released forever by every worker, so a typo is refused at the
+// door rather than becoming permanent background noise.
+func knownJobKind(kind automation.JobKind) bool {
+	switch kind {
+	case automation.JobWebhookDelivery, automation.JobWorkflowRun, automation.JobTelegramMessageSend:
+		return true
+	}
+	return false
+}
+
 // EnqueueAutomationJob records one unit of background work and reports whether
 // it was new.
 //
@@ -130,7 +143,7 @@ func (s *Store) EnqueueAutomationJob(ctx context.Context, req EnqueueJobRequest)
 	if strings.TrimSpace(req.EventID) == "" {
 		return AutomationJob{}, false, fmt.Errorf("%w: event id is empty", ErrInvalidAutomationJob)
 	}
-	if req.Kind != automation.JobWebhookDelivery && req.Kind != automation.JobWorkflowRun {
+	if !knownJobKind(req.Kind) {
 		return AutomationJob{}, false, fmt.Errorf("%w: unknown job kind %q", ErrInvalidAutomationJob, req.Kind)
 	}
 	if req.TargetID <= 0 {

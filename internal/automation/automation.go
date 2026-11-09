@@ -110,12 +110,19 @@ type MessageEvent struct {
 // JobKind is the kind of background work one queue row represents.
 type JobKind string
 
-// The two job kinds of this release. Webhook delivery and workflow execution
-// share one queue and one worker pool on purpose: they are independent in
-// outcome but not in infrastructure.
+// The job kinds of this release. Webhook delivery and workflow execution share
+// one queue and one worker pool on purpose: they are independent in outcome but
+// not in infrastructure. A direct message send joins them for the same reason —
+// it is a durable unit of work with an attempt budget and a retry policy, and
+// giving it a queue of its own would give the deployment two of each to run.
 const (
 	JobWebhookDelivery JobKind = "webhook_delivery"
 	JobWorkflowRun     JobKind = "workflow_run"
+	// JobTelegramMessageSend is one accepted send waiting to be performed. Its
+	// event id is the send operation's public id and its target is the
+	// destination channel, so one channel's sends claim in order and cannot
+	// burst past the queue's own per-destination pacing.
+	JobTelegramMessageSend JobKind = "telegram_message_send"
 )
 
 // JobStatus is the lifecycle state of one queued unit of work.

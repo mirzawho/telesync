@@ -1659,3 +1659,59 @@ by a test.
   `POST /messages/copy` in this same tree while this ran; untouched here. The
   new `internal/gateway/publish_voice_test.go` resolves the live publish path at
   run time so it does not depend on which address wins.
+
+## 2026-11-09 — v0.0.4 direct asynchronous sending
+
+`POST /api/v1/telegram/{key}/channels/{channel_id}/messages/send` sends a
+message a caller composed and one file they uploaded, with **no source message**
+behind it. It is accepted and delivered in the background: the answer is
+`202 Accepted` with an operation id and a `Location`, and
+`GET .../messages/send/{operation_id}` reports the outcome. Nothing about the
+copy route changed.
+
+**What was added.** `internal/staging` (durable attachment staging: streamed,
+hashed, 0700/0600, server-owned names, crash reconcile),
+`internal/channelstore/send_operations.go` (migration 17, `message_send_operations`),
+`internal/sending` (the asynchronous pipeline: accept, execute, status, cleanup),
+`internal/automation/publishing/direct.go` (the shared outgoing sender),
+`internal/gateway/send.go` (the two routes). Migration 18 rebuilds
+`automation_jobs` so one queue carries a direct send beside webhook deliveries
+and workflow runs; the automation-event reference is now a trigger that applies
+to the automation kinds only.
+
+**Voice is a voice message.** `gotdclient.sendInputMedia` gives each kind its
+own MTProto construction. A recording goes out as a document whose
+`documentAttributeAudio` carries `voice=true`, `duration` and `waveform`, and
+**no filename attribute** — a name is what turns a recording into a file a
+client offers to download. Music stays `audio` with its name; a photo is a
+photo; a video carries `documentAttributeVideo`; a document keeps the sender's
+file name. A kind that cannot be represented is refused, never downgraded.
+
+**`ForceFile` corrected mid-task.** The first version set `ForceFile: true` for
+voice and audio; that is backwards, and the effect is the downloadable-document
+bug this work exists to prevent. gotd's `telegram/message` settles it:
+`File(file)` is the only helper that sets `ForceFile(true)` and its comment says
+"plain file, **not media**", while `Voice(file)` never touches it and adds no
+filename attribute. The construction now matches that reference shape and is
+pinned against `message.DefaultVoiceMIME` and the encoded flag bits.
+
+**Duplicate sends.** One MTProto `random_id` is issued per operation, written
+before the first attempt and reused by every retry. Idempotency is scoped to the
+account exactly as `publish_operations` scopes it, and the request fingerprint
+covers the destination, text, entities, options, media kind and the **digest of
+the attachment's bytes** — never its file name. A failure nobody confirmed is
+`unknown`, terminal, and never retried.
+
+**Verified:** `gofmt -l .`, `go vet ./...`, `go test ./... -count=1` (all
+packages), `go build -o ./bin/telesync ./cmd/telesync`, `go run ./cmd/docsgen
+--check`, `go test ./internal/apidocs`. 106 new tests across `internal/staging`
+(13), `internal/sending` (26), `internal/channelstore` (15), `internal/gateway`
+(25), `internal/automation/publishing` (12), `internal/gotdclient` (7),
+`internal/appconfig` (7) and `cmd/telesync` (1).
+
+**Not verified:** anything against live Telegram or the `cat` backend — this
+checkout has no credentials and none may be invented. Live delivery, a real
+flood wait, a real restart mid-send and the panel in a browser are unexercised.
+The source-based publisher's own voice handling is unchanged here: `sendKind`
+still maps a source `voice` attachment to `document`, which is a separate piece
+of work.

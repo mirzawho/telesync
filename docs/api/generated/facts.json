@@ -6730,6 +6730,177 @@
    ]
   },
   {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/messages/send",
+   "method": "POST",
+   "handler": "sendTelegramMessage",
+   "file": "send.go",
+   "line": 0,
+   "response": "answer",
+   "credentials": [
+    "a.auth.Global(channelstore.PermissionContentPublish)  (send.go:sendTelegramMessage)",
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 3,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send",
+     "status": 503,
+     "code": "send_queue_unavailable",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "send_queue_unavailable",
+       "message": "Direct message sending is not configured.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send",
+     "status": 403,
+     "code": "publish_forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "publish_forbidden",
+       "message": "Sending a message needs the content.publish permission.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send",
+     "status": 503,
+     "code": "send_queue_unavailable",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "send_queue_unavailable",
+       "message": "Direct message sending is not configured.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/messages/send/{operation_id}",
+   "method": "GET",
+   "handler": "telegramSendStatus",
+   "file": "send.go",
+   "line": 0,
+   "response": "envelope{Data: view, Meta: metaFor(requestID, s.cfg.Now())}",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/send/invalid",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/send/invalid",
+     "status": 503,
+     "code": "send_queue_unavailable",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "send_queue_unavailable",
+       "message": "Direct message sending is not configured.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/send/invalid",
+     "status": 503,
+     "code": "send_queue_unavailable",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "send_queue_unavailable",
+       "message": "Direct message sending is not configured.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/send/invalid",
+     "status": 503,
+     "code": "send_queue_unavailable",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "send_queue_unavailable",
+       "message": "Direct message sending is not configured.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
    "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}",
    "method": "GET",
    "handler": "message",
