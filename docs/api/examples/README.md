@@ -23,6 +23,9 @@ requests after it.
 | GET | `/api/v1/telegram/{key}/channels/{channel_id}/avatar` | — | below |
 | GET | `/api/v1/telegram/{key}/channels/{channel_id}/messages` | — | below |
 | GET | `/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}` | — | below |
+| DELETE | `/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}` | — | below |
+| PUT | `/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}` | `operation_id` | below |
+| GET | `/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/edit/{operation_id}` | — | below |
 | GET | `/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/media` | — | below |
 | POST | `/api/v1/telegram/{key}/channels/{channel_id}/messages/send` | — | below |
 | GET | `/api/v1/telegram/{key}/channels/{channel_id}/messages/send/{operation_id}` | — | below |

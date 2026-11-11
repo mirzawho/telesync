@@ -426,3 +426,121 @@ itself.
 
 Scheduling, bulk publishing and a publication history are not part of this API.
 A publishing operation record is kept only for retry safety.
+
+## Editing an existing message
+
+`PUT /api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}`
+replaces the entire content of one existing message. Telegram's original
+message ID is the target and remains the result ID; this route never deletes
+and reposts the message. It is asynchronous: `202 Accepted` means the
+replacement was staged, recorded and queued, not that Telegram has applied it.
+
+Editing is separate from sending a new post. The caller needs the ordinary
+channel visibility rule and the channel's application-level `update` grant.
+The selected Telegram account must also be allowed to edit the particular
+message; Telegram enforces message ownership, administrative rights and edit
+age limits when the background operation runs. The operator token cannot be
+used because an edit must retain a re-checkable account principal.
+
+### JSON — replace text/entities and request no media
+
+```http
+PUT /api/v1/telegram/cat/channels/98/messages/11
+Authorization: Bearer <token>
+Content-Type: application/json
+Idempotency-Key: edit-001
+```
+
+```json
+{
+  "text": "متن جایگزین",
+  "entities": [],
+  "media": null,
+  "options": {"disable_web_page_preview": false}
+}
+```
+
+`text` must be present even when the replacement is an empty caption for a
+new attachment. `entities` describe the new text in UTF-16 code units. A null
+or omitted `media` requests a text-only final message; it never means “keep the
+current media”. If the target has an attachment and the selected Telegram
+backend cannot remove it through a native edit, the operation fails with
+`edit_media_removal_unsupported`.
+Grouped/album messages are not edited as a group; unsupported album transitions
+fail without changing sibling messages. When Telegram reports an unchanged
+message, the worker verifies the requested final state before recording a
+successful no-op.
+
+### Multipart — replace with a new attachment
+
+Send exactly two parts: `payload` (the JSON request) and one `file` (the new
+attachment). The upload is durably staged before the server returns 202; its
+Telegram upload and edit run in the background.
+
+```bash
+curl -X PUT "$URL/api/v1/telegram/cat/channels/98/messages/11" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: edit-photo-001" \
+  -F 'payload={"text":"توضیح تازه","entities":[],"media":{"kind":"photo"}};type=application/json' \
+  -F "file=@./new-photo.jpg;type=image/jpeg"
+```
+
+The media kinds are `photo`, `video`, `audio`, `voice` and `document`, using
+the same sniffing and size limits as Direct Send. Voice remains a Telegram
+voice message, not a generic document. A file without a compatible declared
+kind, an unsupported transition, duplicate file or malformed payload is
+refused; media is never silently downgraded.
+
+### Acceptance and status
+
+The response contains an `operation_id`, `status: "queued"`, a `target` with
+the selected connection/channel/message, and a `status_url`. The status
+resource is:
+
+```http
+GET /api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/edit/{operation_id}
+```
+
+Polling is read-only and scoped to the requesting account and exact target.
+Statuses are `queued`, `processing`, `retrying`, `edited`, `failed` and
+`unknown`. A successful status reports the same `message_id` as the request;
+an ambiguous remote result is `unknown` and is never blindly resent.
+
+```json
+{
+  "data": {
+    "operation_id": "edit_01EXAMPLE",
+    "status": "edited",
+    "target": {"client_key":"cat","channel_id":"98","message_id":11},
+    "result": {"message_id":11,"media_kind":"photo"},
+    "completed_at": "2026-11-11T12:30:08Z"
+  },
+  "meta": {"request_id":"req_example","generated_at":"2026-11-11T12:30:08Z"}
+}
+```
+
+An `Idempotency-Key` is scoped to the account and target. Repeating the same
+key with the same full replacement returns its existing operation; reusing it
+for different text, entities, media kind or file bytes returns an idempotency
+conflict. This remains true after completion, so a completed edit is not
+enqueued again.
+
+```http
+PUT /api/v1/telegram/official/channels/1671633563/messages/1233
+Authorization: Bearer <token>
+Content-Type: application/json
+Idempotency-Key: edit-news-1233
+```
+
+```json
+{
+  "text": "A complete replacement #news",
+  "entities": [{"type":"hashtag","offset":23,"length":5}],
+  "media": null,
+  "options": {"disable_web_page_preview": false}
+}
+```
+
+```http
+GET /api/v1/telegram/official/channels/1671633563/messages/1233/edit/edit_01EXAMPLE
+```

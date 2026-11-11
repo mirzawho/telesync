@@ -179,16 +179,33 @@ func (c *Client) Leave(ctx context.Context, ref ChannelRef) (LeaveResult, error)
 // never rides inside a JSON document.
 func (c *Client) SendMessage(ctx context.Context, req SendRequest) (SendResult, error) {
 	var out SendResult
-	err := c.postMultipart(ctx, "/messages", req, &out)
+	err := c.postMultipart(ctx, "/messages", req, req.Media, &out)
+	return out, err
+}
+
+// EditMessage asks this worker to replace one existing channel message. The
+// request and its new attachment travel in the same bounded multipart form as
+// direct send, but the target message ID remains part of the JSON request.
+func (c *Client) EditMessage(ctx context.Context, req EditRequest) (EditResult, error) {
+	var out EditResult
+	err := c.postMultipart(ctx, "/edit_message", req, req.Media, &out)
+	return out, err
+}
+
+// DeleteMessage synchronously asks this worker to delete one channel message.
+func (c *Client) DeleteMessage(ctx context.Context, req DeleteMessageRequest) (DeleteMessageResult, error) {
+	var out DeleteMessageResult
+	err := c.post(ctx, "/delete_message", req, &out)
 	return out, err
 }
 
 // postMultipart sends one request as multipart/form-data: a "request" part
 // holding the JSON body and, when present, a "media" part holding the bytes.
-func (c *Client) postMultipart(ctx context.Context, path string, body SendRequest, dst any) error {
-	if body.Media != nil && len(body.Media.Data) > MaxSendMediaBytes {
+
+func (c *Client) postMultipart(ctx context.Context, path string, body any, media *SendMedia, dst any) error {
+	if media != nil && len(media.Data) > MaxSendMediaBytes {
 		return fmt.Errorf("%w: %d bytes exceeds the %d byte limit",
-			ErrMediaTooLarge, len(body.Media.Data), MaxSendMediaBytes)
+			ErrMediaTooLarge, len(media.Data), MaxSendMediaBytes)
 	}
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -203,12 +220,12 @@ func (c *Client) postMultipart(ctx context.Context, path string, body SendReques
 	if _, err := jsonPart.Write(payload); err != nil {
 		return err
 	}
-	if body.Media != nil {
-		part, err := w.CreateFormFile("media", body.Media.Name)
+	if media != nil {
+		part, err := w.CreateFormFile("media", media.Name)
 		if err != nil {
 			return err
 		}
-		if _, err := part.Write(body.Media.Data); err != nil {
+		if _, err := part.Write(media.Data); err != nil {
 			return err
 		}
 	}

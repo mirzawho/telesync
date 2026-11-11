@@ -473,7 +473,7 @@
        "status": {
         "enabled": true,
         "workers": 2,
-        "pending_jobs": 0,
+        "pending_jobs": 1,
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
@@ -517,7 +517,7 @@
        "status": {
         "enabled": true,
         "workers": 2,
-        "pending_jobs": 0,
+        "pending_jobs": 1,
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
@@ -543,7 +543,7 @@
        "status": {
         "enabled": true,
         "workers": 2,
-        "pending_jobs": 0,
+        "pending_jobs": 1,
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
@@ -601,7 +601,7 @@
        "status": {
         "enabled": true,
         "workers": 2,
-        "pending_jobs": 0,
+        "pending_jobs": 1,
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
@@ -645,7 +645,7 @@
        "status": {
         "enabled": true,
         "workers": 2,
-        "pending_jobs": 0,
+        "pending_jobs": 1,
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
@@ -671,7 +671,7 @@
        "status": {
         "enabled": true,
         "workers": 2,
-        "pending_jobs": 0,
+        "pending_jobs": 1,
         "retry_backlog": 0,
         "processing": 0,
         "failed_recent": 0,
@@ -6160,7 +6160,7 @@
         "avatar_available": true,
         "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
         "is_member": true,
-        "is_managed": false,
+        "is_managed": true,
         "membership_status": "member",
         "permissions": {
          "new": false,
@@ -6263,7 +6263,7 @@
         "avatar_available": true,
         "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
         "is_member": true,
-        "is_managed": false,
+        "is_managed": true,
         "membership_status": "member",
         "permissions": {
          "new": false,
@@ -6528,7 +6528,7 @@
         "fake": false,
         "participants_count": null
        },
-       "result": "joined_and_added_to_management"
+       "result": "already_managed"
       },
       "meta": {
        "generated_at": "2026-10-25T10:00:00Z",
@@ -6598,7 +6598,7 @@
         "fake": false,
         "participants_count": null
        },
-       "result": "joined_and_added_to_management"
+       "result": "already_managed"
       },
       "meta": {
        "generated_at": "2026-10-25T10:00:00Z",
@@ -6902,6 +6902,114 @@
   },
   {
    "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}",
+   "method": "DELETE",
+   "handler": "deleteTelegramMessage",
+   "file": "delete_message.go",
+   "line": 0,
+   "response": "envelope{ Data: data, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusOK",
+   "status": 200,
+   "credentials": [
+    "authr.Allowed(kind, action, localID)  (access.go:visible)",
+    "authr.CanList(kind)  (access.go:visible)"
+   ],
+   "credential_count": 2,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive Telegram channel id.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive Telegram channel id.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive Telegram channel id.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "DELETE /api/v1/telegram/official/channels/1671633563/messages/1233",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "deleted": true,
+       "connection": {
+        "client_key": "official"
+       },
+       "channel_id": "1671633563",
+       "message_id": 1233
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}",
    "method": "GET",
    "handler": "message",
    "file": "gateway.go",
@@ -7053,6 +7161,189 @@
          "entities": []
         }
        ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}",
+   "method": "PUT",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive Telegram channel id.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive Telegram channel id.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive Telegram channel id.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/edit/{operation_id}",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive Telegram channel id.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive Telegram channel id.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "channel_id must be a positive Telegram channel id.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563/messages/1233/edit/edit_01EXAMPLE",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "operation_id": "edit_01EXAMPLE",
+       "status": "queued",
+       "attempt_count": 0,
+       "target": {
+        "client_key": "official",
+        "channel_id": "1671633563",
+        "message_id": 1233
+       },
+       "accepted_at": "2026-10-25T10:00:00Z"
       },
       "meta": {
        "generated_at": "2026-10-25T10:00:00Z",

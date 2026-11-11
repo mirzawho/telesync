@@ -92,7 +92,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>GET /api/v1/telegram/official/channels/1671633563 → 200</summary>
 
 ```json
-{"data":{"channel":{"id":"1","type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/telegram/official/channels/1/avatar","is_member":true,"is_managed":false,"membership_status":"member","permissions":{"new":false,"edit":false,"delete":false,"read":true},"verified":false,"scam":false,"fake":false,"participants_count":null}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"channel":{"id":"1","type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/telegram/official/channels/1/avatar","is_member":true,"is_managed":true,"membership_status":"member","permissions":{"new":false,"edit":false,"delete":false,"read":true},"verified":false,"scam":false,"fake":false,"participants_count":null}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -119,7 +119,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>GET /api/v1/telegram/official/channels/1671633563 → 200</summary>
 
 ```json
-{"data":{"channel":{"id":"1","type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/telegram/official/channels/1/avatar","is_member":true,"is_managed":false,"membership_status":"member","permissions":{"new":false,"edit":false,"delete":false,"read":true},"verified":false,"scam":false,"fake":false,"participants_count":null}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"channel":{"id":"1","type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/telegram/official/channels/1/avatar","is_member":true,"is_managed":true,"membership_status":"member","permissions":{"new":false,"edit":false,"delete":false,"read":true},"verified":false,"scam":false,"fake":false,"participants_count":null}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 

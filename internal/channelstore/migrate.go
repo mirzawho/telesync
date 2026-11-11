@@ -663,6 +663,111 @@ var migrations = []migration{
 	END`,
 		},
 	},
+	{
+		version: 19,
+		name:    "message_edit_operations_and_jobs",
+		stmts: []string{
+			`CREATE TABLE message_edit_operations (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	public_id TEXT NOT NULL UNIQUE CHECK (length(public_id) > 0),
+	user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+	client_key TEXT NOT NULL CHECK (length(trim(client_key)) > 0),
+	destination_channel_id TEXT NOT NULL CHECK (length(trim(destination_channel_id)) > 0),
+	target_message_id INTEGER NOT NULL CHECK (target_message_id > 0),
+	request_payload TEXT NOT NULL,
+	media_kind TEXT NOT NULL DEFAULT '',
+	media_staging_name TEXT NOT NULL DEFAULT '',
+	media_filename TEXT NOT NULL DEFAULT '',
+	media_mime_type TEXT NOT NULL DEFAULT '',
+	media_size INTEGER NOT NULL DEFAULT 0 CHECK (media_size >= 0),
+	media_sha256 TEXT NOT NULL DEFAULT '',
+	idempotency_key TEXT NOT NULL DEFAULT '',
+	request_fingerprint TEXT NOT NULL CHECK (length(request_fingerprint) > 0),
+	status TEXT NOT NULL CHECK (status IN ('queued', 'processing', 'retrying', 'edited', 'failed', 'unknown')),
+	stage TEXT NOT NULL DEFAULT '',
+	attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+	next_attempt_at TEXT,
+	remote_message_id INTEGER NOT NULL DEFAULT 0 CHECK (remote_message_id = 0 OR remote_message_id = target_message_id),
+	result_media_kind TEXT NOT NULL DEFAULT '',
+	last_error_code TEXT NOT NULL DEFAULT '',
+	last_error_message TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	started_at TEXT,
+	completed_at TEXT,
+	updated_at TEXT NOT NULL)`,
+			`CREATE UNIQUE INDEX message_edit_operations_idem_idx
+	ON message_edit_operations (user_id, idempotency_key) WHERE idempotency_key <> ''`,
+			`CREATE INDEX message_edit_operations_status_idx ON message_edit_operations (status, updated_at)`,
+			`CREATE INDEX message_edit_operations_owner_idx ON message_edit_operations (user_id, created_at)`,
+			`CREATE INDEX message_edit_operations_target_idx
+	ON message_edit_operations (client_key, destination_channel_id, target_message_id, created_at)`,
+			`CREATE INDEX message_edit_operations_created_idx ON message_edit_operations (created_at)`,
+			`CREATE INDEX message_edit_operations_media_idx
+	ON message_edit_operations (media_staging_name) WHERE media_staging_name <> ''`,
+			// Adding an edit job kind requires a forward table rebuild: SQLite
+			// cannot alter the existing CHECK constraint. Existing rows and ids
+			// remain unchanged so in-flight work survives the migration.
+			`CREATE TABLE automation_jobs_rebuilt (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	event_id TEXT NOT NULL,
+	job_type TEXT NOT NULL CHECK (job_type IN ('webhook_delivery', 'workflow_run', 'telegram_message_send', 'telegram_message_edit')),
+	target_id INTEGER NOT NULL CHECK (target_id > 0),
+	status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'retry_wait', 'succeeded', 'failed', 'cancelled')),
+	attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+	max_attempts INTEGER NOT NULL CHECK (max_attempts > 0),
+	available_at TEXT NOT NULL,
+	locked_by TEXT NOT NULL DEFAULT '',
+	locked_until TEXT,
+	last_error_code TEXT NOT NULL DEFAULT '',
+	last_error_message TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	completed_at TEXT,
+	UNIQUE (job_type, target_id, event_id))`,
+			`INSERT INTO automation_jobs_rebuilt (
+	id, event_id, job_type, target_id, status, attempt_count, max_attempts,
+	available_at, locked_by, locked_until, last_error_code, last_error_message,
+	created_at, updated_at, completed_at)
+	SELECT id, event_id, job_type, target_id, status, attempt_count, max_attempts,
+	available_at, locked_by, locked_until, last_error_code, last_error_message,
+	created_at, updated_at, completed_at FROM automation_jobs`,
+			// This trigger belongs to automation_events, not automation_jobs, so
+			// dropping the old queue table would leave it pointing at a missing
+			// table during the remainder of the transactional rebuild.
+			`DROP TRIGGER automation_jobs_event_delete`,
+			`DROP TABLE automation_jobs`,
+			`ALTER TABLE automation_jobs_rebuilt RENAME TO automation_jobs`,
+			`CREATE INDEX automation_jobs_claim_idx ON automation_jobs (status, available_at)`,
+			`CREATE INDEX automation_jobs_lease_idx ON automation_jobs (status, locked_until)`,
+			`CREATE INDEX automation_jobs_target_idx ON automation_jobs (job_type, target_id, id)`,
+			`CREATE TRIGGER automation_jobs_event_insert
+	BEFORE INSERT ON automation_jobs
+	WHEN NEW.job_type IN ('webhook_delivery', 'workflow_run')
+	  AND NOT EXISTS (SELECT 1 FROM automation_events WHERE id = NEW.event_id)
+	BEGIN
+		SELECT RAISE(ABORT, 'automation_jobs.event_id names no automation event');
+	END`,
+			`CREATE TRIGGER automation_jobs_event_delete
+	AFTER DELETE ON automation_events
+	BEGIN
+		DELETE FROM automation_jobs
+		WHERE event_id = OLD.id AND job_type IN ('webhook_delivery', 'workflow_run');
+	END`,
+			`CREATE TRIGGER automation_jobs_edit_operation_insert
+	BEFORE INSERT ON automation_jobs
+	WHEN NEW.job_type = 'telegram_message_edit'
+	  AND NOT EXISTS (SELECT 1 FROM message_edit_operations WHERE public_id = NEW.event_id)
+	BEGIN
+		SELECT RAISE(ABORT, 'automation_jobs.event_id names no message edit operation');
+	END`,
+			`CREATE TRIGGER message_edit_operations_job_delete
+	AFTER DELETE ON message_edit_operations
+	BEGIN
+		DELETE FROM automation_jobs
+		WHERE event_id = OLD.public_id AND job_type = 'telegram_message_edit';
+	END`,
+		},
+	},
 }
 
 // migrate brings the schema up to the latest version.

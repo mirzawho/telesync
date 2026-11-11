@@ -78,6 +78,14 @@ func (f *fakeUpstream) SendMessage(_ context.Context, req rpc.SendRequest) (rpc.
 	}, nil
 }
 
+func (f *fakeUpstream) EditMessage(_ context.Context, req rpc.EditRequest) (rpc.EditResult, error) {
+	return rpc.EditResult{Message: &rpc.Message{ID: req.MessageID, Text: req.Text}}, nil
+}
+
+func (f *fakeUpstream) DeleteMessage(context.Context, rpc.DeleteMessageRequest) (rpc.DeleteMessageResult, error) {
+	return rpc.DeleteMessageResult{Deleted: true}, nil
+}
+
 func (f *fakeUpstream) Avatar(context.Context, rpc.ChannelRef) (rpc.AvatarFile, error) {
 	return rpc.AvatarFile{MimeType: "image/jpeg", Data: []byte("jpeg")}, nil
 }
@@ -384,6 +392,12 @@ func (f *fakeManager) LeaveChannel(context.Context, tgapi.ChannelRef) error {
 func (f *fakeManager) SendMessage(context.Context, tgapi.ChannelRef, tgapi.SendRequest) (tgapi.SendResult, error) {
 	return tgapi.SendResult{}, nil
 }
+
+func (f *fakeManager) EditMessage(context.Context, tgapi.ChannelRef, tgapi.EditRequest) (tgapi.EditResult, error) {
+	return tgapi.EditResult{}, nil
+}
+
+func (f *fakeManager) DeleteMessage(context.Context, tgapi.Channel, int) error { return nil }
 
 func (f *fakeManager) Wait(context.Context) error { return nil }
 

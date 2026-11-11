@@ -28,6 +28,7 @@ import (
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/cli"
 	"github.com/mirza/telesync/internal/docsite"
+	"github.com/mirza/telesync/internal/editing"
 	"github.com/mirza/telesync/internal/gateway"
 	"github.com/mirza/telesync/internal/gotdclient"
 	"github.com/mirza/telesync/internal/login"
@@ -111,6 +112,28 @@ func newSendService(
 		HistoryRetention: time.Duration(cfg.HistoryRetentionDays) * 24 * time.Hour,
 		Logf:             logf,
 	}
+}
+
+// editWorkers resolves each background edit to the worker belonging to its
+// client key. It never substitutes another connection when one is unavailable.
+type editWorkers struct {
+	workers map[string]gateway.Worker
+}
+
+func (r editWorkers) EditMessage(ctx context.Context, clientKey string, req rpc.EditRequest) (rpc.EditResult, error) {
+	w, ok := r.workers[clientKey]
+	if !ok || w == nil {
+		return rpc.EditResult{}, rpc.ErrUnavailable
+	}
+	return w.EditMessage(ctx, req)
+}
+
+func (r editWorkers) Message(ctx context.Context, clientKey string, channelID int64, messageID int) (rpc.MessagePage, error) {
+	w, ok := r.workers[clientKey]
+	if !ok || w == nil {
+		return rpc.MessagePage{}, rpc.ErrUnavailable
+	}
+	return w.Message(ctx, channelID, messageID)
 }
 
 // runDaemon supervises worker processes and serves the public API.
@@ -348,7 +371,10 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 	// Direct sending: a message a caller composed and a file they uploaded,
 	// accepted over HTTP and delivered here, long after the request that asked
 	// for it has been answered.
-	var sendService *sending.Service
+	var (
+		sendService *sending.Service
+		editService *editing.Service
+	)
 	if cfg.Send.Enabled {
 		area, err := staging.Open(cfg.Send.StagingDir, cfg.Send.MaxFileBytes)
 		if err != nil {
@@ -356,12 +382,33 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 		}
 		sendService = newSendService(cfg.Send, publisher, store, area, enqueuer, logger.Printf)
 		jobHandlers[automation.JobTelegramMessageSend] = sendService.Execute
+		editService = &editing.Service{
+			Sender:           publisher,
+			Editor:           editWorkers{workers: workers},
+			Channels:         store,
+			Operations:       store,
+			Staging:          area,
+			Jobs:             enqueuer,
+			HistoryRetention: time.Duration(cfg.Send.HistoryRetentionDays) * 24 * time.Hour,
+			Logf:             logger.Printf,
+		}
+		jobHandlers[automation.JobTelegramMessageEdit] = editService.Execute
 
 		// A crash can leave an attachment nobody recorded or an operation whose
 		// attachment is gone. Both are settled here, at start-up, before any send
 		// is accepted — so a caller is never told their message is queued when
 		// the bytes it needs are not there.
-		report, err := sendService.Cleanup(ctx)
+		var editHeldMedia []string
+		if editService != nil {
+			if err := editService.Cleanup(ctx); err != nil {
+				return fmt.Errorf("reconcile message edit history: %w", err)
+			}
+			editHeldMedia, err = editService.HeldMediaNames(ctx)
+			if err != nil {
+				return fmt.Errorf("list message edit attachments: %w", err)
+			}
+		}
+		report, err := sendService.CleanupKeeping(ctx, editHeldMedia)
 		if err != nil {
 			return fmt.Errorf("reconcile the send staging area: %w", err)
 		}
@@ -394,6 +441,7 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 		Categories: store,
 		Publishes:  store,
 		Send:       sendService,
+		Edit:       editService,
 		Users:      store,
 		WordPress:  store,
 		// The daemon's own client: public https hosts only, every connection

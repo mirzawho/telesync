@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// MaxMessageID is the largest positive message id accepted by MTProto's
+// channel-message operations.
+const MaxMessageID = 1<<31 - 1
+
 // State is the connection state reported for one client.
 type State string
 
@@ -202,6 +206,8 @@ var (
 	ErrMediaNotFound = errors.New("tgapi: this message has no downloadable media")
 	// ErrMessageNotFound means the message id does not exist in that channel.
 	ErrMessageNotFound = errors.New("tgapi: message not found")
+	// ErrMessageDeleteForbidden means Telegram refused the requested deletion.
+	ErrMessageDeleteForbidden = errors.New("tgapi: Telegram refused message deletion")
 	// ErrCustomEmojiNotFound means the custom emoji document id is not in
 	// Telegram's reaction set (a recycled document, or a set this account
 	// cannot read).

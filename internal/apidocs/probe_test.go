@@ -21,9 +21,11 @@ import (
 	"github.com/mirza/telesync/internal/automation/workflows"
 	"github.com/mirza/telesync/internal/avatarcache"
 	"github.com/mirza/telesync/internal/channelstore"
+	"github.com/mirza/telesync/internal/editing"
 	"github.com/mirza/telesync/internal/gateway"
 	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/secrets"
+	"github.com/mirza/telesync/internal/staging"
 	"github.com/mirza/telesync/internal/wordpress"
 )
 
@@ -91,6 +93,12 @@ func (p *probe) build() http.Handler {
 	if err != nil {
 		p.t.Fatal(err)
 	}
+	if _, err := store.Upsert(ctx, channelstore.Channel{
+		ClientKey: "official", ChannelID: 1671633563, PeerType: channelstore.PeerChannel,
+		Title: "Documented channel", MembershipStatus: channelstore.StatusMember,
+	}); err != nil {
+		p.t.Fatal(err)
+	}
 	category, err := store.CreateCategory(ctx, "Documented category", "Created by the documentation probe")
 	if err != nil {
 		p.t.Fatal(err)
@@ -123,6 +131,10 @@ func (p *probe) build() http.Handler {
 	if err != nil {
 		p.t.Fatal(err)
 	}
+	editStaging, err := staging.Open(filepath.Join(p.t.TempDir(), "edit-staging"), 32<<20)
+	if err != nil {
+		p.t.Fatal(err)
+	}
 	p.tokens = tokens
 	return gateway.New(gateway.Config{
 		Workers: fakeRegistry{},
@@ -135,9 +147,13 @@ func (p *probe) build() http.Handler {
 		Users:      store,
 		Tokens:     tokens,
 		Avatars:    cache,
-		Operator:   probeToken,
-		Docs:       docsSite{},
-		Now:        func() time.Time { return time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC) },
+		Edit: &editing.Service{
+			Operations: store, Channels: store, Staging: editStaging,
+			Jobs: queue.NewEnqueuer(store, 5), HistoryRetention: 30 * 24 * time.Hour,
+		},
+		Operator: probeToken,
+		Docs:     docsSite{},
+		Now:      func() time.Time { return time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC) },
 		// The WordPress routes are rehearsed the way the daemon wires them:
 		// the real store, a working seal and the real client reading a
 		// scripted site. Only the socket is scripted; the client's URL and
@@ -157,6 +173,19 @@ func (p *probe) build() http.Handler {
 		AutomationEnabled:   true,
 		AutomationWorkers:   2,
 	})
+}
+
+func (p *probe) adminToken(t *testing.T) string {
+	t.Helper()
+	user, found, err := p.store.UserByUsername(context.Background(), "admin")
+	if err != nil || !found {
+		t.Fatalf("find documented admin: found=%t err=%v", found, err)
+	}
+	token, _, err := p.tokens.Issue(user.ID)
+	if err != nil {
+		t.Fatalf("issue documented account token: %v", err)
+	}
+	return token
 }
 
 // probePublicBaseURL stands for api.public_base_url. It is the documented
@@ -449,6 +478,14 @@ func (fakeWorker) SendMessage(_ context.Context, req rpc.SendRequest) (rpc.SendR
 		Message:   &rpc.Message{ID: 12345, Text: req.Text, Date: time.Now().UTC()},
 		ChannelID: strconv.FormatInt(req.ChannelID, 10),
 	}, nil
+}
+
+func (fakeWorker) EditMessage(_ context.Context, req rpc.EditRequest) (rpc.EditResult, error) {
+	return rpc.EditResult{Message: &rpc.Message{ID: req.MessageID, Text: req.Text}}, nil
+}
+
+func (fakeWorker) DeleteMessage(context.Context, rpc.DeleteMessageRequest) (rpc.DeleteMessageResult, error) {
+	return rpc.DeleteMessageResult{Deleted: true}, nil
 }
 
 func (fakeWorker) Avatar(context.Context, rpc.ChannelRef) (rpc.AvatarFile, error) {

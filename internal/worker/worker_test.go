@@ -30,14 +30,17 @@ type fakeTelegram struct {
 	histErr  error
 	readCall int
 	// historyCalls records the (beforeID, limit) pairs requested.
-	historyCalls  [][2]int
-	mediaBytes    []byte
-	mediaName     string
-	mediaType     string
-	mediaSize     int64
-	mediaErr      error
-	oneMessage    tgapi.Message
-	oneMessageErr error
+	historyCalls      [][2]int
+	mediaBytes        []byte
+	mediaName         string
+	mediaType         string
+	mediaSize         int64
+	mediaErr          error
+	oneMessage        tgapi.Message
+	oneMessageErr     error
+	oneMessageChannel tgapi.Channel
+	oneMessageID      int
+	oneMessageCalls   int
 
 	findResult  []tgapi.ChannelInfo
 	findErr     error
@@ -59,10 +62,14 @@ type fakeTelegram struct {
 	emojiErr error
 	gotEmoji int64
 
-	sentRef    tgapi.ChannelRef
-	sentReq    tgapi.SendRequest
-	sentResult tgapi.SendResult
-	sentErr    error
+	sentRef         tgapi.ChannelRef
+	sentReq         tgapi.SendRequest
+	sentResult      tgapi.SendResult
+	sentErr         error
+	deleteChannel   tgapi.Channel
+	deleteMessageID int
+	deleteCalls     int
+	deleteErr       error
 }
 
 func (f *fakeTelegram) Start(context.Context) {}
@@ -129,6 +136,18 @@ func (f *fakeTelegram) SendMessage(_ context.Context, ref tgapi.ChannelRef, req 
 	defer f.mu.Unlock()
 	f.sentRef, f.sentReq = ref, req
 	return f.sentResult, f.sentErr
+}
+
+func (f *fakeTelegram) EditMessage(context.Context, tgapi.ChannelRef, tgapi.EditRequest) (tgapi.EditResult, error) {
+	return tgapi.EditResult{}, nil
+}
+
+func (f *fakeTelegram) DeleteMessage(_ context.Context, channel tgapi.Channel, messageID int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleteChannel, f.deleteMessageID = channel, messageID
+	f.deleteCalls++
+	return f.deleteErr
 }
 
 func (f *fakeTelegram) LeaveChannel(_ context.Context, ref tgapi.ChannelRef) error {
@@ -853,9 +872,11 @@ func TestMediaRejectsAMessageWithoutAnAttachment(t *testing.T) {
 
 // --- one message ---
 
-func (f *fakeTelegram) Message(_ context.Context, _ tgapi.Channel, _ int) (tgapi.Message, error) {
+func (f *fakeTelegram) Message(_ context.Context, channel tgapi.Channel, messageID int) (tgapi.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.oneMessageChannel, f.oneMessageID = channel, messageID
+	f.oneMessageCalls++
 	return f.oneMessage, f.oneMessageErr
 }
 

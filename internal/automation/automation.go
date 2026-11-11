@@ -123,6 +123,10 @@ const (
 	// destination channel, so one channel's sends claim in order and cannot
 	// burst past the queue's own per-destination pacing.
 	JobTelegramMessageSend JobKind = "telegram_message_send"
+	// JobTelegramMessageEdit is one accepted replacement of an existing
+	// Telegram message. Its target key scopes ordering to one client/channel/
+	// message tuple, so independent edits remain runnable concurrently.
+	JobTelegramMessageEdit JobKind = "telegram_message_edit"
 )
 
 // JobStatus is the lifecycle state of one queued unit of work.

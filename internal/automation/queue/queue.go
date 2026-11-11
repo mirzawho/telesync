@@ -329,6 +329,14 @@ func (e *Enqueuer) EnqueueMessageSend(ctx context.Context, operationID string, c
 	return e.enqueue(ctx, operationID, automation.JobTelegramMessageSend, channelID)
 }
 
+// EnqueueMessageEdit schedules one accepted edit of an existing message.
+// targetID is a stable key for (client, channel, message), so the generic
+// durable queue runs edits of the same message in order while allowing edits
+// of unrelated targets to proceed concurrently.
+func (e *Enqueuer) EnqueueMessageEdit(ctx context.Context, operationID string, targetID int64) error {
+	return e.enqueue(ctx, operationID, automation.JobTelegramMessageEdit, targetID)
+}
+
 // Reopen gives already-queued work a fresh attempt budget.
 //
 // This is not what Enqueue does, and the difference is deliberate. Enqueue is

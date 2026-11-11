@@ -65,7 +65,11 @@ func TestRouteTableMatchesGateway(t *testing.T) {
 		for _, r := range apidocs.Routes {
 			for _, method := range r.Methods {
 				path := apidocs.Concrete(r.Pattern)
-				rec := serve(handler, method, path, probeToken, "", "")
+				token := probeToken
+				if method == http.MethodPut && strings.Contains(path, "/messages/") {
+					token = handler.adminToken(t)
+				}
+				rec := serve(handler, method, path, token, "", "")
 				switch rec.Code {
 				case http.StatusMethodNotAllowed:
 					t.Errorf("%s %s answers 405", method, path)
@@ -461,7 +465,11 @@ func TestExamplesRunAgainstTheGateway(t *testing.T) {
 			t.Errorf("%s %s is indexed as capturing %q but does not say so", ex.Method, ex.Path, capture)
 			continue
 		}
-		rec := serve(handler, ex.Method, path, probeToken, ex.ContentType, body)
+		token := probeToken
+		if strings.Contains(path, "/edit/") || (ex.Method == http.MethodPut && strings.Contains(path, "/messages/")) {
+			token = handler.adminToken(t)
+		}
+		rec := serve(handler, ex.Method, path, token, ex.ContentType, body)
 		switch rec.Code {
 		case http.StatusUnauthorized:
 			// The probe can authenticate; a 401 here means the example

@@ -54,9 +54,9 @@ func (s *Service) log(format string, args ...any) {
 
 // Telegram is the slice of a Telegram client a worker needs.
 //
-// It never marks anything read and never logs anyone in. Joining, leaving and
-// sending a prepared post are the only writes it performs, each reached from
-// its own documented endpoint and never as a side effect of a read. The
+// It never marks anything read and never logs anyone in. Joining, leaving,
+// sending a prepared post, editing one existing post, and deleting one post
+// are explicit writes reached only from their documented endpoints. The
 // concrete implementation is the gotd adapter.
 type Telegram interface {
 	Status(ctx context.Context) tgapi.Status
@@ -81,9 +81,57 @@ type Telegram interface {
 	// An account that is not in the channel is tgapi.ErrNotAMember.
 	LeaveChannel(ctx context.Context, ref tgapi.ChannelRef) error
 	// SendMessage sends one prepared post to a channel this account can reach.
-	// It is the only write to Telegram's content this interface performs, and
-	// it is reached only from an explicit publishing request.
+	// It is reached only from an explicit publishing request.
 	SendMessage(ctx context.Context, ref tgapi.ChannelRef, req tgapi.SendRequest) (tgapi.SendResult, error)
+	// EditMessage replaces an existing message in place and preserves its ID.
+	EditMessage(ctx context.Context, ref tgapi.ChannelRef, req tgapi.EditRequest) (tgapi.EditResult, error)
+	// DeleteMessage deletes exactly one post from a resolved channel.
+	DeleteMessage(ctx context.Context, channel tgapi.Channel, messageID int) error
+}
+
+// DeleteMessage implements rpc.Backend. It first proves that this exact
+// message belongs to this worker's resolved channel, then requests one remote
+// deletion through the same Telegram client.
+func (s *Service) DeleteMessage(ctx context.Context, req rpc.DeleteMessageRequest) (rpc.DeleteMessageResult, error) {
+	if err := s.requireAuthorized(ctx); err != nil {
+		return rpc.DeleteMessageResult{}, err
+	}
+	if req.ChannelID <= 0 || req.MessageID <= 0 || req.MessageID > tgapi.MaxMessageID {
+		return rpc.DeleteMessageResult{}, rpc.NewError(rpc.CodeInvalidInput,
+			"channel_id and message_id must be within their supported positive ranges.", 0)
+	}
+	channel, ok := s.channelByID(ctx, req.ChannelID)
+	if !ok {
+		return rpc.DeleteMessageResult{}, rpc.ErrChannelNotFound
+	}
+	message, err := s.tg.Message(ctx, channel, req.MessageID)
+	if err != nil {
+		return rpc.DeleteMessageResult{}, s.mapDeleteError(err)
+	}
+	if message.ID != req.MessageID {
+		return rpc.DeleteMessageResult{}, rpc.NewError(rpc.CodeNotFound,
+			"No message with that id exists in this channel.", 0)
+	}
+	if err := s.tg.DeleteMessage(ctx, channel, req.MessageID); err != nil {
+		return rpc.DeleteMessageResult{}, s.mapDeleteError(err)
+	}
+	return rpc.DeleteMessageResult{Deleted: true}, nil
+}
+
+func (s *Service) mapDeleteError(err error) error {
+	switch {
+	case errors.Is(err, tgapi.ErrMessageNotFound):
+		return rpc.NewError(rpc.CodeNotFound, "No message with that id exists in this channel.", 0)
+	case errors.Is(err, tgapi.ErrMessageDeleteForbidden):
+		return rpc.ErrMessageDeleteForbidden
+	case errors.Is(err, tgapi.ErrChannelNotFound):
+		return rpc.ErrChannelNotFound
+	}
+	var flood interface{ FloodSeconds() int }
+	if errors.As(err, &flood) {
+		return rpc.NewError(rpc.CodeRateLimited, "Telegram is rate limiting this client.", flood.FloodSeconds())
+	}
+	return s.mapDiscoveryError(err)
 }
 
 // Service implements rpc.Backend on top of one Telegram client.

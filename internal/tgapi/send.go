@@ -69,6 +69,21 @@ type SendResult struct {
 	UnsendableEntities int
 }
 
+// EditRequest completely replaces one existing message. A nil Media means the
+// requested final state has no attachment; it never means retain the old one.
+type EditRequest struct {
+	MessageID int
+	Text      string
+	Entities  []Entity
+	Media     *SendMedia
+	NoWebpage bool
+}
+
+// EditResult is the target message read back from Telegram after the edit.
+type EditResult struct {
+	Message *Message
+}
+
 // Send errors classified by the adapter so the worker can answer with the right
 // error without parsing RPC strings.
 var (
@@ -78,7 +93,12 @@ var (
 	// ErrSendUnsupported means this content cannot be sent to that destination.
 	ErrSendUnsupported = errors.New("tgapi: this content cannot be sent to the destination")
 	// ErrMessageTooLong means the text is above the destination's limit.
-	ErrMessageTooLong = errors.New("tgapi: the message text is too long")
+	ErrMessageTooLong              = errors.New("tgapi: the message text is too long")
+	ErrMessageEditForbidden        = errors.New("tgapi: Telegram refused to edit this message")
+	ErrMessageEditTimeExpired      = errors.New("tgapi: Telegram's edit window has passed")
+	ErrMessageEditUnsupported      = errors.New("tgapi: Telegram does not support this edit")
+	ErrEditMediaRemovalUnsupported = errors.New("tgapi: Telegram did not remove the message media")
+	ErrMessageEditOutcomeUnknown   = errors.New("tgapi: the result of the message edit is unknown")
 )
 
 // MaxMessageRunes is the longest message text Telegram accepts.

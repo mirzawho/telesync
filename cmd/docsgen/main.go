@@ -30,8 +30,10 @@ import (
 	"github.com/mirza/telesync/internal/automation/workflows"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/docsgen"
+	"github.com/mirza/telesync/internal/editing"
 	"github.com/mirza/telesync/internal/gateway"
 	"github.com/mirza/telesync/internal/secrets"
+	"github.com/mirza/telesync/internal/staging"
 	"github.com/mirza/telesync/internal/tgapi"
 	"github.com/mirza/telesync/internal/wordpress"
 )
@@ -95,7 +97,7 @@ func newProber(ctx context.Context) (apidocs.Prober, func(), error) {
 		os.RemoveAll(dir)
 		return nil, nil, err
 	}
-	p := &prober{store: store}
+	p := &prober{store: store, dir: dir}
 	if err := p.seed(ctx); err != nil {
 		store.Close()
 		os.RemoveAll(dir)
@@ -120,11 +122,18 @@ type prober struct {
 	store   *channelstore.Store
 	handler http.Handler
 	tokens  *auth.Tokens
+	dir     string
 }
 
 func (p *prober) seed(ctx context.Context) error {
 	hash, err := auth.HashPassword(accountPassword)
 	if err != nil {
+		return err
+	}
+	if _, err := p.store.Upsert(ctx, channelstore.Channel{
+		ClientKey: "official", ChannelID: 1671633563, PeerType: channelstore.PeerChannel,
+		Title: "Documented channel", MembershipStatus: channelstore.StatusMember,
+	}); err != nil {
 		return err
 	}
 	admin, err := p.store.CreateUser(ctx, "Documented Administrator", "admin", hash, true)
@@ -175,6 +184,10 @@ func (p *prober) seed(ctx context.Context) error {
 		return err
 	}
 	p.tokens = tokens
+	editStaging, err := staging.Open(filepath.Join(p.dir, "edit-staging"), 32<<20)
+	if err != nil {
+		return err
+	}
 	p.handler = gateway.New(gateway.Config{
 		Now:     probeClock,
 		Workers: workerRegistry{},
@@ -183,7 +196,11 @@ func (p *prober) seed(ctx context.Context) error {
 		// so the local channel pages observe a complete channel. The generated
 		// exchanges byte-compare between runs, so this stays in memory rather
 		// than reading the database that records a join's own timestamps.
-		Channels:   managedStore{},
+		Channels: managedStore{},
+		Edit: &editing.Service{
+			Operations: p.store, Channels: managedStore{}, Staging: editStaging,
+			Jobs: queue.NewEnqueuer(p.store, 5), HistoryRetention: 30 * 24 * time.Hour,
+		},
 		Categories: p.store,
 		Users:      p.store,
 		Tokens:     tokens,

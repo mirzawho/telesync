@@ -64,6 +64,9 @@ const (
 	// account may not post in this channel, or the channel is no longer
 	// reachable to it.
 	CodeSendForbidden = "send_forbidden"
+	// CodeMessageDeleteForbidden means Telegram refused to delete the target
+	// message for this account.
+	CodeMessageDeleteForbidden = "message_delete_forbidden"
 	// CodeSendUnsupported means the destination cannot take this content — a
 	// media type it does not accept, or a method this backend does not
 	// implement.
@@ -72,6 +75,19 @@ const (
 	CodeMediaTooLarge = "media_too_large"
 	// CodeMessageTooLong means the text is above the destination's limit.
 	CodeMessageTooLong = "message_too_long"
+	// CodeMessageEditForbidden means Telegram refused to edit this target.
+	CodeMessageEditForbidden = "message_edit_forbidden"
+	// CodeMessageEditTimeExpired means Telegram's edit window has passed.
+	CodeMessageEditTimeExpired = "message_edit_time_expired"
+	// CodeMessageEditUnsupported means Telegram refused the requested edit or
+	// media transition.
+	CodeMessageEditUnsupported = "message_edit_unsupported"
+	// CodeEditMediaRemovalUnsupported means the server retained or refused the
+	// attachment when the request explicitly removed it.
+	CodeEditMediaRemovalUnsupported = "edit_media_removal_unsupported"
+	// CodeMessageEditOutcomeUnknown means the edit could not be confirmed by
+	// reading the target after an ambiguous response.
+	CodeMessageEditOutcomeUnknown = "message_edit_outcome_unknown"
 )
 
 // Sentinel errors the worker maps onto wire codes.
@@ -86,7 +102,8 @@ var (
 	// ErrMembershipLimit means the account cannot join more channels.
 	ErrMembershipLimit = errors.New("rpc: the account cannot join more channels")
 	// ErrPeerUnresolved means a numeric channel id has no peer information.
-	ErrPeerUnresolved = errors.New("rpc: this numeric channel id has no peer information")
+	ErrPeerUnresolved         = errors.New("rpc: this numeric channel id has no peer information")
+	ErrMessageDeleteForbidden = errors.New("rpc: Telegram refused to delete this message")
 	// ErrNoAvatar means the channel has no profile photo.
 	ErrNoAvatar = errors.New("rpc: the channel has no avatar")
 	// ErrSendForbidden means the destination refused the message.
@@ -96,7 +113,12 @@ var (
 	// ErrMediaTooLarge means the attachment is above the transfer limit.
 	ErrMediaTooLarge = errors.New("rpc: the attachment is too large to send")
 	// ErrMessageTooLong means the text is above the destination's limit.
-	ErrMessageTooLong = errors.New("rpc: the message text is too long")
+	ErrMessageTooLong              = errors.New("rpc: the message text is too long")
+	ErrMessageEditForbidden        = errors.New("rpc: Telegram refused to edit this message")
+	ErrMessageEditTimeExpired      = errors.New("rpc: Telegram's edit window has passed")
+	ErrMessageEditUnsupported      = errors.New("rpc: Telegram does not support this edit")
+	ErrEditMediaRemovalUnsupported = errors.New("rpc: Telegram did not remove the message media")
+	ErrMessageEditOutcomeUnknown   = errors.New("rpc: the result of the message edit is unknown")
 )
 
 // Error is a coded error on the wire.
@@ -450,6 +472,36 @@ type SendResult struct {
 	UnsendableEntities int `json:"unsendable_entities,omitempty"`
 }
 
+// EditRequest replaces the complete content of one existing channel message.
+// Media is always explicit at the worker boundary: nil means the desired
+// result has no attachment, and a non-nil media describes a new upload.
+type EditRequest struct {
+	ChannelID int64      `json:"channel_id"`
+	MessageID int        `json:"message_id"`
+	Text      string     `json:"text"`
+	Entities  []Entity   `json:"entities"`
+	Media     *SendMedia `json:"media,omitempty"`
+	NoWebpage bool       `json:"no_web_page,omitempty"`
+}
+
+// EditResult is the remote message read back after the edit attempt. The
+// message ID must remain equal to the request's target ID.
+type EditResult struct {
+	Message *Message `json:"message,omitempty"`
+}
+
+// DeleteMessageRequest deletes one message from one channel on this worker's
+// Telegram connection.
+type DeleteMessageRequest struct {
+	ChannelID int64 `json:"channel_id"`
+	MessageID int   `json:"message_id"`
+}
+
+// DeleteMessageResult reports the remote operation's confirmation.
+type DeleteMessageResult struct {
+	Deleted bool `json:"deleted"`
+}
+
 // MaxSendMediaBytes is the largest attachment one send may carry. It matches
 // the download limit, so content that can be read can be sent on.
 const MaxSendMediaBytes = 32 << 20
@@ -489,6 +541,10 @@ type Backend interface {
 	// content, and it is only ever reached from a publishing request the user
 	// made explicitly.
 	SendMessage(ctx context.Context, req SendRequest) (SendResult, error)
+	// DeleteMessage synchronously deletes one message from one channel.
+	DeleteMessage(ctx context.Context, req DeleteMessageRequest) (DeleteMessageResult, error)
+	// EditMessage replaces the content of one existing message in place.
+	EditMessage(ctx context.Context, req EditRequest) (EditResult, error)
 }
 
 // Pagination bounds shared by the worker and the gateway.
@@ -549,6 +605,10 @@ func classify(err error) (*Error, int) {
 		return NewError(CodeSendForbidden,
 				"The destination refused the message: this account may not post there.", 0),
 			http.StatusForbidden
+	case errors.Is(err, ErrMessageDeleteForbidden):
+		return NewError(CodeMessageDeleteForbidden,
+				"The Telegram account is not permitted to delete this message.", 0),
+			http.StatusForbidden
 	case errors.Is(err, ErrSendUnsupported):
 		return NewError(CodeSendUnsupported, "This content cannot be sent to that destination.", 0),
 			http.StatusBadRequest
@@ -559,6 +619,21 @@ func classify(err error) (*Error, int) {
 	case errors.Is(err, ErrMessageTooLong):
 		return NewError(CodeMessageTooLong, "The message text is too long to send.", 0),
 			http.StatusBadRequest
+	case errors.Is(err, ErrMessageEditForbidden):
+		return NewError(CodeMessageEditForbidden, "The Telegram account is not permitted to edit this message.", 0),
+			http.StatusForbidden
+	case errors.Is(err, ErrMessageEditTimeExpired):
+		return NewError(CodeMessageEditTimeExpired, "Telegram's edit window for this message has passed.", 0),
+			http.StatusForbidden
+	case errors.Is(err, ErrMessageEditUnsupported):
+		return NewError(CodeMessageEditUnsupported, "Telegram does not support the requested message edit.", 0),
+			http.StatusBadRequest
+	case errors.Is(err, ErrEditMediaRemovalUnsupported):
+		return NewError(CodeEditMediaRemovalUnsupported, "Telegram did not remove the existing media attachment.", 0),
+			http.StatusBadRequest
+	case errors.Is(err, ErrMessageEditOutcomeUnknown):
+		return NewError(CodeMessageEditOutcomeUnknown, "The edit could not be confirmed; inspect the target message before retrying.", 0),
+			http.StatusServiceUnavailable
 	default:
 		return NewError(CodeInternal, "The worker failed to complete the request.", 0),
 			http.StatusInternalServerError
@@ -567,7 +642,8 @@ func classify(err error) (*Error, int) {
 
 func statusForCode(code string) int {
 	switch code {
-	case CodeInvalidInput, CodeInviteInvalid, CodePeerUnresolved, CodeSendUnsupported, CodeMessageTooLong:
+	case CodeInvalidInput, CodeInviteInvalid, CodePeerUnresolved, CodeSendUnsupported, CodeMessageTooLong,
+		CodeMessageEditUnsupported, CodeEditMediaRemovalUnsupported:
 		return http.StatusBadRequest
 	case CodeNeedsAuth:
 		return http.StatusConflict
@@ -581,6 +657,12 @@ func statusForCode(code string) int {
 		return http.StatusConflict
 	case CodeSendForbidden:
 		return http.StatusForbidden
+	case CodeMessageDeleteForbidden:
+		return http.StatusForbidden
+	case CodeMessageEditForbidden, CodeMessageEditTimeExpired:
+		return http.StatusForbidden
+	case CodeMessageEditOutcomeUnknown:
+		return http.StatusServiceUnavailable
 	case CodeMediaTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeMethodNotAllowed:
@@ -610,12 +692,24 @@ func (e *Error) wire() error {
 		return errors.Join(e, ErrNoAvatar)
 	case CodeSendForbidden:
 		return errors.Join(e, ErrSendForbidden)
+	case CodeMessageDeleteForbidden:
+		return errors.Join(e, ErrMessageDeleteForbidden)
 	case CodeSendUnsupported:
 		return errors.Join(e, ErrSendUnsupported)
 	case CodeMediaTooLarge:
 		return errors.Join(e, ErrMediaTooLarge)
 	case CodeMessageTooLong:
 		return errors.Join(e, ErrMessageTooLong)
+	case CodeMessageEditForbidden:
+		return errors.Join(e, ErrMessageEditForbidden)
+	case CodeMessageEditTimeExpired:
+		return errors.Join(e, ErrMessageEditTimeExpired)
+	case CodeMessageEditUnsupported:
+		return errors.Join(e, ErrMessageEditUnsupported)
+	case CodeEditMediaRemovalUnsupported:
+		return errors.Join(e, ErrEditMediaRemovalUnsupported)
+	case CodeMessageEditOutcomeUnknown:
+		return errors.Join(e, ErrMessageEditOutcomeUnknown)
 	default:
 		return e
 	}
@@ -733,6 +827,32 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out, err := h.backend.SendMessage(r.Context(), req)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	case path == "/edit_message":
+		req, ok := h.decodeEdit(w, r)
+		if !ok {
+			return
+		}
+		out, err := h.backend.EditMessage(r.Context(), req)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	case path == "/delete_message":
+		if r.Method != http.MethodPost {
+			h.fail(w, NewError(CodeMethodNotAllowed, "method not allowed", 0))
+			return
+		}
+		var req DeleteMessageRequest
+		if !h.decode(w, r, &req) {
+			return
+		}
+		out, err := h.backend.DeleteMessage(r.Context(), req)
 		if err != nil {
 			h.fail(w, err)
 			return
@@ -1038,6 +1158,90 @@ func (h *handler) decodeSend(w http.ResponseWriter, r *http.Request) (SendReques
 		// The bytes came from the file part; the description came from the
 		// request part. Both are needed to name what is being sent.
 		req.Media.Data = mediaData
+	}
+	return req, true
+}
+
+// decodeEdit reads the edit request's bounded multipart envelope. The JSON
+// request describes a complete replacement; the optional media part contains
+// only the new attachment bytes.
+func (h *handler) decodeEdit(w http.ResponseWriter, r *http.Request) (EditRequest, bool) {
+	if r.Method != http.MethodPost {
+		h.fail(w, NewError(CodeMethodNotAllowed, "method not allowed", 0))
+		return EditRequest{}, false
+	}
+	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		h.fail(w, NewError(CodeInvalidInput,
+			"the request body must be multipart/form-data with a request part and an optional media part", 0))
+		return EditRequest{}, false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, MaxSendMediaBytes+(64<<10))
+	reader := multipart.NewReader(r.Body, params["boundary"])
+	var (
+		req        EditRequest
+		sawRequest bool
+		mediaData  []byte
+		sawMedia   bool
+	)
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			h.fail(w, NewError(CodeInvalidInput, "the multipart body is not readable", 0))
+			return EditRequest{}, false
+		}
+		switch part.FormName() {
+		case "request":
+			if sawRequest {
+				h.fail(w, NewError(CodeInvalidInput, "the request part must appear once", 0))
+				return EditRequest{}, false
+			}
+			sawRequest = true
+			dec := json.NewDecoder(io.LimitReader(part, 1<<20))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&req); err != nil {
+				h.fail(w, NewError(CodeInvalidInput, "the request part is not valid", 0))
+				return EditRequest{}, false
+			}
+		case "media":
+			if sawMedia {
+				h.fail(w, NewError(CodeInvalidInput, "the media part must appear once", 0))
+				return EditRequest{}, false
+			}
+			sawMedia = true
+			data, err := io.ReadAll(io.LimitReader(part, MaxSendMediaBytes+1))
+			if err != nil || len(data) > MaxSendMediaBytes {
+				h.fail(w, NewError(CodeMediaTooLarge,
+					fmt.Sprintf("the attachment is larger than the %d byte limit", MaxSendMediaBytes), 0))
+				return EditRequest{}, false
+			}
+			mediaData = data
+		default:
+			h.fail(w, NewError(CodeInvalidInput, fmt.Sprintf("unknown multipart part %q", part.FormName()), 0))
+			return EditRequest{}, false
+		}
+	}
+	if !sawRequest {
+		h.fail(w, NewError(CodeInvalidInput, "the request part is missing", 0))
+		return EditRequest{}, false
+	}
+	if sawMedia && req.Media == nil {
+		h.fail(w, NewError(CodeInvalidInput, "the media part needs the request part to describe it", 0))
+		return EditRequest{}, false
+	}
+	if req.Media != nil && !sawMedia {
+		h.fail(w, NewError(CodeInvalidInput, "the request describes media but its bytes are missing", 0))
+		return EditRequest{}, false
+	}
+	if sawMedia {
+		req.Media.Data = mediaData
+	}
+	if req.ChannelID <= 0 || req.MessageID <= 0 || (req.Text == "" && req.Media == nil) {
+		h.fail(w, NewError(CodeInvalidInput, "the edit target must be positive and the replacement cannot be empty", 0))
+		return EditRequest{}, false
 	}
 	return req, true
 }

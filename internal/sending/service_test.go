@@ -716,6 +716,36 @@ func TestWCleanupRemovesWhatNothingClaimsAndKeepsWhatIsStillNeeded(t *testing.T)
 	}
 }
 
+// Test W2. Direct-send startup reconciliation shares the staging directory
+// with message edits, so it must keep files another durable operation owns.
+func TestCleanupKeepingPreservesOtherOperationsAttachments(t *testing.T) {
+	h := newHarness(t)
+	other, err := h.stage.Write(context.Background(), strings.NewReader("owned by an edit"),
+		staging.Meta{OriginalName: "replacement.bin"})
+	if err != nil {
+		t.Fatalf("Write other operation: %v", err)
+	}
+	orphan, err := h.stage.Write(context.Background(), strings.NewReader("nobody claims this"),
+		staging.Meta{OriginalName: "orphan.bin"})
+	if err != nil {
+		t.Fatalf("Write orphan: %v", err)
+	}
+
+	report, err := h.service.CleanupKeeping(context.Background(), []string{other.Name})
+	if err != nil {
+		t.Fatalf("CleanupKeeping: %v", err)
+	}
+	if report.AbandonedAttachments != 1 {
+		t.Fatalf("abandoned = %d, want only the unrelated orphan", report.AbandonedAttachments)
+	}
+	if _, err := h.stage.ReadAll(other.Name); err != nil {
+		t.Fatalf("the attachment owned by another operation was removed: %v", err)
+	}
+	if _, err := h.stage.ReadAll(orphan.Name); !errors.Is(err, staging.ErrNotFound) {
+		t.Fatalf("the orphan is still there: %v", err)
+	}
+}
+
 // Test X. An operation whose attachment is gone is stopped, and is never
 // reported as delivered.
 func TestXCleanupStopsAnOperationWhoseAttachmentIsGone(t *testing.T) {

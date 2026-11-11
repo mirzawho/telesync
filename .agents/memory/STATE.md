@@ -1,7 +1,22 @@
 # Current state
 
-**Updated:** 2026-11-09 (three pieces of work landed together. v0.0.4 direct
-asynchronous sending: `POST /api/v1/telegram/{key}/channels/{channel_id}/messages/send`
+**Updated:** 2026-11-11 (asynchronous full Telegram message replacement is
+implemented and recorded DONE in
+`.agents/handoffs/v0.0.4-telegram-message-edit.md`. `go test ./...`,
+`go build ./...`, `go vet ./...`, docs generation checks, and API docs tests
+pass. The new route uses a durable edit operation, channel `ActionUpdate`, the
+selected worker's native `messages.editMessage`, same-ID readback, and read-only
+status polling. Live Telegram/backend behavior remains unverified. The separate
+approved `.agents/handoffs/v0.0.4-channel-message-delete.md` remains in progress
+in the shared worktree; no live Telegram/Cat deletion was attempted. A
+repository-wide `gofmt -l .` reports one unrelated nested checkout file,
+`.claude/worktrees/full-message-replacement-api-b6e9bd/internal/rpc/rpc.go`;
+feature-owned Go packages and changed files are formatted. Earlier that day,
+the deletion preparation recorded its route/permission/RPC discovery and red
+tests. The
+2026-11-09 baseline state follows: three pieces of work landed together. v0.0.4
+direct asynchronous sending:
+`POST /api/v1/telegram/{key}/channels/{channel_id}/messages/send`
 composes and sends a message with an uploaded attachment, with no source message
 behind it, and is delivered by the durable queue after the `202` — see the
 section below. `POST /api/v1/telegram/{key}/messages` is now `/messages/copy`,

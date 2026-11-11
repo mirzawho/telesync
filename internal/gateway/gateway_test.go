@@ -93,6 +93,15 @@ type fakeWorker struct {
 	sentReq   rpc.SendRequest
 	send      rpc.SendResult
 	sendE     error
+
+	editCalls    int
+	editedReq    rpc.EditRequest
+	edit         rpc.EditResult
+	editE        error
+	deleteCalls  int
+	deleteReq    rpc.DeleteMessageRequest
+	deleteResult rpc.DeleteMessageResult
+	deleteE      error
 }
 
 func (f *fakeWorker) Health(context.Context) (rpc.Health, error) {
@@ -218,6 +227,24 @@ func (f *fakeWorker) SendMessage(_ context.Context, req rpc.SendRequest) (rpc.Se
 	f.sendCalls++
 	f.sentReq = req
 	return f.send, f.sendE
+}
+
+func (f *fakeWorker) EditMessage(_ context.Context, req rpc.EditRequest) (rpc.EditResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.editCalls++
+	f.editedReq = req
+	return f.edit, f.editE
+}
+
+func (f *fakeWorker) DeleteMessage(_ context.Context, req rpc.DeleteMessageRequest) (rpc.DeleteMessageResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.deleteCalls++
+	f.deleteReq = req
+	return f.deleteResult, f.deleteE
 }
 
 func (f *fakeWorker) callCount() int {
@@ -862,6 +889,16 @@ func (b *blockingWorker) Avatar(ctx context.Context, _ rpc.ChannelRef) (rpc.Avat
 func (b *blockingWorker) SendMessage(ctx context.Context, req rpc.SendRequest) (rpc.SendResult, error) {
 	<-ctx.Done()
 	return rpc.SendResult{}, ctx.Err()
+}
+
+func (b *blockingWorker) EditMessage(ctx context.Context, _ rpc.EditRequest) (rpc.EditResult, error) {
+	<-ctx.Done()
+	return rpc.EditResult{}, ctx.Err()
+}
+
+func (b *blockingWorker) DeleteMessage(ctx context.Context, _ rpc.DeleteMessageRequest) (rpc.DeleteMessageResult, error) {
+	<-ctx.Done()
+	return rpc.DeleteMessageResult{}, ctx.Err()
 }
 
 func (b *blockingWorker) CustomEmoji(ctx context.Context, _ int64) (rpc.MediaFile, error) {

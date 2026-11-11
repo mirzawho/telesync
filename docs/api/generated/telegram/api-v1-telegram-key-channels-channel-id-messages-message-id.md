@@ -7,8 +7,82 @@
 
 | Method | Path | Auth conditions | Success |
 | --- | --- | --- | --- |
+| DELETE | `/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}` | 2 | `200` |
 | GET | `/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}` | 2 | `200` |
+| PUT | `/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}` | — | — |
 
+## DELETE
+
+- **Handler:** `Server.deleteTelegramMessage` (delete_message.go)
+- **Success:** `writeJSON` with `envelope{ Data: data, Meta: metaFor(requestID, s.cfg.Now()), }`, status `StatusOK (200)`
+- **Documentation:** [telegram](../../manual/components/telegram.md)
+
+### Authorization conditions in the source
+
+- `authr.Allowed(kind, action, localID)  (access.go:visible)`
+- `authr.CanList(kind)  (access.go:visible)`
+
+What these mean for who may call the route is in the authentication paragraph; the conditions are checked, not interpreted.
+
+### Responses observed with an invalid probe value
+
+Each request below sent `not-a-valid-value` where the path has a variable, so a handler's validation answers. These are the actual statuses and bodies.
+
+| Caller | Request | Status | Shape |
+| --- | --- | --- | --- |
+| anonymous | `DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 401 | `unauthorized` |
+| operator | `DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
+| limited user | `DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
+| administrator | `DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
+
+<details><summary>anonymous: DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 401</summary>
+
+```json
+{"error":{"code":"unauthorized","message":"A valid access token is required; log in at /api/v1/auth/login first.","request_id":"docsgen"}}
+
+```
+
+</details>
+
+<details><summary>operator: DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+
+```json
+{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+
+```
+
+</details>
+
+<details><summary>limited user: DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+
+```json
+{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+
+```
+
+</details>
+
+<details><summary>administrator: DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+
+```json
+{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+
+```
+
+</details>
+
+### Responses captured from the documentation examples
+
+- `DELETE /api/v1/telegram/official/channels/1671633563/messages/1233` as operator → `200`
+
+<details><summary>DELETE /api/v1/telegram/official/channels/1671633563/messages/1233 → 200</summary>
+
+```json
+{"data":{"deleted":true,"connection":{"client_key":"official"},"channel_id":"1671633563","message_id":1233},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+
+```
+
+</details>
 ## GET
 
 - **Handler:** `Server.message` (gateway.go)
@@ -87,6 +161,57 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 ```json
 {"data":{"messages":[{"id":1,"date":"2026-10-25T09:00:00Z","text":"Documented post","sender":{"id":1,"name":"Documented","username":"documented"},"media":{"id":"1:1","type":"photo","label":"photo","mime_type":"image/jpeg","size":5,"url":"/telegram/official/channels/1671633563/messages/1/media"},"views":null,"reactions":[],"entities":[]}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+
+```
+
+</details>
+## PUT
+
+- **Handler:** `Server.` ()
+- **Documentation:** [telegram](../../manual/components/telegram.md)
+
+### Responses observed with an invalid probe value
+
+Each request below sent `not-a-valid-value` where the path has a variable, so a handler's validation answers. These are the actual statuses and bodies.
+
+| Caller | Request | Status | Shape |
+| --- | --- | --- | --- |
+| anonymous | `PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 401 | `unauthorized` |
+| operator | `PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
+| limited user | `PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
+| administrator | `PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
+
+<details><summary>anonymous: PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 401</summary>
+
+```json
+{"error":{"code":"unauthorized","message":"A valid access token is required; log in at /api/v1/auth/login first.","request_id":"docsgen"}}
+
+```
+
+</details>
+
+<details><summary>operator: PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+
+```json
+{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+
+```
+
+</details>
+
+<details><summary>limited user: PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+
+```json
+{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+
+```
+
+</details>
+
+<details><summary>administrator: PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+
+```json
+{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
 
 ```
 

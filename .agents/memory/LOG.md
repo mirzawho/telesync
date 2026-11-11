@@ -1,5 +1,20 @@
 # Log (newest last)
 
+## 2026-11-11 — Implement Telegram channel message deletion API (in progress)
+
+- User approved the named delete-message handoff. Implemented the selected
+  gateway route, local channel delete authorization, private RPC method, worker
+  same-channel message preflight, and gotd `channels.deleteMessages` call with
+  exactly one message id. Added typed Telegram refusal/not-found handling and
+  source API documentation.
+- `go test ./internal/rpc` passed. Isolated gotd adapter tests and worker
+  deletion tests passed with explicit file lists excluding incomplete,
+  concurrent message-edit compile paths.
+- Gateway tests and docs generation are blocked by the concurrent message-edit
+  code importing an `internal/editing` package with no non-test source files.
+  Package-wide gotd tests also hit an unused variable in concurrent `edit.go`.
+  No live Telegram operation was attempted.
+
 ## 2026-10-30 — `make version v1.0.2`; Docker Hub production/development images
 
 - Release command: `make version v1.0.2` -> `node web/scripts/version.mjs v1.0.2`
@@ -1714,3 +1729,64 @@ checkout has no credentials and none may be invented. Live delivery, a real
 flood wait, a real restart mid-send and the panel in a browser are unexercised.
 The source-based publisher's own voice handling landed with the merge above and
 is not part of this entry.
+
+## 2026-11-11 — Prepare v0.0.4 channel message deletion API
+
+- Created `.agents/handoffs/v0.0.4-channel-message-delete.md` with verified
+  gateway, permission, worker RPC, gotd and docs-generator seams and an ordered
+  implementation plan. Status is `AWAITING_APPROVAL`; this follows the
+  repository's prepare/implement handoff workflow.
+- Added `internal/gateway/delete_message_test.go` first. The focused run
+  `go test ./internal/gateway -run '^TestDeleteTelegramMessage' -count=1`
+  failed on the expected missing DELETE route (405), method Allow header,
+  validation and delete authorization; its missing-auth check passed (401).
+  This is a genuine Red. No production behavior or API docs changed.
+- Graphify's existing graph was behind HEAD, so it was refreshed for discovery.
+  This Graphify install has no `graph_stats` CLI or exposed MCP tool; node/edge
+  counts were read directly from graph JSON as a fallback. No live Telegram/Cat
+  deletion was attempted.
+
+## 2026-11-11 — Prepare asynchronous Telegram message edit API
+
+- Created `.agents/handoffs/v0.0.4-telegram-message-edit.md` at baseline
+  `d07e319`, with the verified direct-send, staging, queue, persistence, RPC,
+  gotd and API-doc paths; the handoff is `AWAITING_APPROVAL`.
+- Added `internal/gateway/message_edit_test.go` before production code. The
+  focused command
+  `go test ./internal/gateway -run '^TestMessageEditPUTIsAcceptedAsynchronously$' -count=1`
+  compiles and fails as expected: the current router returns `405` instead of
+  accepting the new PUT with `202`. No source behavior or API docs changed.
+- Graph stats: 11,333 nodes, 45,611 edges and 41 communities. The installed
+  Graphify MCP tool is not exposed and its CLI has no stats subcommand; stats
+  were computed directly from the saved graph, with targeted CLI query/explain
+  used for discovery. No live Telegram/Cat operation was made.
+- Open implementation decisions recorded in the handoff: the app-level,
+  channel-scoped edit grant and verified native media-removal support.
+
+## 2026-11-11 — Implement asynchronous Telegram message replacement
+
+- Added `PUT /api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}`
+  for complete asynchronous replacement and read-only status polling at
+  `/edit/{operation_id}`. JSON and multipart bodies share direct-send
+  validation/staging; each edit has a distinct durable record and queue kind,
+  idempotency fingerprint, target ordering, restart recovery and retention.
+- The worker rechecks the account's current channel `ActionUpdate`, applies
+  Telegram author/admin preflight on the selected connection, calls native
+  `messages.editMessage`, and reads back the original ID before recording
+  success. There is no send/delete fallback. Ambiguous mutations become
+  `unknown`; server media/group refusal and unverified media removal are
+  explicit failures. Shared staging cleanup retains attachments held by both
+  sends and edits.
+- API docs, examples, probes and the implementation handoff were updated using
+  `go run ./cmd/docsgen`. Product status matrix now records Telegram message
+  replacement as implemented; decision D68 captures the full-replacement and
+  permission boundaries.
+- Verified: `go test ./...`, `go build ./...`, `go vet ./...`,
+  `go run ./cmd/docsgen --check`, `go test ./internal/apidocs`, and
+  `git diff --check` pass. `gofmt -l` is empty for feature-owned Go packages
+  and changed files. Repository-wide `gofmt -l .` reports an unrelated file in
+  the nested `.claude/worktrees/full-message-replacement-api-b6e9bd` checkout;
+  it was left untouched.
+- Not verified: live Telegram account rights, edit windows, or backend support
+  for media removal. The concurrent, separately approved message-delete task
+  remains in progress and was preserved; no live Telegram operation occurred.

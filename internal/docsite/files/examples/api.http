@@ -77,6 +77,28 @@ GET /api/v1/telegram/official/channels/1671633563/messages/1233
 
 GET /api/v1/telegram/official/channels/1671633563/messages/1233/media
 
+# Delete one message from the selected Telegram client. Telegram must allow
+# that account to remove it.
+DELETE /api/v1/telegram/official/channels/1671633563/messages/1233
+
+# --- telegram: full message replacement ---------------------------------
+
+# Replace the complete content of an existing text-only message. A 202
+# response has a status URL; the original message ID remains 1233.
+PUT /api/v1/telegram/official/channels/1671633563/messages/1233/capture:operation_id
+Content-Type: application/json
+Idempotency-Key: edit-news-1233
+
+	{
+	  "text": "A complete replacement #news",
+	  "entities": [{"type": "hashtag", "offset": 23, "length": 5}],
+	  "media": null,
+	  "options": {"disable_web_page_preview": false}
+	}
+
+# Poll the edit operation without triggering it again.
+GET /api/v1/telegram/official/channels/1671633563/messages/1233/edit/{{operation_id}}
+
 # --- telegram: direct sending --------------------------------------------
 
 # A message composed for this channel, with no source message behind it. The

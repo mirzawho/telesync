@@ -63,9 +63,15 @@ type fakeBackend struct {
 	leaveE   error
 	gotOp    string
 
-	send    rpc.SendResult
-	sendE   error
-	gotSend rpc.SendRequest
+	send      rpc.SendResult
+	sendE     error
+	gotSend   rpc.SendRequest
+	edit      rpc.EditResult
+	editE     error
+	gotEdit   rpc.EditRequest
+	deleted   rpc.DeleteMessageResult
+	deleteE   error
+	gotDelete rpc.DeleteMessageRequest
 }
 
 func (f *fakeBackend) Health(context.Context) rpc.Health { return f.health }
@@ -172,6 +178,16 @@ func (f *fakeBackend) Leave(_ context.Context, ref rpc.ChannelRef) (rpc.LeaveRes
 func (f *fakeBackend) SendMessage(_ context.Context, req rpc.SendRequest) (rpc.SendResult, error) {
 	f.gotSend = req
 	return f.send, f.sendE
+}
+
+func (f *fakeBackend) DeleteMessage(_ context.Context, req rpc.DeleteMessageRequest) (rpc.DeleteMessageResult, error) {
+	f.gotDelete = req
+	return f.deleted, f.deleteE
+}
+
+func (f *fakeBackend) EditMessage(_ context.Context, req rpc.EditRequest) (rpc.EditResult, error) {
+	f.gotEdit = req
+	return f.edit, f.editE
 }
 
 // pipeListener yields exactly one pre-built connection to http.Server and then

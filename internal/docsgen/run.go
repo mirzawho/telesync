@@ -396,7 +396,7 @@ func routeHandlers(proj *project) map[string]map[string]handlerRef {
 		"/api/v1/telegram/{key}/channels/find":                  {http.MethodGet: h("find")},
 		"/api/v1/telegram/{key}/channels/{channel_id}":          {http.MethodGet: h("channel")},
 		"/api/v1/telegram/{key}/channels/{channel_id}/messages": {http.MethodGet: h("messages")},
-		"/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}":        {http.MethodGet: h("message")},
+		"/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}":        {http.MethodGet: h("message"), http.MethodDelete: h("deleteTelegramMessage")},
 		"/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/media":  {http.MethodGet: h("media")},
 		"/api/v1/telegram/{key}/channels/{channel_id}/messages/send":                {http.MethodPost: h("sendTelegramMessage")},
 		"/api/v1/telegram/{key}/channels/{channel_id}/messages/send/{operation_id}": {http.MethodGet: h("telegramSendStatus")},

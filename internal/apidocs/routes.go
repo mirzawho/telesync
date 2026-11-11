@@ -336,7 +336,8 @@ func VariablePath(pattern string) string {
 	return strings.ReplaceAll(pattern, Any, Variable)
 }
 
-// ExtractID reads the integer id from a response: data.id, or data.<field>.id.
+// ExtractID reads an id from a response: data.id, data.<field>.id, or a
+// top-level data.<field> scalar. Public operation IDs may be opaque strings.
 func ExtractID(body []byte, field string) (string, error) {
 	var decoded map[string]any
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
@@ -354,6 +355,12 @@ func ExtractID(body []byte, field string) (string, error) {
 	}
 	if object, ok := value.(map[string]any); ok {
 		value = object["id"]
+	}
+	if text, ok := value.(string); ok {
+		if strings.TrimSpace(text) == "" {
+			return "", fmt.Errorf("data.%s has an empty id", field)
+		}
+		return text, nil
 	}
 	number, ok := value.(json.Number)
 	if !ok {

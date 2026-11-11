@@ -51,7 +51,8 @@ var gatewayRoutes = []Route{
 	// segment, and a route table answers with the first rule that fits.
 	{Pattern: "/api/v1/telegram/{key}/channels/{channel_id}/messages/send", Methods: []string{http.MethodPost}, Probe: telegramKey},
 	{Pattern: "/api/v1/telegram/{key}/channels/{channel_id}/messages/send/{operation_id}", Methods: []string{http.MethodGet}, Probe: telegramKey},
-	{Pattern: "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}", Methods: []string{http.MethodGet}, Probe: telegramKey},
+	{Pattern: "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}", Methods: []string{http.MethodGet, http.MethodPut, http.MethodDelete}, Probe: telegramKey},
+	{Pattern: "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/edit/{operation_id}", Methods: []string{http.MethodGet}, Probe: telegramKey},
 	{Pattern: "/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/media", Methods: []string{http.MethodGet}, Probe: telegramKey},
 	{Pattern: "/api/v1/telegram/{key}/channels/{channel_id}/avatar", Methods: []string{http.MethodGet}, Probe: telegramKey},
 	{Pattern: "/api/v1/telegram/{key}/custom_emoji/{document_id}", Methods: []string{http.MethodGet}, Probe: telegramKey},

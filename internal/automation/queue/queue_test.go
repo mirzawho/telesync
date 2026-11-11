@@ -472,6 +472,59 @@ func TestIndependentTargetsRunInParallel(t *testing.T) {
 	_ = stuck
 }
 
+func TestMessageEditsSerializeOneTargetButLeaveOtherTargetsRunnable(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	user, err := h.store.CreateUser(ctx, "Editor", "editor", "$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA", true)
+	if err != nil {
+		t.Fatalf("create operation owner: %v", err)
+	}
+	enqueuer := queue.NewEnqueuer(h.store, 5)
+	edit := func(targetMessageID int64, fingerprint string) channelstore.MessageEditOperation {
+		h.t.Helper()
+		op, _, err := h.store.BeginMessageEditOperation(ctx, channelstore.MessageEditOperation{
+			UserID: user.ID, ClientKey: "cat", DestinationChannelID: "98", TargetMessageID: targetMessageID,
+			RequestPayload: `{"text":"replacement"}`, RequestFingerprint: fingerprint,
+		})
+		if err != nil {
+			h.t.Fatalf("begin edit operation: %v", err)
+		}
+		return op
+	}
+
+	first := edit(11, "first")
+	second := edit(11, "second")
+	other := edit(12, "other")
+	if err := enqueuer.EnqueueMessageEdit(ctx, first.PublicID, 9001); err != nil {
+		t.Fatalf("enqueue first edit: %v", err)
+	}
+	if err := enqueuer.EnqueueMessageEdit(ctx, second.PublicID, 9001); err != nil {
+		t.Fatalf("enqueue second edit: %v", err)
+	}
+	if err := enqueuer.EnqueueMessageEdit(ctx, other.PublicID, 9002); err != nil {
+		t.Fatalf("enqueue unrelated edit: %v", err)
+	}
+
+	claimed, ok, err := h.store.ClaimAutomationJob(ctx, channelstore.ClaimJobRequest{Worker: "w1", Lease: time.Minute})
+	if err != nil || !ok || claimed.EventID != first.PublicID {
+		t.Fatalf("first claim = %+v, ok=%v err=%v; want first target edit", claimed, ok, err)
+	}
+	next, ok, err := h.store.ClaimAutomationJob(ctx, channelstore.ClaimJobRequest{Worker: "w2", Lease: time.Minute})
+	if err != nil || !ok || next.EventID != other.PublicID {
+		t.Fatalf("while first target is held, claim = %+v ok=%v err=%v; want unrelated target", next, ok, err)
+	}
+	if err := h.store.CompleteAutomationJob(ctx, claimed.ID, "w1"); err != nil {
+		t.Fatalf("complete first edit: %v", err)
+	}
+	if err := h.store.CompleteAutomationJob(ctx, next.ID, "w2"); err != nil {
+		t.Fatalf("complete unrelated edit: %v", err)
+	}
+	last, ok, err := h.store.ClaimAutomationJob(ctx, channelstore.ClaimJobRequest{Worker: "w3", Lease: time.Minute})
+	if err != nil || !ok || last.EventID != second.PublicID {
+		t.Fatalf("last claim = %+v ok=%v err=%v; want next edit of same target", last, ok, err)
+	}
+}
+
 // A job whose kind this process does not handle must be put back untouched, not
 // failed: another process may own it, and burning an attempt would be a lie
 // about what happened.

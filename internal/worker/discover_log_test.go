@@ -127,6 +127,12 @@ func (s *scriptedTelegram) LeaveChannel(context.Context, tgapi.ChannelRef) error
 func (s *scriptedTelegram) SendMessage(context.Context, tgapi.ChannelRef, tgapi.SendRequest) (tgapi.SendResult, error) {
 	return tgapi.SendResult{}, errors.New("not scripted")
 }
+func (s *scriptedTelegram) EditMessage(context.Context, tgapi.ChannelRef, tgapi.EditRequest) (tgapi.EditResult, error) {
+	return tgapi.EditResult{}, errors.New("not scripted")
+}
+func (s *scriptedTelegram) DeleteMessage(context.Context, tgapi.Channel, int) error {
+	return errors.New("not scripted")
+}
 
 // serveWorker puts a worker service behind the RPC handler on a pipe.
 func serveWorker(t *testing.T, backend rpc.Backend) *http.Client {

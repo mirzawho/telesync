@@ -603,6 +603,15 @@ type CleanupReport struct {
 // has just been deleted is then unclaimed and the sweep below picks it up in
 // the same pass.
 func (s *Service) Cleanup(ctx context.Context) (CleanupReport, error) {
+	return s.CleanupKeeping(ctx, nil)
+}
+
+// CleanupKeeping reconciles this service's operation history and staged files,
+// while preserving any media names held by other operation types that share
+// the staging area. The caller must settle those operations first and pass
+// their remaining live media names here. Partial uploads are swept once, at
+// startup, by the caller that owns the shared staging lifecycle.
+func (s *Service) CleanupKeeping(ctx context.Context, additionalHeldMediaNames []string) (CleanupReport, error) {
 	var report CleanupReport
 
 	if s.HistoryRetention > 0 {
@@ -632,7 +641,7 @@ func (s *Service) Cleanup(ctx context.Context) (CleanupReport, error) {
 	if err != nil {
 		return report, err
 	}
-	keep := make(map[string]bool, len(held))
+	keep := make(map[string]bool, len(held)+len(additionalHeldMediaNames))
 	for _, op := range held {
 		switch op.Status {
 		case channelstore.SendSent, channelstore.SendFailed, channelstore.SendUnknown:
@@ -648,6 +657,11 @@ func (s *Service) Cleanup(ctx context.Context) (CleanupReport, error) {
 			continue
 		}
 		keep[op.MediaStagingName] = true
+	}
+	for _, name := range additionalHeldMediaNames {
+		if name != "" {
+			keep[name] = true
+		}
 	}
 
 	removed, err := s.Staging.Reconcile(func(name string) bool { return keep[name] })

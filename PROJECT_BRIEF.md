@@ -323,6 +323,7 @@ a new permission model opportunistically.
 | Local channel management (join, list, leave, detail snapshot) | Content management | IMPLEMENTED | `managed_channels`; join/leave routes; the detail answers the stored snapshot in the canonical channel object (D58); Telegram leave verified only by unit tests |
 | Channel history | Content acquisition | IMPLEMENTED | `messages.getHistory`; pagination by message id (deep pages restart) |
 | Single message, replies, media, media bytes | Content acquisition | IMPLEMENTED | `channels.getMessages` + downloader, 32 MiB cap |
+| Telegram message replacement | Content management | IMPLEMENTED | `PUT /api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}`; durable native edit and status polling; backend behavior **not live verified** |
 | Views and reactions | Message metadata | IMPLEMENTED | from the returned `tg.Message`; never stored; custom backend support unverified |
 | Telegram posting capability signal | Destination readiness | IMPLEMENTED | `permissions.new` from the channel object; `?capability=send` filters the listing, and the publish route revalidates it with Telegram |
 | Users and permissions | Access control | IMPLEMENTED | Argon2id + HS256; deny-by-default; per-resource allow/deny |
@@ -455,9 +456,9 @@ Whether it is enough, or per-destination publish rights are needed, is §11 #1.
 
 These do not change with the publishing phase:
 
-- **The API is read-only for Telegram content.** Reading history must never
-  mark messages read. The only Telegram writes are `join`, `leave` and — when
-  built — publishing.
+- **Reads are side-effect free.** Reading history must never mark messages read.
+  Telegram mutations happen only through explicit join, leave, publish/send,
+  message edit or single-message delete operations.
 - **No silent fallback.** A custom connection never reaches official Telegram,
   its CDN or its bundled keys. An unknown client key is 404; an unavailable
   worker 503; never another client.

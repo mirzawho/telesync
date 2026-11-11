@@ -1125,9 +1125,15 @@ func ObserveExamples(ctx context.Context, p apidocs.Prober, examples []apidocs.E
 		for name, id := range ids {
 			body = strings.ReplaceAll(body, "{{"+name+"}}", id)
 		}
-		rec := p.Do(ctx, ex.Method, path, operator.Authorization(), body)
+		credential := operator
+		caller := "operator"
+		if strings.Contains(path, "/edit/") || (ex.Method == http.MethodPut && strings.Contains(path, "/messages/")) {
+			credential = p.Administrator()
+			caller = "administrator"
+		}
+		rec := p.Do(ctx, ex.Method, path, credential.Authorization(), body)
 		snap := Snapshot{
-			Method: ex.Method, Path: path, Caller: "operator",
+			Method: ex.Method, Path: path, Caller: caller,
 			Status: rec.Code, Request: fmt.Sprintf("%s %s", ex.Method, path),
 		}
 		if capture != "" {
@@ -1148,6 +1154,11 @@ func ObserveExamples(ctx context.Context, p apidocs.Prober, examples []apidocs.E
 			if json.Unmarshal(snap.Body, &env) == nil && env.Error != nil {
 				snap.Code = env.Error.Code
 			}
+		}
+		if operationID := ids["operation_id"]; operationID != "" {
+			snap.Path = strings.ReplaceAll(snap.Path, operationID, "edit_01EXAMPLE")
+			snap.Request = strings.ReplaceAll(snap.Request, operationID, "edit_01EXAMPLE")
+			snap.Body = []byte(strings.ReplaceAll(string(snap.Body), operationID, "edit_01EXAMPLE"))
 		}
 		if snap.Status == http.StatusOK || snap.Status == http.StatusCreated ||
 			(snap.Status >= 400 && snap.Status < 500 && snap.Status != http.StatusNotFound && snap.Status != http.StatusMethodNotAllowed) {

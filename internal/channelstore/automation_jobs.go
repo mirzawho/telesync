@@ -126,7 +126,7 @@ type EnqueueJobRequest struct {
 // door rather than becoming permanent background noise.
 func knownJobKind(kind automation.JobKind) bool {
 	switch kind {
-	case automation.JobWebhookDelivery, automation.JobWorkflowRun, automation.JobTelegramMessageSend:
+	case automation.JobWebhookDelivery, automation.JobWorkflowRun, automation.JobTelegramMessageSend, automation.JobTelegramMessageEdit:
 		return true
 	}
 	return false

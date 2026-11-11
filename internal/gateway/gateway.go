@@ -21,6 +21,7 @@ import (
 
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/channelstore"
+	"github.com/mirza/telesync/internal/editing"
 	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/sending"
 )
@@ -48,6 +49,11 @@ type Worker interface {
 	// in. It is the only write to Telegram's content the gateway performs, and
 	// it is reached only from the publishing route.
 	SendMessage(ctx context.Context, req rpc.SendRequest) (rpc.SendResult, error)
+	// EditMessage replaces one existing message in place through this worker's
+	// connection; it never creates a new message.
+	EditMessage(ctx context.Context, req rpc.EditRequest) (rpc.EditResult, error)
+	// DeleteMessage deletes one existing message from this client's channel.
+	DeleteMessage(ctx context.Context, req rpc.DeleteMessageRequest) (rpc.DeleteMessageResult, error)
 }
 
 // Registry maps configured client keys to their workers.
@@ -117,6 +123,9 @@ type Config struct {
 	// attachments they uploaded, delivered in the background. Nil answers the
 	// send routes with 503 and changes nothing else.
 	Send *sending.Service
+	// Edit accepts and performs full replacements of existing Telegram
+	// messages in the background. Nil answers the edit routes with 503.
+	Edit *editing.Service
 	// PublicBaseURL is the externally reachable origin of this installation,
 	// the prefix a webhook receiver uses to open a media link. It is only read
 	// to refuse enabling a webhook that would have to send a relative URL; no
@@ -168,18 +177,21 @@ const (
 	CodeDuplicateSite         = "duplicate_site"
 	// Publishing failures. The prefix names the operation, so a client can
 	// tell a refused publish from an ordinary not-found.
-	CodePublishForbidden     = "publish_forbidden"
-	CodePublishSourceMissing = "publish_source_unavailable"
-	CodePublishSourceDenied  = "publish_source_forbidden"
-	CodePublishDestMissing   = "publish_destination_unavailable"
-	CodePublishDestDenied    = "publish_destination_forbidden"
-	CodePublishDenied        = "publish_permission_denied"
-	CodePublishUnsupported   = "publish_unsupported"
-	CodePublishMediaTooLarge = "publish_media_too_large"
-	CodePublishConflict      = "publish_idempotency_conflict"
-	CodePublishUnknown       = "publish_outcome_unknown"
-	CodePublishFailed        = "publish_failed"
-	CodePublishPartial       = "publish_partial_failure"
+	CodePublishForbidden       = "publish_forbidden"
+	CodeMessageDeleteForbidden = "message_delete_forbidden"
+	CodePublishSourceMissing   = "publish_source_unavailable"
+	CodePublishSourceDenied    = "publish_source_forbidden"
+	CodePublishDestMissing     = "publish_destination_unavailable"
+	CodePublishDestDenied      = "publish_destination_forbidden"
+	CodePublishDenied          = "publish_permission_denied"
+	CodeMessageEditForbidden   = "message_edit_forbidden"
+	CodeEditQueueUnavailable   = "edit_queue_unavailable"
+	CodePublishUnsupported     = "publish_unsupported"
+	CodePublishMediaTooLarge   = "publish_media_too_large"
+	CodePublishConflict        = "publish_idempotency_conflict"
+	CodePublishUnknown         = "publish_outcome_unknown"
+	CodePublishFailed          = "publish_failed"
+	CodePublishPartial         = "publish_partial_failure"
 	// CodePublishSourceMedia is the source attachment failing to be read. It is
 	// its own stage: nothing was sent anywhere, so the draft is intact and the
 	// caller may drop the attachment and publish the text alone.
@@ -376,7 +388,7 @@ func (s *Server) serveTelegram(w http.ResponseWriter, r *http.Request, requestID
 // routeTelegram is the per-resource part of the Telegram routes.
 func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *http.Request,
 	key string, worker Worker, resource string, segments []string, requestID string) {
-	// join, copy and send are the only state-changing routes. Everything else is
+	// join, copy, send, delete and edit are the state-changing routes. Everything else is
 	// read-only and answers 405 to anything but GET.
 	//
 	// /messages is no longer a route: copying a message lives at /messages/copy.
@@ -434,6 +446,36 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 		default:
 			s.notFound(w, requestID)
 		}
+		return
+	}
+	// A message id has three operations on the same path: GET reads the live
+	// message, PUT queues a complete replacement and DELETE removes it. Keep the
+	// method dispatch together so a new verb cannot be shadowed by an older arm.
+	if resource == "channels" && len(segments) == 5 && segments[3] == "messages" {
+		switch r.Method {
+		case http.MethodGet:
+			s.message(ctx, w, r, key, worker, segments[2], segments[4], requestID)
+		case http.MethodPut:
+			s.editTelegramMessage(ctx, w, r, key, segments[2], segments[4], requestID)
+		case http.MethodDelete:
+			s.deleteTelegramMessage(ctx, w, r, key, worker, segments[2], segments[4], requestID)
+		default:
+			w.Header().Set("Allow", "GET, PUT, DELETE")
+			s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+				"This message resource supports GET, PUT and DELETE.", requestID)
+		}
+		return
+	}
+	// The edit status is read-only and is named separately from the message's
+	// own id. Polling cannot start, retry or advance an edit operation.
+	if resource == "channels" && len(segments) == 7 && segments[3] == "messages" && segments[5] == "edit" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+				"Reading an edit operation is only GET.", requestID)
+			return
+		}
+		s.telegramMessageEditStatus(ctx, w, r, key, segments[2], segments[4], segments[6], requestID)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -977,6 +1019,9 @@ func classify(err error) (int, string, string) {
 			return http.StatusBadRequest, CodeInvalidInput, "The request was rejected by the Telegram client."
 		case rpc.CodeRateLimited:
 			return http.StatusTooManyRequests, CodeRateLimited, "Telegram is rate limiting this client."
+		case rpc.CodeMessageDeleteForbidden:
+			return http.StatusForbidden, CodeMessageDeleteForbidden,
+				"Telegram did not allow this message to be deleted."
 		case rpc.CodeChannelNotFound:
 			return http.StatusNotFound, CodeChannelNotFound, "The channel was not found for this client."
 		case rpc.CodeNotFound:

@@ -1262,3 +1262,11 @@ file with a name. A caller is never asked for a kind or an `is_voice` flag:
 destination refuses a voice send, the publication fails
 (`publish_unsupported`) and is never retried as a plain document — a silent
 downgrade reported as a success is the one outcome worse than the bug.
+
+## D68 — Existing Telegram messages are edited in place through a full-replacement operation
+
+**Decision.** Editing uses `PUT /api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}` as an asynchronous full replacement. The request always names the replacement text/entities and either uploads a replacement attachment or requests no media; there is no partial `keep_existing` mode. The operation uses a distinct durable record/job and calls `messages.editMessage` through the selected worker. It never sends a second message or deletes/recreates the target. Application permission is channel-scoped `ActionUpdate` after `visible()`, and Telegram's own author/admin/edit-window rules remain an independent remote check.
+
+**Why.** Direct send creates a new message and cannot preserve the target identity. A queued edit can outlive the HTTP caller, so it needs its own idempotency, recovery, status and authorization recheck. A readback of the same message ID is required before reporting success; an ambiguous response is terminal `unknown`, and media removal or server refusal is surfaced as unsupported when it cannot be verified.
+
+**How to apply.** Keep edit persistence separate from send history while sharing the staging area safely: cleanup must preserve files held by both operation types. Keep media-to-text explicit with `InputMediaEmpty`; only report success when the target's readback has no media. Never use `SendMessage` or delete/recreate as a fallback. The installed fake MTProto tests verify request shape and same-ID readback; live backend support and account-specific rights remain unverified.

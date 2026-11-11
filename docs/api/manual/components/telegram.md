@@ -117,6 +117,29 @@ listing and messages use numbers.
 History is newest first, paged by message id with the caveats in the pagination
 paragraph. The list body has no channel object: the channel is in the path.
 
+### Deleting one message
+
+`DELETE .../channels/{channel_id}/messages/{message_id}` asks the selected
+Telegram client to delete one existing message from that channel. The caller
+needs application `channel.delete` permission on the locally managed channel;
+the worker resolves the channel with its own Telegram account and confirms the
+message exists before requesting deletion. Telegram still decides whether that
+account may delete it. A successful response reports `data.deleted: true` only
+after Telegram confirms the request. This endpoint does not remove local channel
+inventory, automation history, or a published destination message.
+
+```http
+DELETE /api/v1/telegram/cat/channels/6/messages/36
+```
+
+The response identifies the selected client, channel and message. Invalid IDs
+answer `400 invalid_input`; a missing channel or message answers 404; an
+application permission failure answers 403 `forbidden`, while a Telegram
+refusal answers 403 `message_delete_forbidden`. Telegram rate limits answer 429
+with `Retry-After`.
+If the upstream result is ambiguous after a timeout, the API reports the
+timeout and does not retry the destructive request automatically.
+
 ### The `media` descriptor
 
 `media` on a message is a descriptor; `media.url` is the path that streams the

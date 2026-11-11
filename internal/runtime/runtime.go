@@ -16,6 +16,7 @@ import (
 
 	"github.com/mirza/telesync/internal/appconfig"
 	"github.com/mirza/telesync/internal/automation"
+	"github.com/mirza/telesync/internal/editing"
 	"github.com/mirza/telesync/internal/gateway"
 	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/sending"
@@ -110,6 +111,9 @@ type DaemonOptions struct {
 	// Send accepts and performs direct sends in the background. Nil answers the
 	// send routes with 503 and changes nothing else.
 	Send *sending.Service
+	// Edit accepts and performs full replacements of existing Telegram messages.
+	// Nil answers the edit routes with 503 and changes nothing else.
+	Edit *editing.Service
 	// WordPress is the local WordPress site store. Nil answers the WordPress
 	// site routes with 503.
 	WordPress gateway.WordPressStore
@@ -226,6 +230,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		Categories:      opts.Categories,
 		Publishes:       opts.Publishes,
 		Send:            opts.Send,
+		Edit:            opts.Edit,
 		WordPress:       opts.WordPress,
 		WordPressClient: opts.WordPressClient,
 		Secrets:         opts.Secrets,
@@ -340,6 +345,8 @@ type WorkerManager interface {
 	DownloadCustomEmoji(ctx context.Context, documentID int64) (tgapi.EmojiFile, error)
 	LeaveChannel(ctx context.Context, ref tgapi.ChannelRef) error
 	SendMessage(ctx context.Context, ref tgapi.ChannelRef, req tgapi.SendRequest) (tgapi.SendResult, error)
+	EditMessage(ctx context.Context, ref tgapi.ChannelRef, req tgapi.EditRequest) (tgapi.EditResult, error)
+	DeleteMessage(ctx context.Context, channel tgapi.Channel, messageID int) error
 	// Wait blocks until the client has fully stopped, so the worker can flush
 	// its session before the process exits.
 	Wait(ctx context.Context) error

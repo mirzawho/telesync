@@ -103,6 +103,14 @@ func (documentedWorker) SendMessage(_ context.Context, req rpc.SendRequest) (rpc
 	}, nil
 }
 
+func (documentedWorker) EditMessage(_ context.Context, req rpc.EditRequest) (rpc.EditResult, error) {
+	return rpc.EditResult{Message: &rpc.Message{ID: req.MessageID, Text: req.Text}}, nil
+}
+
+func (documentedWorker) DeleteMessage(_ context.Context, req rpc.DeleteMessageRequest) (rpc.DeleteMessageResult, error) {
+	return rpc.DeleteMessageResult{Deleted: true}, nil
+}
+
 func (documentedWorker) Leave(context.Context, rpc.ChannelRef) (rpc.LeaveResult, error) {
 	return rpc.LeaveResult{}, nil
 }
@@ -133,7 +141,11 @@ func documentedRecord() channelstore.Channel {
 	}
 }
 
-func (managedStore) Get(context.Context, string, int64) (channelstore.Channel, bool, error) {
+func (managedStore) Get(_ context.Context, clientKey string, telegramID int64) (channelstore.Channel, bool, error) {
+	if clientKey == "official" && telegramID == 1671633563 {
+		return channelstore.Channel{ID: 2, ClientKey: clientKey, ChannelID: telegramID, PeerType: channelstore.PeerChannel,
+			Title: "Documented channel", MembershipStatus: channelstore.StatusMember}, true, nil
+	}
 	return channelstore.Channel{}, false, nil
 }
 
