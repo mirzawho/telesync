@@ -130,6 +130,32 @@ func TestAMediaDescriptorKeepsItsVoiceSemanticsOverJSON(t *testing.T) {
 	}
 }
 
+func TestVideoMetadataAndOpaqueAlbumIDSurviveJSON(t *testing.T) {
+	in := rpc.Message{
+		ID:        101,
+		GroupedID: "9007199254740993",
+		Media: &rpc.Media{
+			Type: "video", MimeType: "video/mp4", Duration: 17,
+			Width: 1920, Height: 1080, SupportsStreaming: true,
+		},
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !bytes.Contains(raw, []byte(`"grouped_id":"9007199254740993"`)) {
+		t.Fatalf("grouped id was not preserved as a string: %s", raw)
+	}
+	var out rpc.Message
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out.GroupedID != in.GroupedID || out.Media == nil || out.Media.Type != "video" ||
+		out.Media.Width != 1920 || out.Media.Height != 1080 || !out.Media.SupportsStreaming || out.Media.Duration != 17 {
+		t.Fatalf("round trip = %+v", out)
+	}
+}
+
 // A message that is not a voice recording reports none, and the JSON carries no
 // empty fields claiming otherwise.
 func TestAMediaDescriptorWithoutVoiceReportsNone(t *testing.T) {

@@ -27,6 +27,7 @@ export function mediaKind(media: MessageMedia): MediaKind {
       return "image"
     case "video":
     case "gif":
+    case "round_video":
       return "video"
     case "audio":
     case "voice":

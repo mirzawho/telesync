@@ -135,6 +135,47 @@ function mergeMessages(
   }
 }
 
+// mergeLatest reconciles a confirmed message read without resetting the loaded
+// pagination window. Incoming copies replace the same message ID; duplicate IDs
+// inside an answer are folded once and chronological order is retained.
+export function mergeLatest(
+  state: TimelineState,
+  incoming: readonly ChannelMessage[],
+  hasMore: boolean
+): TimelineState {
+  const byID = new Map(state.messages.map((message) => [message.id, message]))
+  for (const message of incoming) {
+    if (Number.isInteger(message?.id) && message.id > 0) {
+      byID.set(message.id, message)
+    }
+  }
+  return {
+    ...state,
+    messages: [...byID.values()].sort(ascending),
+    hasOlder: state.page > 0 ? state.hasOlder : hasMore,
+    isNewest: true,
+    gap: false,
+    stalled: false,
+    walkingNewer: false,
+  }
+}
+
+export function replaceMessage(
+  state: TimelineState,
+  message: ChannelMessage
+): TimelineState {
+  const index = state.messages.findIndex((item) => item.id === message.id)
+  if (index < 0) return state
+  const messages = [...state.messages]
+  messages[index] = message
+  return { ...state, messages }
+}
+
+export function removeMessage(state: TimelineState, messageID: number): TimelineState {
+  const messages = state.messages.filter((message) => message.id !== messageID)
+  return messages.length === state.messages.length ? state : { ...state, messages }
+}
+
 // applyBatch folds one API answer into the timeline.
 //
 // The three directions answer three different questions. `initial` opens at the

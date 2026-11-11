@@ -77,6 +77,20 @@ const maxDurationSeconds = 24 * 60 * 60
 // from Media: a caller can name a kind and send no file, or send a file and
 // name no kind, and those are two different mistakes with two different fixes.
 func ValidateDirect(req DirectSendRequest, hasAttachment bool) error {
+	return validateDirect(req, hasAttachment, false)
+}
+
+// ValidateDirectEdit validates one full message replacement. keepExistingMedia
+// permits empty text only when the edit explicitly retains the target's
+// existing attachment; direct-send validation remains unchanged.
+func ValidateDirectEdit(req DirectSendRequest, hasAttachment, keepExistingMedia bool) error {
+	if keepExistingMedia && (hasAttachment || req.Media != nil) {
+		return errors.New("existing media cannot be kept while replacing media")
+	}
+	return validateDirect(req, hasAttachment, keepExistingMedia)
+}
+
+func validateDirect(req DirectSendRequest, hasAttachment, keepExistingMedia bool) error {
 	if req.Media != nil && !knownDirectMediaKind(req.Media.Kind) {
 		return fmt.Errorf("media.kind must be one of %q, %q, %q, %q or %q",
 			DirectMediaPhoto, DirectMediaVideo, DirectMediaAudio, DirectMediaVoice, DirectMediaDocument)
@@ -94,7 +108,7 @@ func ValidateDirect(req DirectSendRequest, hasAttachment bool) error {
 
 	// A message is text or an attachment or both. Neither at all is not a
 	// message, and an empty body is not sent to say nothing.
-	if strings.TrimSpace(req.Text) == "" && !hasAttachment {
+	if strings.TrimSpace(req.Text) == "" && !hasAttachment && !keepExistingMedia {
 		return errors.New("text must not be empty when no attachment is sent")
 	}
 

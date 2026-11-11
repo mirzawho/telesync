@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gotd/td/tg"
@@ -54,6 +55,7 @@ func normalizeMessage(msg *tg.Message, users map[int64]*tg.User) tgapi.Message {
 		ID:               msg.ID,
 		Date:             MessageDate(msg.Date),
 		Text:             msg.Message,
+		GroupedID:        groupedID(msg.GroupedID),
 		Sender:           SenderOf(msg, users),
 		ReplyToMessageID: ReplyToMessageID(msg),
 		Views:            Views(msg),
@@ -62,16 +64,27 @@ func normalizeMessage(msg *tg.Message, users map[int64]*tg.User) tgapi.Message {
 	}
 	if kind := MediaType(msg.Media); kind != "" {
 		out.Media = &tgapi.Media{
-			Type:     kind,
-			Label:    MediaLabel(kind),
-			Filename: MediaFileName(msg.Media),
-			MimeType: MediaMimeType(msg.Media),
-			Size:     MediaSize(msg.Media),
-			Duration: MediaDuration(msg.Media),
-			Waveform: MediaWaveform(msg.Media),
+			Type:              kind,
+			Label:             MediaLabel(kind),
+			Filename:          MediaFileName(msg.Media),
+			MimeType:          MediaMimeType(msg.Media),
+			Size:              MediaSize(msg.Media),
+			Duration:          MediaDuration(msg.Media),
+			Waveform:          MediaWaveform(msg.Media),
+			Width:             MediaWidth(msg.Media),
+			Height:            MediaHeight(msg.Media),
+			SupportsStreaming: MediaSupportsStreaming(msg.Media),
+			RoundMessage:      MediaRoundMessage(msg.Media),
 		}
 	}
 	return out
+}
+
+func groupedID(id int64) string {
+	if id == 0 {
+		return ""
+	}
+	return strconv.FormatInt(id, 10)
 }
 
 // findMessage picks the message by id out of a getMessages result.

@@ -4,9 +4,12 @@ import {
   applyBatch,
   beginLoad,
   failLoad,
+  mergeLatest,
   MESSAGE_PAGE_SIZE,
   nextRequest,
   resetTimeline,
+  removeMessage as removeTimelineMessage,
+  replaceMessage as replaceTimelineMessage,
   retry as retryDirection,
   type Direction,
   type TimelineState,
@@ -25,10 +28,15 @@ import type { ChannelMessage } from "@/lib/types"
 
 export { MESSAGE_PAGE_SIZE }
 
-export function useMessageTimeline(channelId: number | null) {
+export function useMessageTimeline(channelId: number | null, identity = "") {
   const [state, setState] = React.useState<TimelineState>(() => resetTimeline(channelId))
+  const owner = React.useRef({ channelId, identity })
+  const visibleState =
+    owner.current.channelId === channelId && owner.current.identity === identity
+      ? state
+      : resetTimeline(channelId)
   const stateRef = React.useRef(state)
-  stateRef.current = state
+  stateRef.current = visibleState
 
   // Every request carries the generation it was made under. A channel change
   // bumps it, so an answer from the previous channel can never be spliced into
@@ -39,16 +47,72 @@ export function useMessageTimeline(channelId: number | null) {
     page: number
     controller: AbortController
   } | null>(null)
+  const refreshes = React.useRef(new Set<AbortController>())
 
   React.useEffect(() => {
+    owner.current = { channelId, identity }
     generation.current++
     inFlight.current?.controller.abort()
     inFlight.current = null
+    for (const controller of refreshes.current) controller.abort()
+    refreshes.current.clear()
     // The ref is written here as well as through the render, so a request made
     // in this same commit sees the new channel and not the one just left.
     const fresh = resetTimeline(channelId)
     stateRef.current = fresh
     setState(fresh)
+  }, [channelId, identity])
+
+  // refreshLoaded rereads the loaded local pages after a confirmed remote
+  // mutation. It folds fresh copies by message ID, preserving page depth and
+  // scroll anchoring while replacing stale text/media metadata.
+  const refreshLoaded = React.useCallback(async (targetID?: number) => {
+    if (channelId === null) return null
+    const token = getToken()
+    if (!token) throw new Error("نشست شما معتبر نیست.")
+    const controller = new AbortController()
+    refreshes.current.add(controller)
+    const gen = generation.current
+    const pageCount = Math.max(1, stateRef.current.page)
+    let target: ChannelMessage | null = null
+    try {
+      for (let page = 1; page <= pageCount; page++) {
+        const { data, meta } = await apiRequest<{ messages?: ChannelMessage[] }>(
+          "GET",
+          `/local/channels/${channelId}/messages`,
+          { token, query: { page, per_page: MESSAGE_PAGE_SIZE }, signal: controller.signal }
+        )
+        if (gen !== generation.current || controller.signal.aborted) return null
+        const messages = data?.messages ?? []
+        if (targetID !== undefined) {
+          target = messages.find((message) => message.id === targetID) ?? target
+        }
+        setState((current) =>
+          current.channelId === channelId
+            ? mergeLatest(current, messages, readHasMore(meta, page))
+            : current
+        )
+      }
+      return target
+    } finally {
+      refreshes.current.delete(controller)
+    }
+  }, [channelId])
+
+  const replaceMessage = React.useCallback((message: ChannelMessage) => {
+    setState((current) =>
+      current.channelId === channelId
+        ? replaceTimelineMessage(current, message)
+        : current
+    )
+  }, [channelId])
+
+  const removeMessage = React.useCallback((messageID: number) => {
+    setState((current) =>
+      current.channelId === channelId
+        ? removeTimelineMessage(current, messageID)
+        : current
+    )
   }, [channelId])
 
   const request = React.useCallback(
@@ -132,13 +196,16 @@ export function useMessageTimeline(channelId: number | null) {
   }, [state, request])
 
   return {
-    state,
+    state: visibleState,
     requestOlder: React.useCallback(() => request("older"), [request]),
     requestNewer: React.useCallback(() => request("newer"), [request]),
     retry: React.useCallback(
       (direction: "older" | "newer") => setState((s) => retryDirection(s, direction)),
       []
     ),
+    refreshLoaded,
+    replaceMessage,
+    removeMessage,
   }
 }
 

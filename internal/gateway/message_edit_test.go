@@ -158,6 +158,48 @@ func TestMessageEditRequiresTheTextField(t *testing.T) {
 	}
 }
 
+func TestMessageEditCanExplicitlyKeepExistingMedia(t *testing.T) {
+	s, jobs := editEnv(t)
+	grantMessageEdit(t, s, true)
+	resp := s.send(t, defaultCaller, http.MethodPut, editPath,
+		`{"text":"caption only","entities":[],"keep_media":true}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (%s)", resp.StatusCode, readBody(t, resp))
+	}
+	if len(jobs.enqueued) != 1 {
+		t.Fatalf("edit jobs enqueued = %d, want one", len(jobs.enqueued))
+	}
+	op, found, err := s.accountEnv.store.MessageEditOperation(context.Background(), jobs.enqueued[0])
+	if err != nil || !found {
+		t.Fatalf("read accepted edit: found=%v err=%v", found, err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(op.RequestPayload), &payload); err != nil {
+		t.Fatalf("decode stored replacement: %v", err)
+	}
+	if payload["keep_media"] != true || payload["media"] != nil {
+		t.Fatalf("stored payload = %#v; want explicit keep_media without replacement media", payload)
+	}
+}
+
+func TestMessageEditRejectsKeepMediaAlongsideReplacementFile(t *testing.T) {
+	s, jobs := editEnv(t)
+	grantMessageEdit(t, s, true)
+	body, contentType := multipartSend(t, []multipartPart{
+		{name: "payload", value: `{"text":"caption","entities":[],"media":{"kind":"photo"},"keep_media":true}`},
+		{name: "file", filename: "new.jpg", contentType: "image/jpeg", value: "\xff\xd8\xff\xe0\x00\x10JFIF"},
+	})
+	resp := s.sendBody(t, defaultCaller, http.MethodPut, editPath, contentType, body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (%s)", resp.StatusCode, readBody(t, resp))
+	}
+	if len(jobs.enqueued) != 0 {
+		t.Fatalf("incompatible edit enqueued %d operations", len(jobs.enqueued))
+	}
+}
+
 func TestMessageEditMultipartStagesOneReplacementFile(t *testing.T) {
 	s, jobs := editEnv(t)
 	grantMessageEdit(t, s, true)

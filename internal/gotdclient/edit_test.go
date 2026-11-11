@@ -83,6 +83,36 @@ func TestEditMessageUsesNativeMethodAndReadsBackTheSameTarget(t *testing.T) {
 	}
 }
 
+func TestEditMessageKeepMediaOmitsTelegramMediaFlag(t *testing.T) {
+	var edited tg.MessagesEditMessageRequest
+	self := &tg.User{ID: 1, Username: "me"}
+	l, key := startPanelServer(t, self, &panelServer{}, editChannelResolver(), func(d *tgtest.Dispatcher) {
+		d.HandleFunc(tg.MessagesEditMessageRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+			if err := edited.Decode(req.Buf); err != nil {
+				return err
+			}
+			return server.SendResult(req, &tg.Updates{})
+		})
+		d.HandleFunc(tg.ChannelsGetMessagesRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+			return server.SendResult(req, &tg.MessagesChannelMessages{
+				Messages: []tg.MessageClass{&tg.Message{ID: 11, Message: "caption", PeerID: &tg.PeerChannel{ChannelID: 500}}},
+			})
+		})
+	})
+	m := managerFor(t, l, key)
+	waitForState(t, m, tgapi.StateReady)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := m.EditMessage(ctx, tgapi.ChannelRef{ID: 500}, tgapi.EditRequest{
+		MessageID: 11, Text: "caption", KeepMedia: true,
+	}); err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	if edited.Media != nil || edited.Flags.Has(14) {
+		t.Fatalf("edit media=%T flags=%v; keep must omit Telegram's optional media field", edited.Media, edited.Flags)
+	}
+}
+
 func TestEditMessageVoiceReplacementPreservesTheVoiceDocumentAttribute(t *testing.T) {
 	var edited tg.MessagesEditMessageRequest
 	self := &tg.User{ID: 1, Username: "me"}

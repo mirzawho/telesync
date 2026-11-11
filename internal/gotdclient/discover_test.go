@@ -272,6 +272,32 @@ func TestFindByUsernameResolvesAndDescribesTheChannel(t *testing.T) {
 	}
 }
 
+func TestFindByUsernameUsesChannelCreatorFlagWithoutAdminRights(t *testing.T) {
+	creator := memberChannel()
+	creator.Creator = true
+	// Telegram's creator flag is authoritative on its own; creator channel
+	// objects need not carry a separate admin_rights constructor.
+	backend := &discoveryBackend{
+		resolveUsername: func(*tg.ContactsResolveUsernameRequest) ([]tg.ChatClass, error) {
+			return []tg.ChatClass{creator}, nil
+		},
+	}
+	m := managerWithPeers(t, backend)
+	ctx, cancel := ctxTimeout(t)
+	defer cancel()
+
+	got, err := m.FindChannels(ctx, tgapi.ChannelQuery{Kind: tgapi.QueryUsername, Username: "example"})
+	if err != nil {
+		t.Fatalf("FindChannels: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("channels = %+v, want creator channel", got)
+	}
+	if got[0].Permissions != (tgapi.Permissions{New: true, Edit: true, Delete: true, Read: true}) {
+		t.Fatalf("creator permissions = %+v, want all channel-level capabilities", got[0].Permissions)
+	}
+}
+
 func TestFindByUsernameReturnsEmptyForAnOccupiedNonChannel(t *testing.T) {
 	backend := &discoveryBackend{
 		resolveUsername: func(*tg.ContactsResolveUsernameRequest) ([]tg.ChatClass, error) {
@@ -452,6 +478,22 @@ func TestFindByNumericIDNeedsPeerInformation(t *testing.T) {
 	_, err := m.FindChannels(ctx, tgapi.ChannelQuery{Kind: tgapi.QueryID, ChannelID: 999})
 	if !errors.Is(err, tgapi.ErrNumericIDUnresolved) {
 		t.Fatalf("err = %v, want ErrNumericIDUnresolved", err)
+	}
+}
+
+func TestResolveChannelDoesNotTreatReconstructedDialogAsAuthoritative(t *testing.T) {
+	backend := &discoveryBackend{
+		getChannels: func([]tg.InputChannelClass) ([]tg.ChatClass, error) {
+			return nil, errors.New("channel lookup unavailable")
+		},
+	}
+	m := managerWithPeers(t, backend)
+	ctx, cancel := ctxTimeout(t)
+	defer cancel()
+
+	got, err := m.ResolveChannel(ctx, tgapi.ChannelRef{ID: 500})
+	if err == nil {
+		t.Fatalf("ResolveChannel returned incomplete reconstructed state as success: %+v", got)
 	}
 }
 

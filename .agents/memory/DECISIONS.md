@@ -968,15 +968,16 @@ the only omission from `web/` is a handful of scaffold component files no
 product code uses. A tarball was written outside the repository before
 deletion. Do not reintroduce it.
 
-## D58 — One channel object for both channel detail routes; the local one reads the snapshot
+## D58 — One channel object for both detail routes; local permissions are live
 
 **Decision.** `GET /api/v1/local/channels/{id}` answers the same `channelView`
 object as `GET /api/v1/telegram/{key}/channels/{channel_id}` (one struct,
 `internal/gateway/channels.go`, built by one function), differing only in its
-values and in the `avatar_url` route. The local route builds it from the
-`managed_channels` row (`localChannelDetail` in `local_channels.go`) and asks no
-worker; `id` is Telegram's channel id as a string, and the local row id stays
-in the path. The listing `GET /local/channels` keeps its record shape (local
+values and in the `avatar_url` route. The local route builds metadata from the
+`managed_channels` row (`localChannelDetail` in `local_channels.go`) and resolves
+current Telegram permissions through that row's `client_key` worker using its
+remote `channel_id`; `id` is Telegram's channel id as a string, and the local
+row id stays in the path. The listing `GET /local/channels` keeps its record shape (local
 `id`, `client_key`, numeric `channel_id`, timestamps), because it addresses
 records. Migration 6 adds `verified`/`scam`/`fake`/`notices_known`,
 `permission_new|edit|delete|read`/`permissions_known`, and
@@ -987,17 +988,21 @@ carries `has_photo`, so a record can say a photo exists without its version.
 
 **Why.** The admin panel needed channel metadata the local API did not answer,
 and the response to that must not be a panel-specific endpoint: one contract,
-two legitimate sources. The snapshot is what the join recorded, so it is
-honest, works while Telegram is down, and can be stale — documented as such.
+two legitimate sources. Stored metadata remains useful while Telegram is down,
+but Telegram capabilities can change after registration, so local detail must
+not report a stale or unknown permission snapshot as current rights. If the
+selected worker cannot resolve them, the detail request fails rather than
+implying a permission denial.
 
-**How to apply.** A new field on the channel object is added to `channelView`
-and to migration-set columns that the join writes, never to one route only. The
-local route never calls the worker; a missing value is `false`/`null`, and
-`NoticesKnown`/`PermissionsKnown` say whether it was ever reported. The
-frontend's `ChannelDetail` mirrors `channelView`; `channel.id` is never a local
-id (the page URL carries the local one). The avatar detail route does not
-pre-check the photo through the worker: the photo is discovered on the avatar
-route itself.
+**How to apply.** A new persistent metadata field belongs in `channelView` and
+the migration-set columns the join writes, never only one route. Local detail
+authorizes the local row first, then calls only its mapped worker with the
+Telegram ID under the normal request timeout. It overlays only live permissions
+in the response and never writes SQLite. Lists keep their record shape; detail
+does not present stored permission values as current. The frontend's
+`ChannelDetail` mirrors `channelView`; `channel.id` is never a local id (the
+page URL carries the local one). The avatar detail route does not pre-check the
+photo through the worker: the photo is discovered on the avatar route itself.
 
 ## D59 — A publishing attempt is recorded so a retry cannot post twice
 

@@ -80,7 +80,9 @@ export async function apiRequest<T>(
   if (options.token) {
     headers.Authorization = `Bearer ${options.token}`
   }
-  if (options.body !== undefined) {
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData
+  if (options.body !== undefined && !isFormData) {
     headers["Content-Type"] = "application/json"
   }
 
@@ -90,7 +92,11 @@ export async function apiRequest<T>(
       method,
       headers,
       body:
-        options.body === undefined ? undefined : JSON.stringify(options.body),
+        options.body === undefined
+          ? undefined
+          : isFormData
+            ? (options.body as FormData)
+            : JSON.stringify(options.body),
       // A caller's signal ends only the request it owns; a superseded search
       // aborts its own and the timeout of a call still running stays intact.
       signal: options.signal

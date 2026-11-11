@@ -51,6 +51,12 @@ type Worker interface {
 	SendMessage(ctx context.Context, req rpc.SendRequest) (rpc.SendResult, error)
 }
 
+// AlbumWorker is the optional native album capability. A worker without it is
+// refused explicitly; callers never fall back to individual sends.
+type AlbumWorker interface {
+	SendAlbum(ctx context.Context, req rpc.SendAlbumRequest) (rpc.SendAlbumResult, error)
+}
+
 // Registry maps a configured client key to its worker. An unknown key is an
 // error, never a fallback to another client.
 type Registry interface {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/mirza/telesync/internal/channelstore"
@@ -210,11 +211,111 @@ func TestLocalChannelDetailIdentifiesTheChannelByItsTelegramID(t *testing.T) {
 	}
 }
 
-func TestLocalChannelDetailIsTheStoredSnapshotNotTelegram(t *testing.T) {
+func TestLocalChannelDetailUsesLivePermissionsForUnknownSnapshot(t *testing.T) {
+	env, workers := channelsEnv(t, "official", "the-cat")
+	row := env.localRow(t, "the-cat", 98, "Stored title", "linkdooni")
+	// The other server knows the same numeric remote id but a different role.
+	env.localRow(t, "official", 98, "Different channel", "other")
+	workers["the-cat"].channel = rpc.ChannelResult{Channel: rpc.ChannelInfo{
+		ID: "98", Title: "Live title", IsMember: true, MembershipStatus: "member",
+		Permissions: rpc.Permissions{New: true, Edit: true, Delete: true, Read: true},
+	}}
+	workers["official"].channel = rpc.ChannelResult{Channel: rpc.ChannelInfo{
+		ID: "98", Title: "Other connection", IsMember: true, MembershipStatus: "member",
+		Permissions: rpc.Permissions{Read: true},
+	}}
+	officialCalls := workers["official"].callCount()
+	catCalls := workers["the-cat"].callCount()
+
+	resp := env.send(t, defaultCaller, http.MethodGet, fmt.Sprintf("%s/%d", localChannelsPath, row.ID), "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("local detail = %d: %s", resp.StatusCode, readAll(t, resp))
+	}
+	channel := channelObjectsOf(t, readAll(t, resp))
+	if channel["id"] != "98" || channel["title"] != "Stored title" {
+		t.Errorf("local metadata = id %v title %v; want remote id 98 and stored title", channel["id"], channel["title"])
+	}
+	permissions := channel["permissions"].(map[string]any)
+	for name, value := range map[string]bool{"new": true, "edit": true, "delete": true, "read": true} {
+		if permissions[name] != value {
+			t.Errorf("live permission %s = %v, want %v; all permissions = %+v", name, permissions[name], value, permissions)
+		}
+	}
+	if got := workers["the-cat"].callCount(); got != catCalls+1 {
+		t.Errorf("stored connection worker calls = %d, want %d", got, catCalls+1)
+	}
+	if got := workers["official"].callCount(); got != officialCalls {
+		t.Errorf("other connection worker calls = %d, want unchanged %d", got, officialCalls)
+	}
+	workers["the-cat"].mu.Lock()
+	ref := workers["the-cat"].lastRef
+	workers["the-cat"].mu.Unlock()
+	if ref.ChannelID != 98 {
+		t.Errorf("worker remote channel id = %d, want 98 (local row id %d must not be used)", ref.ChannelID, row.ID)
+	}
+	stored, found, err := env.store.GetByID(context.Background(), row.ID)
+	if err != nil || !found {
+		t.Fatalf("stored row found=%v err=%v", found, err)
+	}
+	if stored.PermissionsKnown || stored.Permissions != (tgapi.Permissions{}) {
+		t.Errorf("GET mutated stored permission snapshot: %+v known=%v", stored.Permissions, stored.PermissionsKnown)
+	}
+	if !stored.UpdatedAt.Equal(row.UpdatedAt) || !stored.LastSyncedAt.Equal(row.LastSyncedAt) {
+		t.Errorf("GET changed stored timestamps: updated %v → %v, synced %v → %v",
+			row.UpdatedAt, stored.UpdatedAt, row.LastSyncedAt, stored.LastSyncedAt)
+	}
+}
+
+func TestLocalChannelDetailIncludesMappedClientKeyForExplorerDestination(t *testing.T) {
+	env, workers := channelsEnv(t, "cat", "official")
+	// Match the reported local identity: local row 2 maps to remote channel 98
+	// on the Cat connection. Detail must expose the existing mapping, not ask
+	// the frontend to infer it from the server filter or username.
+	env.localRow(t, "official", 17, "Other", "")
+	row := env.localRow(t, "cat", 98, "لینکدونی", "linkdooni")
+	workers["cat"].channel = rpc.ChannelResult{Channel: rpc.ChannelInfo{
+		ID: "98", Title: "لینکدونی", IsMember: true, MembershipStatus: "member",
+		Permissions: rpc.Permissions{New: true, Edit: true, Delete: true, Read: true},
+	}}
+
+	resp := env.send(t, defaultCaller, http.MethodGet, fmt.Sprintf("%s/%d", localChannelsPath, row.ID), "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("local detail = %d: %s", resp.StatusCode, readAll(t, resp))
+	}
+	var body struct {
+		Data struct {
+			ClientKey string         `json:"client_key"`
+			Channel   map[string]any `json:"channel"`
+		} `json:"data"`
+	}
+	decodeBody(t, resp, &body)
+	if body.Data.ClientKey != "cat" {
+		t.Errorf("data.client_key = %q, want authoritative local mapping %q", body.Data.ClientKey, "cat")
+	}
+	if body.Data.Channel["id"] != "98" {
+		t.Errorf("data.channel.id = %v, want remote channel id 98", body.Data.Channel["id"])
+	}
+}
+
+func TestLocalChannelDetailFailsWhenLivePermissionsUnavailable(t *testing.T) {
+	env, workers := channelsEnv(t, "official")
+	row := env.localRow(t, "official", 98, "Stored title", "linkdooni")
+	workers["official"].channelE = rpc.ErrUnavailable
+
+	resp := env.send(t, defaultCaller, http.MethodGet, fmt.Sprintf("%s/%d", localChannelsPath, row.ID), "")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("local detail status = %d, want 503 when current rights are unavailable: %s", resp.StatusCode, readAll(t, resp))
+	}
+	if body := readAll(t, resp); !strings.Contains(body, `"code":"worker_unavailable"`) {
+		t.Fatalf("error = %s, want worker_unavailable", body)
+	}
+}
+
+func TestLocalChannelDetailKeepsStoredMetadataAndUsesLivePermissions(t *testing.T) {
 	env, workers := channelsEnv(t, "official")
 	row := env.localRow(t, "official", 900, "Stored title", "")
-	// The live answer disagrees with the record: the local route must still
-	// answer the record, and must not ask Telegram at all.
+	// The live metadata disagrees with the record. This endpoint keeps the local
+	// metadata but uses the current Telegram permission result.
 	workers["official"].channel = rpc.ChannelResult{Channel: rpc.ChannelInfo{
 		ID: "900", Title: "Live title", IsMember: true, MembershipStatus: "member",
 		Permissions: rpc.Permissions{Read: true},
@@ -226,11 +327,15 @@ func TestLocalChannelDetailIsTheStoredSnapshotNotTelegram(t *testing.T) {
 	if channel["title"] != "Stored title" {
 		t.Fatalf("title = %v, want the stored snapshot", channel["title"])
 	}
-	if got := workers["official"].callCount(); got != before {
-		t.Fatalf("the local detail route made %d worker calls", got-before)
+	if got := workers["official"].callCount(); got != before+1 {
+		t.Fatalf("the local detail route made %d worker calls, want one", got-before)
 	}
 	if channel["is_member"] != true || channel["membership_status"] != "member" {
 		t.Fatalf("membership = %v / %v", channel["is_member"], channel["membership_status"])
+	}
+	permissions := channel["permissions"].(map[string]any)
+	if permissions["read"] != true || permissions["new"] != false || permissions["edit"] != false || permissions["delete"] != false {
+		t.Fatalf("permissions = %+v, want live read-only member", permissions)
 	}
 
 	// A row that never confirmed membership says so, rather than inventing it.
@@ -241,6 +346,9 @@ func TestLocalChannelDetailIsTheStoredSnapshotNotTelegram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	workers["official"].channel = rpc.ChannelResult{Channel: rpc.ChannelInfo{
+		ID: "901", Type: "channel", MembershipStatus: "not_member",
+	}}
 	got := channelObjectsOf(t, readAll(t,
 		env.send(t, defaultCaller, http.MethodGet, fmt.Sprintf("%s/%d", localChannelsPath, pending.ID), "")))
 	if got["is_member"] != false || got["membership_status"] != "join_pending" {
@@ -252,6 +360,39 @@ func TestLocalChannelDetailIsTheStoredSnapshotNotTelegram(t *testing.T) {
 		if value != false {
 			t.Errorf("pending permissions.%s = %v, want false", name, value)
 		}
+	}
+}
+
+func TestLocalChannelDetailReflectsPermissionChangesOnEachRequest(t *testing.T) {
+	env, workers := channelsEnv(t, "official")
+	row := env.localRow(t, "official", 901, "Changes", "")
+	cases := []struct {
+		name string
+		live rpc.Permissions
+		want rpc.Permissions
+	}{
+		{name: "member", live: rpc.Permissions{Read: true}, want: rpc.Permissions{Read: true}},
+		{name: "promoted", live: rpc.Permissions{New: true, Edit: true, Delete: true, Read: true}, want: rpc.Permissions{New: true, Edit: true, Delete: true, Read: true}},
+		{name: "demoted", live: rpc.Permissions{}, want: rpc.Permissions{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			workers["official"].channel = rpc.ChannelResult{Channel: rpc.ChannelInfo{
+				ID: "901", Type: "channel", IsMember: tc.live.Read,
+				MembershipStatus: "member", Permissions: tc.live,
+			}}
+			got := channelObjectsOf(t, readAll(t,
+				env.send(t, defaultCaller, http.MethodGet, fmt.Sprintf("%s/%d", localChannelsPath, row.ID), "")))
+			permissions := got["permissions"].(map[string]any)
+			for name, want := range map[string]bool{
+				"new": tc.want.New, "edit": tc.want.Edit,
+				"delete": tc.want.Delete, "read": tc.want.Read,
+			} {
+				if permissions[name] != want {
+					t.Errorf("permissions.%s = %v, want %v", name, permissions[name], want)
+				}
+			}
+		})
 	}
 }
 

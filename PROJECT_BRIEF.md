@@ -321,6 +321,7 @@ a new permission model opportunistically.
 | Connection role (source / destination) | Product model | NOT IMPLEMENTED | No `role` field; convention only |
 | Source channel discovery | Content acquisition | IMPLEMENTED | `channels/find` (username, invite, id, text); text merge only unit-tested |
 | Local channel management (join, list, leave, detail snapshot) | Content management | IMPLEMENTED | `managed_channels`; join/leave routes; the detail answers the stored snapshot in the canonical channel object (D58); Telegram leave verified only by unit tests |
+| Native broadcast-channel creation and public-username precheck | Content management | IMPLEMENTED | Selected-key `POST /channels` with durable idempotency, partial-result/local registration and optional bounded avatar; advisory username route and RTL create/detail UI; only fake/gotd tests, no live Telegram/Cat creation verified |
 | Channel history | Content acquisition | IMPLEMENTED | `messages.getHistory`; pagination by message id (deep pages restart) |
 | Single message, replies, media, media bytes | Content acquisition | IMPLEMENTED | `channels.getMessages` + downloader, 32 MiB cap |
 | Telegram message replacement | Content management | IMPLEMENTED | `PUT /api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}`; durable native edit and status polling; backend behavior **not live verified** |

@@ -739,18 +739,22 @@ func TestLocalChannelReportedErrorsHideTheUpstreamFailure(t *testing.T) {
 	}
 }
 
-func TestLocalChannelListingNeverAsksTelegram(t *testing.T) {
+func TestLocalChannelListingStaysLocalAndDetailUsesTelegram(t *testing.T) {
 	env, workers := channelsEnv(t, "official")
 	env.localRow(t, "official", 500, "first", "")
 	env.localRow(t, "official", 600, "second", "")
 
-	for _, path := range []string{localChannelsPath, localChannelsPath + "/1"} {
-		if resp := env.send(t, defaultCaller, http.MethodGet, path, ""); resp.StatusCode != http.StatusOK {
-			t.Fatalf("%s = %d", path, resp.StatusCode)
-		}
+	if resp := env.send(t, defaultCaller, http.MethodGet, localChannelsPath, ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("listing = %d", resp.StatusCode)
 	}
 	if workers["official"].callCount() != 0 {
 		t.Fatalf("the worker was called %d times; listing is local data only", workers["official"].callCount())
+	}
+	if resp := env.send(t, defaultCaller, http.MethodGet, localChannelsPath+"/1", ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("detail = %d", resp.StatusCode)
+	}
+	if workers["official"].callCount() != 1 {
+		t.Fatalf("the worker was called %d times after detail; want one live lookup", workers["official"].callCount())
 	}
 }
 

@@ -344,15 +344,28 @@ func (s *Server) listLocalChannels(w http.ResponseWriter, r *http.Request, reque
 	writeJSON(w, http.StatusOK, envelope{Data: map[string]any{"channels": views}, Meta: meta})
 }
 
-// getLocalChannel serves GET /local/channels/{id}: the stored snapshot of one
-// managed channel, in the canonical channel object.
+// getLocalChannel serves GET /local/channels/{id}: stored channel metadata and
+// current Telegram permissions in the canonical channel object.
 func (s *Server) getLocalChannel(w http.ResponseWriter, r *http.Request, id int64, requestID string) {
 	ch, ok := s.requireLocalChannel(w, r, id, channelstore.ActionView, requestID)
 	if !ok {
 		return
 	}
+	worker, ok := s.workerFor(w, ch.ClientKey, requestID)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	defer cancel()
+	result, err := worker.Channel(ctx, rpc.ChannelRef{ChannelID: ch.ChannelID})
+	if err != nil {
+		s.upstreamError(w, ch.ClientKey, "local_channel_detail_permissions", err, requestID)
+		return
+	}
+	view := localChannelDetail(ch)
+	view.Permissions = permsOf(result.Channel.Permissions)
 	writeJSON(w, http.StatusOK, envelope{
-		Data: map[string]any{"channel": localChannelDetail(ch)},
+		Data: map[string]any{"channel": view, "client_key": ch.ClientKey},
 		Meta: metaFor(requestID, s.cfg.Now()),
 	})
 }

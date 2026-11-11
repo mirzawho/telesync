@@ -66,6 +66,9 @@ type fakeTelegram struct {
 	sentReq         tgapi.SendRequest
 	sentResult      tgapi.SendResult
 	sentErr         error
+	albumReq        tgapi.SendAlbumRequest
+	albumResult     tgapi.SendAlbumResult
+	albumErr        error
 	deleteChannel   tgapi.Channel
 	deleteMessageID int
 	deleteCalls     int
@@ -136,6 +139,13 @@ func (f *fakeTelegram) SendMessage(_ context.Context, ref tgapi.ChannelRef, req 
 	defer f.mu.Unlock()
 	f.sentRef, f.sentReq = ref, req
 	return f.sentResult, f.sentErr
+}
+
+func (f *fakeTelegram) SendAlbum(_ context.Context, _ tgapi.ChannelRef, req tgapi.SendAlbumRequest) (tgapi.SendAlbumResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.albumReq = req
+	return f.albumResult, f.albumErr
 }
 
 func (f *fakeTelegram) EditMessage(context.Context, tgapi.ChannelRef, tgapi.EditRequest) (tgapi.EditResult, error) {
@@ -687,11 +697,13 @@ func TestMessagesCarryAMediaDescriptorWithAnID(t *testing.T) {
 		dialogs: []tgapi.Channel{{ID: 500, Title: "chan", Username: "sample"}},
 		hist: tgapi.HistoryPage{Messages: []tgapi.Message{
 			{
-				ID:   179,
-				Text: "hello",
+				ID:        179,
+				Text:      "hello",
+				GroupedID: "9876543210123456789",
 				Media: &tgapi.Media{
-					Type: "photo", Label: "عکس",
-					MimeType: "image/jpeg", Size: 1200,
+					Type: "video", Label: "ویدیو",
+					MimeType: "video/mp4", Size: 1200, Duration: 12,
+					Width: 1280, Height: 720, SupportsStreaming: true,
 				},
 			},
 		}},
@@ -708,8 +720,12 @@ func TestMessagesCarryAMediaDescriptorWithAnID(t *testing.T) {
 	if m.Media == nil {
 		t.Fatal("media missing")
 	}
-	if m.Media.Type != "photo" || m.Media.MimeType != "image/jpeg" || m.Media.Size != 1200 {
+	if m.Media.Type != "video" || m.Media.MimeType != "video/mp4" || m.Media.Size != 1200 ||
+		m.Media.Duration != 12 || m.Media.Width != 1280 || m.Media.Height != 720 || !m.Media.SupportsStreaming {
 		t.Fatalf("media = %+v", m.Media)
+	}
+	if m.GroupedID != "9876543210123456789" {
+		t.Fatalf("grouped_id = %q", m.GroupedID)
 	}
 	if m.Media.ID == "" {
 		t.Fatal("media must carry an id that /media/:id can be built from")
@@ -722,6 +738,36 @@ func TestMessagesCarryAMediaDescriptorWithAnID(t *testing.T) {
 	}
 	if again.Messages[0].Media.ID != m.Media.ID {
 		t.Fatalf("media id is not stable: %q vs %q", again.Messages[0].Media.ID, m.Media.ID)
+	}
+}
+
+func TestSendAlbumCarriesOrderedItemsAndConfirmedResult(t *testing.T) {
+	tg := &fakeTelegram{
+		status: tgapi.Status{State: tgapi.StateReady, User: &tgapi.Account{ID: 1}},
+		albumResult: tgapi.SendAlbumResult{
+			ChannelID: 777, GroupedID: 555,
+			Messages: []tgapi.Message{{ID: 11, GroupedID: "555"}, {ID: 12, GroupedID: "555"}},
+		},
+	}
+	s := newService(t, tg)
+	result, err := s.SendAlbum(context.Background(), rpc.SendAlbumRequest{
+		ChannelID: 777,
+		Items: []rpc.SendAlbumItem{
+			{Media: &rpc.SendMedia{Kind: "photo", MimeType: "image/jpeg", Data: []byte("a")}, Text: "first", Entities: []rpc.Entity{{Type: "hashtag", Offset: 0, Length: 4}}, RandomID: 101},
+			{Media: &rpc.SendMedia{Kind: "video", MimeType: "video/mp4", Data: []byte("b"), Duration: 3}, Text: "second", RandomID: 102},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendAlbum: %v", err)
+	}
+	if len(tg.albumReq.Items) != 2 || string(tg.albumReq.Items[0].Media.Data) != "a" ||
+		string(tg.albumReq.Items[1].Media.Data) != "b" || tg.albumReq.Items[0].Text != "first" ||
+		tg.albumReq.Items[1].Text != "second" || tg.albumReq.Items[0].RandomID != 101 ||
+		tg.albumReq.Items[0].Entities[0].Type != "hashtag" {
+		t.Fatalf("telegram album = %+v", tg.albumReq)
+	}
+	if result.ChannelID != "777" || result.GroupedID != "555" || len(result.Messages) != 2 || result.Messages[1].ID != 12 {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

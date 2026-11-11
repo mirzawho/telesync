@@ -76,10 +76,16 @@ type Media struct {
 	// MimeType and Size come from the backend when it reports them.
 	MimeType string
 	Size     int64
-	// Duration is the recording length in seconds, from the document's
-	// documentAttributeAudio. Zero means the attachment is not audio, or the
-	// backend reported no length; it is never a byte count.
+	// Duration is the source-reported audio/video length in seconds. Zero means
+	// the source reported no duration; it is never a byte count.
 	Duration int
+	// Width and Height are present only when Telegram supplied video dimensions.
+	Width  int
+	Height int
+	// SupportsStreaming and RoundMessage preserve the corresponding video
+	// attribute flags. They are never inferred from MIME or filename.
+	SupportsStreaming bool
+	RoundMessage      bool
 	// Waveform is the voice message's own bitpacked amplitude samples, from
 	// the same attribute. Nil when the message is not a voice recording or the
 	// backend reported none: a waveform is never invented to fill the field.
@@ -145,6 +151,9 @@ type Message struct {
 	Text   string
 	Sender *Sender
 	Media  *Media
+	// GroupedID is Telegram's opaque album identity as a decimal string. Empty
+	// means this message is not a member of a media group.
+	GroupedID string
 	// ReplyToMessageID is the message this one replies to, when Telegram
 	// reported a reply header. Zero means "not a reply".
 	ReplyToMessageID int

@@ -1,5 +1,180 @@
 # Log (newest last)
 
+## 2026-11-11 — Implement floating chat footer and message actions
+
+- User approved `.agents/handoffs/v0.0.4-floating-message-composer-layout.md`.
+- Moved existing message action menu into its bubble and anchored it at physical
+  bottom-right, reserving lower bubble space. Moved the existing shared composer
+  into a pane-local translucent blurred overlay; ResizeObserver measures full
+  footer height and synchronizes timeline bottom clearance and jump-button offset.
+  Existing scroll/follow/anchor/paging behavior was retained.
+- Validation: panel 160 tests pass; `npm test`, `npm run typecheck`,
+  `npm run build`, and `git diff --check` pass.
+- Browser verification unavailable (no Chromium/Chrome/Playwright executable
+  found); desktop/mobile visual checks remain unverified. No backend changes or
+  dependencies added. Handoff marked `DONE`.
+
+## 2026-11-11 — Prepare native media semantics and Telegram albums
+
+- Graphify queries located media classification, publishing, gotd send and
+  automation event paths. `graphify stats` is unsupported; graph freshness is
+  unverified and the graph outputs were not rebuilt because they have user edits.
+- Verified source videos are classified as video by gotd, but
+  `publishing.sendKind` has no video case and maps it to document before worker
+  RPC. Existing update/event path carries `grouped_id`; message history/API and
+  native album send aggregation are not present in inspected contracts.
+- Changed the existing publishing regression table to expect video. Focused test
+  compiles and fails as intended: got `document`, want `video`.
+- No production code changed. Handoff
+  `.agents/handoffs/v0.0.4-native-media-semantics-and-albums.md` is
+  `AWAITING_APPROVAL`; no live destination was available or attempted.
+
+## 2026-11-11 — Implement native media semantics and partial album flow
+
+- User approved `.agents/handoffs/v0.0.4-native-media-semantics-and-albums.md`.
+- Preserved source-native video/round-video classification and metadata through
+  history/API, worker, RPC and destination MTProto attributes. Added native gotd
+  album upload/preparation/sendMultiMedia and ordered multipart RPC/worker
+  forwarding; protocol-shaped gotd tests verify sequencing and preparation
+  failure behavior.
+- Manual publishing accepts source member IDs, validates same-group membership,
+  preserves per-member captions/entities, and requires confirmed native grouped
+  destination results. Explorer groups adjacent messages and offers album
+  publishing. Workflow idempotency includes source album identity, but events
+  are not yet collapsed into a single workflow publication.
+- Verification: `go test ./... -count=1`, `go vet ./...`, `go build ./...`,
+  docsgen `--check`, apidocs tests, web typecheck and diff check pass. Panel suite
+  is 163/164; the lone footer markup assertion appears unrelated and the expected
+  class is absent from current worktree output. Live Telegram/Cat not verified.
+- Remaining: durable Direct Send multi-file support, Workflow album aggregation,
+  completeness proof/recovery for source member IDs, and live destination check.
+
+## 2026-11-11 — Prepare floating message composer layout
+
+- Graphify query located `ChannelMessageItem`, `ChannelMessagesPane`, timeline,
+  bubble and scroll-anchor areas; installed CLI has no `stats` command and graph
+  freshness versus HEAD remains unknown. Source inspection confirmed top-left
+  action placement and normal-flow composer outside the pane-local scroll region.
+- Added focused SSR tests for bottom-right physical action placement and
+  pane-local blurred overlay with dynamic scroll-clearance wiring. `node
+  scripts/test-panel.mjs` reports two intended failures; 158 existing tests pass.
+- No production source changed. Handoff
+  `.agents/handoffs/v0.0.4-floating-message-composer-layout.md` awaits explicit
+  approval. Browser verification not run.
+
+## 2026-11-11 — Prepare shared composer edit mode
+
+- Traced the separate `ChannelMessageEdit` form through the existing pane and
+  confirmed `ChannelMessageComposer` owns an independent draft and the shared
+  attachment Sheet. The pane already owns safe PUT/status/history reconciliation
+  and the target bubble already displays in-progress edit status.
+- Added two SSR regression assertions for compact shared Edit mode and
+  media-only context; `node scripts/test-panel.mjs` compiles and reports those
+  two expected failures (161 other assertions pass). No production code changed.
+- Handoff `.agents/handoffs/v0.0.4-shared-chat-composer-edit-mode.md` is
+  `AWAITING_APPROVAL`. Browser verification was not run.
+
+## 2026-11-11 — Implement shared composer edit mode
+
+- User approved `.agents/handoffs/v0.0.4-shared-chat-composer-edit-mode.md`.
+- Implemented Send/Edit mode in the existing composer with parked Send draft,
+  message-ID-keyed edit drafts, compact context and media previews, transactional
+  file replacement through the existing Sheet, keep/remove controls, and one
+  mode-specific primary action. The pane now keeps the shared composer mounted
+  and retains PUT/idempotency/status polling; confirmed success refreshes and
+  replaces the existing timeline message. Removed the obsolete separate edit
+  form and its tests.
+- Validation: focused panel tests pass (158); `npm test` passes all suites;
+  `npm run typecheck`, `npm run build`, and `git diff --check` pass.
+- Browser and live Telegram verification were not available/performed. Existing
+  server payload semantics were retained; no backend changes made. Handoff is
+  `DONE` with exact checks and limitations recorded.
+
+## 2026-11-11 — Redesign channel message composition and send feedback
+
+- Replaced the media-kind Select plus file label with a single Paperclip and a
+  shared bottom Sheet, direct Photo/Video/Audio/Voice/Document actions, compact
+  attachment preview, and cancellation-safe draft behavior. Voice selection is
+  limited to Ogg/Opus formats and retains `voice` media semantics.
+- Send acceptance adds a content-free pending bubble to the timeline. Operation
+  polling stays scoped to connection/channel/local identity; sent operations
+  refresh actual history up to five bounded attempts, then remain in a compact
+  handled synchronization state if the real message is still unavailable.
+  Failure offers draft restoration and never automatically retries. Removed
+  send-success footer/notice output; other edit/delete notices remain.
+- Verified: `npm test`, `node scripts/test-panel.mjs` (161/161), `npm run
+  typecheck`, `npm run build`, and `git diff --check`. No browser or real Telegram
+  verification was performed.
+
+## 2026-11-11 — Replace channel-create page with explorer Dialog
+
+- The explorer menu opens Create Channel in-place through `?create=1`; Join
+  remains a separate dialog. The former `/channels/new` route redirects to the
+  explorer, opening the dialog and retaining existing filters.
+- Reworked the shared creation form into a compact RTL dialog with an accessible
+  circular avatar picker, MIME/size/decode validation, removable preview,
+  Private/Public radio tiles, and conditional, debounced username availability.
+  Existing multipart creation, idempotency, partial-result handling, and
+  navigation to the created channel remain wired through the same API.
+- Verified `npm run typecheck`, `npm run build`, `node scripts/test-panel.mjs`
+  (151/151), and `git diff --check`. No browser visual verification or remote
+  Telegram mutation was performed.
+
+## 2026-11-11 — Prepare channel information dialog profile redesign
+
+- Focused graph queries found the channel/detail/avatar relationships; `graphify
+  stats` is unsupported and graph freshness against HEAD is unknown.
+- Verified dialog detail uses remote Telegram ID, row/view/avatar use local
+  managed-channel ID, and the clicked row is stored before fetching detail.
+  `ChannelDetail` has no authoritative public link/domain field, so link support
+  remains constrained to existing verified data.
+- Added a profile-loading skeleton assertion to the focused SSR test. The panel
+  suite reports the intended Red (138 pass, 1 fail); the baseline before the
+  assertion was 138/138. No production code changed. Handoff awaits explicit
+  approval: `.agents/handoffs/v0.0.4-channel-information-dialog-profile.md`.
+
+## 2026-11-11 — Native channel creation, availability and explorer UX (DONE)
+
+- Added gotd broadcast-create, username assignment/check and bounded avatar
+  primitives; focused `internal/gotdclient` tests pass. Added migration 20 and
+  durable channel-creation idempotency/recovery store; focused channelstore tests
+  pass. Reusable creation and information components were added; their owner
+  reports component tests and typecheck passed.
+- Completed private RPC DTOs/client/server multipart routes, authorized worker
+  services, exact-key gateway routes, bounded image validation, durable
+  idempotency/replay/conflict handling, partial outcomes and automatic local
+  registration. The UI now has a permission-gated Create/Join menu, `/channels/new`
+  form, advisory username debounce and per-channel Information dialog.
+- Generated route docs and examples; added access summary for `channels.create`.
+- Validation passed: `go test ./... -count=1`, `go vet ./...`, `go build ./...`,
+  docsgen `--check`, apidocs tests, web typecheck, panel tests (138/138) and
+  production build. No browser or live Telegram/Cat mutation was performed.
+
+## 2026-11-11 — Integrate channel message send/edit/delete UI (DONE)
+
+- Implemented `.agents/handoffs/v0.0.4-channel-message-management-ui.md` after
+  explicit user approval. The viewer now has a Persian composer, permission-
+  filtered edit/delete controls, native voice kind support, typed JSON/multipart
+  mutation calls and bounded status polling. Mutations use the selected
+  `client_key` and Telegram channel ID; history keeps the managed-channel ID.
+  Stale requests are aborted/ignored on identity changes, and changes are
+  reconciled only after confirmed results.
+- Added the narrow edit-only `keep_media: true` contract across gateway, durable
+  edit service, RPC, worker and gotd adapter. Omitted-media replacement
+  semantics remain unchanged; the native request omits Telegram's media field
+  and same-ID readback verifies the media descriptor.
+- Verified: forced-uncached `npm run typecheck`, `npm run build`, focused new
+  frontend SSR/API/permission tests, focused edit gateway tests, editing/
+  publishing/worker Go tests, docsgen `--check`, API docs/docsgen/docsite tests,
+  and `git diff --check`.
+- Rechecks initially observed unrelated concurrent channel-creation failures,
+  then that handoff's implementation settled without changes to its files. Final
+  verification passed: `go test ./... -count=1`, `go build ./...`, `go vet ./...`,
+  forced `npm run typecheck`, `npm run build`, `npm test` (609 tests across eight
+  suites), docsgen `--check`, apidocs/docsgen/docsite tests, and `git diff --check`.
+- Browser/live Telegram/Cat verification was not performed. Changes remain
+  uncommitted alongside other work in the shared tree.
+
 ## 2026-11-11 — Implement Telegram channel message deletion API (in progress)
 
 - User approved the named delete-message handoff. Implemented the selected
@@ -1790,3 +1965,160 @@ is not part of this entry.
 - Not verified: live Telegram account rights, edit windows, or backend support
   for media removal. The concurrent, separately approved message-delete task
   remains in progress and was preserved; no live Telegram operation occurred.
+
+## 2026-11-11 — Prepare channel message management UI
+
+- Added `.agents/handoffs/v0.0.4-channel-message-management-ui.md` for the
+  frontend send/edit/delete integration. It remains `AWAITING_APPROVAL`; the
+  user must explicitly name it before implementation.
+- Added a viewer composer-permission SSR test. `cd web/apps/web && node
+  scripts/test-panel.mjs` compiled and ran: 109 passed; the new expected
+  composer assertion failed (genuine Red). No production UI code or remote
+  Telegram/Cat action was performed.
+- Verified the active route maps local managed-channel ID to channel detail's
+  Telegram ID and `client_key`; history still uses local ID. The edit API has
+  no keep-existing-media mode, so caption-only media edits need an explicit
+  backend retention extension before UI exposure.
+- Graphify query reported 11,333 nodes; `graphify stats` is unsupported and
+  graph/HEAD currentness remains unverified. Existing uncommitted work was
+  preserved.
+
+## 2026-11-11 — Prepare native channel creation and explorer UX
+
+- Added `.agents/handoffs/v0.0.4-native-channel-creation-availability-explorer.md`
+  separately from message send/edit/delete. Status is `AWAITING_APPROVAL`; no
+  approval was inferred.
+- Added gateway route-contract tests for create and static username availability,
+  plus an explorer toolbar SSR assertion. No production code was changed.
+- Frontend panel tests compiled; 109 passed and 2 failed. The new menu assertion
+  is a genuine Red against the current Plus button. The composer assertion
+  belongs to the separately pending message-management task.
+- First gateway test attempt hit a transient concurrent-edit compile error and
+  then a test-package mismatch. After fixing only the new test package, targeted
+  gateway tests compile and fail on the expected missing routes (create returns
+  405; availability is parsed as a dynamic channel reference).
+- Graphify returned relevant gateway/worker/channelstore/explorer nodes, but its
+  stats command is unavailable and graph freshness against HEAD is unverified.
+- No remote Telegram/Cat request was made.
+
+## 2026-11-11 — Implement Channel Explorer server multi-select
+
+- Implemented `.agents/handoffs/v0.0.4-channel-server-multiselect.md` after the
+  user approved that handoff by name. The selector uses configured Telegram
+  connection keys, sits in the same RTL row immediately right of scrolling
+  category chips, supports searchable multi-selection, and stores repeated
+  `server` query params. No query means all servers.
+- Channel matching combines server key, category and search filters. Channel
+  listing follows all paginated `/local/channels` results rather than the former
+  500-row cap. Query updates preserve unrelated parameters and channel links;
+  an excluded selected channel is hidden and navigates back to the explorer.
+- Added focused filter, selection/URL and toolbar markup tests.
+- Verified: `npm run typecheck`, focused `node scripts/test-panel.mjs`
+  (150/150), full `npm test` (all suites passed, including 151 panel assertions),
+  and `npm run build` in `web/apps/web`.
+- Not visually verified at 1440×900 or 390×844; no browser session was
+  available. No backend changes, live Telegram action, commit, or deployment.
+
+## 2026-11-11 — Implement channel information dialog profile (DONE)
+
+- Implemented the approved `.agents/handoffs/v0.0.4-channel-information-dialog-profile.md`.
+  The existing dialog now has a muted profile header, authenticated managed-row
+  avatar/fallback, real title/count/verified and scam/fake status, and responsive
+  RTL action tiles. View uses the local managed-channel route only with actual
+  `permissions.read`; copy uses the remote Telegram ID with toast feedback.
+- Reused the existing category-edit and delete flows in More. Description and
+  real metadata/permissions are grouped under a collapsed details Accordion.
+  Detail results are matched by exact client key + remote ID and stale requests
+  remain canceled/ignored.
+- No public URL/domain or safe server display value is in the detail response;
+  these were omitted, not inferred. No backend/API or unrelated explorer,
+  message, or publishing behavior was changed.
+- Verified: full frontend `npm test` passes 626 tests, forced frontend typecheck,
+  production build, and `git diff --check`. No browser viewport or live channel
+  verification was performed. Work remains uncommitted with concurrent changes
+  in the shared tree.
+
+## 2026-11-11 — Preserve Telegram permissions for newly created channels
+
+- Root cause: the gateway discarded the `rpc.ChannelInfo` Telegram permissions
+  when registering a created channel (`PermissionsKnown: false`) and omitted
+  permissions when rebuilding the idempotent replay response. The shared
+  normalizer already resolved `Creator` separately from `admin_rights`.
+- Fixed persistence and replay; added regression coverage for all four booleans
+  in the create response, stored record, replay, and local detail. Added gotd
+  regression coverage for a broadcast channel with `Creator=true` and no
+  `admin_rights` constructor.
+- Verified: focused tests, `go test ./... -count=1`, `go vet ./...`, `go build
+  ./...`, executable build to the approved temporary location, changed-file
+  gofmt, and `git diff --check`. Repository-wide gofmt reports only the existing
+  nested checkout file noted in the handoff. Frontend was unchanged; its current
+  create flow revalidates and routes using the selected client key.
+- No live MTProto/database verification. The actual connection key, Telegram
+  account ID, and whether that account owns channel 98 remain unknown. Handoff
+  `.agents/handoffs/v0.0.4-telegram-channel-permission-resolution.md` is DONE.
+
+## 2026-11-11 — Prepare live Local Channel Detail permissions
+
+- Added exact local-detail regressions for a row whose permission snapshot is
+  unknown, same remote id on two fake connections, correct remote-ID routing,
+  no SQLite mutation, and an unavailable selected worker.
+- Focused test command fails on assertions against current production behavior:
+  live booleans are ignored, the worker is not called, and a simulated worker
+  outage still returns 200 with all-false permissions.
+- No production code changed. Handoff
+  `.agents/handoffs/v0.0.4-live-local-channel-permissions.md` awaits explicit
+  approval. Live executable/database/connection identity remains unverified.
+
+## 2026-11-11 — Implement live Local Channel Detail permissions
+
+- After explicit approval, Local Channel Detail now performs an authorized,
+  bounded `Worker.Channel` call using the local row's exact client key and
+  remote Telegram ID; successful permissions replace only the response fields.
+  Worker errors are classified and returned; no SQLite writes were introduced.
+- Hardened the current-rights resolver so a failed `channels.getChannels` call
+  cannot be converted into success using reconstructed dialog metadata. The
+  legacy fallback remains for non-detail operations.
+- Added/updated regressions for unknown snapshot, selected connection and remote
+  ID, no DB/timestamp mutation, successive permission changes/revocation,
+  unavailable worker, and incomplete resolver data. Focused gateway/gotdclient/
+  tgapi tests, vet, docsgen check, apidocs tests, separate executable build, and
+  diff checks pass.
+- Read-only runtime check confirmed SQLite local row 2 maps to `cat`/remote 98
+  with unknown all-false stored permissions. The endpoint returned 401 without
+  credentials; the running process is the old `bin/telesync` (PID 53744). No
+  restart, live rights verification, channel/message mutation, commit, or deploy.
+
+## 2026-11-11 — Prepare Channel Explorer destination identity fix
+
+- Traced the exact warning: local detail loader correctly reads
+  `data.channel.permissions`, but expects `data.client_key`; the backend
+  currently returns only `data.channel`. Its empty-key fallback makes pane
+  `identityValid` false, suppressing independent actions and displaying the
+  destination warning even when the API supplies all four true permissions.
+- Added and ran a focused gateway API regression for local row 2 mapping to key
+  `cat` / remote ID 98. It fails because `data.client_key` is absent, not due to
+  test infrastructure.
+- No production/frontend code changed. Handoff
+  `.agents/handoffs/v0.0.4-channel-explorer-destination-key.md` awaits explicit
+  approval. Active frontend/browser verification remains unavailable.
+
+## 2026-11-11 — Implement Channel Explorer destination identity
+
+- Confirmed exact failure: local detail's nested channel carried correct remote
+  ID and permissions, but omitted sibling `data.client_key`; the route defaulted
+  it to empty, so pane `identityValid` was false and all message controls were
+  suppressed. Permission extraction was already correct.
+- Added authorized row `client_key` to the local detail envelope without
+  changing the canonical channel object. The pane now reports missing
+  destination separately from a confirmed Send denial. Added API and route/UI
+  regressions for local 2 → `cat` / remote 98, all true capabilities, composer
+  availability, no warning, no load-time message calls, and missing destination.
+- Verified gateway tests, 157 panel tests, frontend typecheck/build, `go vet`,
+  docsgen/check, apidocs tests, separate executable build, formatting, and diff
+  checks. Handoff
+  `.agents/handoffs/v0.0.4-channel-explorer-destination-key.md` is DONE.
+- Live display is not updated: PID 58331 serves embedded
+  `channel-messages-main-DF75S9b3.js` with the old warning, while source build
+  produced `channel-messages-main-C886CuXI.js`. API returned 401 without auth;
+  direct deep link returned 404. No embedded asset replacement, restart, or
+  deployment was done.

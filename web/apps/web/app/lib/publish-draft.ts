@@ -43,6 +43,7 @@ export interface SourceAttachment {
 export interface PublishSource {
   localChannelId: number
   messageId: number
+  messageIds?: number[]
   text: string
   entities: Entity[]
   attachments: SourceAttachment[]
@@ -782,7 +783,7 @@ export function layoutFor(width: number): WorkspaceLayout {
 // ---------------------------------------------------------------------------
 
 export interface TelegramPublishBody {
-  source: { local_channel_id: number; message_id: number }
+  source: { local_channel_id: number; message_id: number; message_ids?: number[] }
   // destination carries the channel id only. The connection is the path's own
   // segment, so a body can never name a channel on the wrong one.
   destination: { channel_id: string }
@@ -821,6 +822,7 @@ export function buildTelegramPayloads(state: PublishDraftState): TelegramPublish
   const source = {
     local_channel_id: state.source.localChannelId,
     message_id: state.source.messageId,
+    ...(state.source.messageIds?.length ? { message_ids: state.source.messageIds } : {}),
   }
   return state.telegram.channelIds.map((channelId) => ({
     source,

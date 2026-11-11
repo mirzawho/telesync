@@ -8,6 +8,7 @@
 | Method | Path | Auth conditions | Success |
 | --- | --- | --- | --- |
 | GET | `/api/v1/telegram/{key}/channels` | 2 | `200` |
+| POST | `/api/v1/telegram/{key}/channels` | — | — |
 
 ## GET
 
@@ -68,3 +69,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 ```
 
 </details>
+## POST
+
+- **Handler:** `Server.` ()
+- **Documentation:** [telegram](../../manual/components/telegram.md)

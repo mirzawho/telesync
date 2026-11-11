@@ -20,9 +20,13 @@ func (s *Service) EditMessage(ctx context.Context, req rpc.EditRequest) (rpc.Edi
 		return rpc.EditResult{}, rpc.NewError(rpc.CodeInvalidInput,
 			"channel_id and message_id must be within their supported positive ranges.", 0)
 	}
-	if req.Text == "" && req.Media == nil {
+	if req.Text == "" && req.Media == nil && !req.KeepMedia {
 		return rpc.EditResult{}, rpc.NewError(rpc.CodeInvalidInput,
 			"the replacement must include text or a new attachment.", 0)
+	}
+	if req.KeepMedia && req.Media != nil {
+		return rpc.EditResult{}, rpc.NewError(rpc.CodeInvalidInput,
+			"existing media cannot be kept while replacing media.", 0)
 	}
 	limit, label := tgapi.MaxMessageRunes, "message text"
 	if req.Media != nil {
@@ -66,6 +70,7 @@ func (s *Service) EditMessage(ctx context.Context, req rpc.EditRequest) (rpc.Edi
 		Text:      req.Text,
 		Entities:  entitiesFromWire(req.Entities),
 		Media:     media,
+		KeepMedia: req.KeepMedia,
 		NoWebpage: req.NoWebpage,
 	})
 	if err != nil {

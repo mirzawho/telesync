@@ -97,6 +97,38 @@ func TestManualPublishingKeepsARecordedVoiceMessageVoice(t *testing.T) {
 	}
 }
 
+func TestManualPublishingSendsSelectedSourceAlbumAsOneNativeAlbum(t *testing.T) {
+	w := newWorld(t)
+	w.grant(t, channelstore.PermissionContentPublish, channelstore.PermissionChannelsView)
+	w.worker.page = rpc.MessagePage{Channel: rpc.Channel{ID: 555}, Messages: []rpc.Message{
+		{ID: 9, Text: "edited lead caption", GroupedID: "987", Entities: []rpc.Entity{{Type: "bold", Offset: 0, Length: 6}}, Media: &rpc.Media{ID: "555:9", Type: "photo", MimeType: "image/jpeg"}},
+		{ID: 10, Text: "second caption", GroupedID: "987", Media: &rpc.Media{ID: "555:10", Type: "video", MimeType: "video/mp4", Duration: 3}},
+	}}
+	w.worker.media = []byte("source-media")
+	w.worker.mediaType = "application/octet-stream"
+	w.worker.albumResult = rpc.SendAlbumResult{ChannelID: "777", GroupedID: "44", Messages: []rpc.Message{{ID: 90}, {ID: 91}}}
+	req := requestFor(w)
+	req.Source.MessageIDs = []int{10, 9}
+	req.Content.Text = "edited lead caption"
+	req.Content.Entities = []rpc.Entity{{Type: "bold", Offset: 0, Length: 6}}
+	result, err := w.service.PublishTelegram(context.Background(), actorFor(t, w), "dest", req)
+	if err != nil {
+		t.Fatalf("PublishTelegram: %v", err)
+	}
+	if len(w.worker.albums) != 1 || len(w.worker.sends) != 0 {
+		t.Fatalf("native albums=%d standalone sends=%d", len(w.worker.albums), len(w.worker.sends))
+	}
+	items := w.worker.albums[0].Items
+	if len(items) != 2 || items[0].Media.Kind != "photo" || items[1].Media.Kind != "video" ||
+		items[0].Text != "edited lead caption" || items[1].Text != "second caption" ||
+		items[0].Entities[0].Type != "bold" || items[0].RandomID == items[1].RandomID {
+		t.Fatalf("album items = %+v", items)
+	}
+	if len(result.Messages) != 2 || result.GroupedID != "44" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 // The publishing API takes no voice flag and must never need one. Whether the
 // attachment is a voice recording is a fact about the source message, read from
 // the source's own attributes, and a caller that says nothing about it is
@@ -236,8 +268,9 @@ func TestOnlyARecordingIsSentAsVoice(t *testing.T) {
 			media: rpc.Media{ID: "555:9", Type: "photo", MimeType: "image/jpeg"},
 			want:  "photo"},
 		{name: "a video stays a video",
-			media: rpc.Media{ID: "555:9", Type: "video", MimeType: "video/mp4"},
-			want:  "document"},
+			media: rpc.Media{ID: "555:9", Type: "video", MimeType: "video/mp4", Duration: 12,
+				Width: 1280, Height: 720, SupportsStreaming: true},
+			want: "video"},
 		{name: "an OGG file that is not voice is not voice",
 			// The MIME type is exactly the one a voice recording has. The
 			// source said "document", so it is a document.
@@ -263,6 +296,13 @@ func TestOnlyARecordingIsSentAsVoice(t *testing.T) {
 			}
 			if got := w.worker.sends[0].Media.Kind; got != tc.want {
 				t.Fatalf("kind = %q, want %q", got, tc.want)
+			}
+			if tc.media.Type == "video" {
+				got := w.worker.sends[0].Media
+				if got.Duration != 12 || got.Width != 1280 || got.Height != 720 || !got.SupportsStreaming {
+					t.Fatalf("video metadata = duration %d, %dx%d, streaming %v; want source metadata",
+						got.Duration, got.Width, got.Height, got.SupportsStreaming)
+				}
 			}
 		})
 	}

@@ -257,6 +257,42 @@ func TestManagerHistoryDoesNotMarkAnythingRead(t *testing.T) {
 	}
 }
 
+func TestManagerHistoryPreservesVideoMetadataAndGroupedID(t *testing.T) {
+	self := &tg.User{ID: 1, Username: "me"}
+	video := &tg.Message{ID: 121, Date: 1700000001, Message: "clip",
+		PeerID: &tg.PeerChannel{ChannelID: 500}, GroupedID: 9007199254740993,
+		Media: &tg.MessageMediaDocument{Document: &tg.Document{MimeType: "video/mp4",
+			Attributes: []tg.DocumentAttributeClass{
+				&tg.DocumentAttributeVideo{Duration: 12, W: 1280, H: 720, SupportsStreaming: true},
+			},
+		}},
+	}
+	l, key := startPanelServer(t, self, &panelServer{}, func(d *tgtest.Dispatcher) {
+		d.HandleFunc(tg.MessagesGetHistoryRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+			return server.SendResult(req, &tg.MessagesChannelMessages{Messages: []tg.MessageClass{video}})
+		})
+	})
+	m := managerFor(t, l, key)
+	waitForState(t, m, tgapi.StateReady)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	page, err := m.History(ctx, tgapi.Channel{ID: 500, AccessHash: 900}, 0, 30)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(page.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(page.Messages))
+	}
+	got := page.Messages[0]
+	if got.GroupedID != "9007199254740993" {
+		t.Fatalf("grouped_id = %q", got.GroupedID)
+	}
+	if got.Media == nil || got.Media.Type != "video" || got.Media.Duration != 12 ||
+		got.Media.Width != 1280 || got.Media.Height != 720 || !got.Media.SupportsStreaming {
+		t.Fatalf("media = %+v", got.Media)
+	}
+}
+
 func TestManagerCallsFailWhenUnauthorized(t *testing.T) {
 	l, key := startPanelServer(t, nil, &panelServer{})
 	m := managerFor(t, l, key)

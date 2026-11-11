@@ -56,7 +56,10 @@ func (e *editEditor) EditMessage(_ context.Context, _ string, req rpc.EditReques
 	e.lastRequest = req
 	e.target.Text = req.Text
 	e.target.Entities = append([]rpc.Entity(nil), req.Entities...)
-	if req.Media != nil {
+	if req.KeepMedia {
+		// Keep the fake's current attachment just as Telegram should when the
+		// media flag is omitted from messages.editMessage.
+	} else if req.Media != nil {
 		e.target.Media = &rpc.Media{Type: req.Media.Kind}
 	} else {
 		e.target.Media = nil
@@ -209,6 +212,40 @@ func TestExecuteRevalidatesUpdatePermissionAndEditsTheExistingMessage(t *testing
 	}
 	if got.Status != channelstore.MessageEditEdited || got.RemoteMessageID != 11 {
 		t.Fatalf("operation after native edit = %+v", got)
+	}
+}
+
+func TestExecuteExplicitlyKeepsExistingMediaDuringCaptionEdit(t *testing.T) {
+	ctx := context.Background()
+	original := &rpc.Media{ID: "98:11", Type: "photo", MimeType: "image/jpeg", Size: 42}
+	editor := &editEditor{target: rpc.Message{ID: 11, Text: "old caption", Media: original}}
+	svc, store, jobs, actor, localChannelID := editService(t, editor)
+	actor.Auth = channelstore.NewAuthorizerFor(actor.UserID, []channelstore.GlobalPermission{channelstore.PermissionChannelsView}, []channelstore.Grant{
+		{UserID: actor.UserID, Kind: channelstore.KindChannel, ResourceID: localChannelID, Action: channelstore.ActionUpdate, Effect: channelstore.EffectAllow},
+	})
+	svc.Sender = &editSender{actor: actor}
+	accepted, err := svc.Accept(ctx, actor, editing.AcceptInput{
+		ClientKey: "cat", DestinationChannelID: 98, TargetMessageID: 11,
+		IdempotencyKey: "keep-photo", KeepMedia: true,
+		Request: publishing.DirectSendRequest{Text: "new caption", Entities: []rpc.Entity{}},
+	})
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	if err := svc.Execute(ctx, automation.Job{EventID: accepted.Operation.PublicID, Kind: automation.JobTelegramMessageEdit, TargetID: jobs.enqueued[0].target, Attempt: 1}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !editor.lastRequest.KeepMedia || editor.lastRequest.Media != nil {
+		t.Fatalf("edit request = %+v; want explicit keep with no replacement upload", editor.lastRequest)
+	}
+	if editor.target.Media == nil || editor.target.Media.ID != original.ID ||
+		editor.target.Media.Type != original.Type || editor.target.Media.MimeType != original.MimeType ||
+		editor.target.Media.Size != original.Size {
+		t.Fatalf("target media = %+v, want original %+v", editor.target.Media, original)
+	}
+	got, found, err := store.MessageEditOperation(ctx, accepted.Operation.PublicID)
+	if err != nil || !found || got.Status != channelstore.MessageEditEdited || got.RemoteMessageID != 11 {
+		t.Fatalf("operation = %+v found=%v err=%v; want confirmed same-ID edit", got, found, err)
 	}
 }
 

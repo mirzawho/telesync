@@ -46,10 +46,10 @@ export type MembershipStatus = "member" | "join_pending" | "unknown" | string
 // ChannelPermissions is the channel-level capability set, the same four
 // booleans the API answers with.
 export interface ChannelPermissions {
-  new: boolean
-  edit: boolean
-  delete: boolean
-  read: boolean
+  new?: boolean
+  edit?: boolean
+  delete?: boolean
+  read?: boolean
 }
 
 // ChannelDetail is the one channel object the API has, answered by
@@ -67,7 +67,7 @@ export interface ChannelDetail {
   is_member: boolean
   is_managed: boolean
   membership_status: MembershipStatus
-  permissions: ChannelPermissions
+  permissions?: ChannelPermissions
   verified: boolean
   scam: boolean
   fake: boolean
@@ -122,6 +122,7 @@ export interface MessageSender {
 export type MediaType =
   | "photo"
   | "video"
+  | "round_video"
   | "document"
   | "audio"
   | "voice"
@@ -149,11 +150,13 @@ export interface MessageMedia {
   filename?: string
   mime_type?: string
   size?: number
-  // duration is a recording's length in seconds, for audio and voice, from the
-  // document's documentAttributeAudio. It is a length in time and never a byte
-  // count: size is the byte count. The API omits it when the attachment is not
-  // audio or the backend reported no length.
+  // duration is the source-reported audio/video length in seconds. It is never
+  // a byte count: size is the byte count.
   duration?: number
+  width?: number
+  height?: number
+  supports_streaming?: boolean
+  round_message?: boolean
   // waveform is a voice message's own bitpacked amplitude samples, from the
   // same attribute, sent as base64 the way Go encodes a byte string. The API
   // omits it when the message is not a voice recording or the backend reported
@@ -180,6 +183,9 @@ export interface MessageReaction {
 // report a count, and `reactions` is an empty array when there are none.
 export interface ChannelMessage {
   id: number
+  // Telegram's album identifier; messages with the same value are grouped only
+  // when adjacent in the returned chronological timeline.
+  grouped_id?: string
   date: string
   text?: string
   sender?: MessageSender
@@ -238,6 +244,7 @@ export interface User {
   permissions?: Permissions
   access?: {
     channels: boolean
+    channels_create?: boolean
     categories: boolean
     users: boolean
     servers: boolean

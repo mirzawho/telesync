@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +17,49 @@ import (
 
 	"github.com/mirza/telesync/internal/rpc"
 )
+
+type channelCreationBackend struct {
+	*fakeBackend
+	createReq rpc.CreateChannelRequest
+}
+
+func (b *channelCreationBackend) CheckUsername(_ context.Context, req rpc.UsernameAvailabilityRequest) (rpc.UsernameAvailability, error) {
+	return rpc.UsernameAvailability{Username: req.Username, Status: "unclaimed"}, nil
+}
+
+func (b *channelCreationBackend) CreateChannel(_ context.Context, req rpc.CreateChannelRequest) (rpc.CreateChannelResult, error) {
+	b.createReq = req
+	return rpc.CreateChannelResult{ChannelCreated: true}, nil
+}
+
+func TestChannelCreationRPCDecodesBoundedMultipartAvatar(t *testing.T) {
+	backend := &channelCreationBackend{fakeBackend: &fakeBackend{}}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	requestPart, err := writer.CreateFormField("request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = requestPart.Write([]byte(`{"title":"News","description":"","visibility":"private","avatar":{"kind":"photo","name":"logo.png","mime_type":"image/png"}}`))
+	mediaPart, err := writer.CreateFormFile("media", "logo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = mediaPart.Write([]byte("image-bytes"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/channels", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	rpc.NewHandler(backend).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if backend.createReq.Avatar == nil || backend.createReq.Avatar.Name != "logo.png" || backend.createReq.Avatar.MimeType != "image/png" || string(backend.createReq.Avatar.Data) != "image-bytes" {
+		t.Fatalf("decoded avatar = %+v", backend.createReq.Avatar)
+	}
+}
 
 // fakeBackend records calls and returns scripted answers.
 type fakeBackend struct {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +36,16 @@ type AcceptInput struct {
 	TargetMessageID      int64
 	IdempotencyKey       string
 	Request              publishing.DirectSendRequest
+	KeepMedia            bool
 	Attachment           *sending.Attachment
+}
+
+// storedEditRequest keeps the edit-specific retention intent beside the
+// flattened replacement fields. Embedding preserves the existing durable JSON
+// shape for operations accepted before keep_media was introduced.
+type storedEditRequest struct {
+	publishing.DirectSendRequest
+	KeepMedia bool `json:"keep_media,omitempty"`
 }
 
 type Accepted struct {
@@ -129,7 +139,7 @@ func (s *Service) Accept(ctx context.Context, actor publishing.Actor, in AcceptI
 		return Accepted{}, &publishing.Error{Status: 400, Code: publishing.CodeInvalidInput, Message: "Idempotency-Key is too long."}
 	}
 	hasFile := in.Attachment != nil && (in.Attachment.Reader != nil || in.Attachment.Staged != nil)
-	if err := publishing.ValidateDirect(in.Request, hasFile); err != nil {
+	if err := publishing.ValidateDirectEdit(in.Request, hasFile, in.KeepMedia); err != nil {
 		return Accepted{}, &publishing.Error{Status: 400, Code: publishing.CodeInvalidInput, Message: err.Error()}
 	}
 	var staged *sending.Staged
@@ -158,15 +168,16 @@ func (s *Service) Accept(ctx context.Context, actor publishing.Actor, in AcceptI
 		Client           string
 		Channel, Message int64
 		Request          publishing.DirectSendRequest
+		KeepMedia        bool
 		Digest           string
 		Size             int64
-	}{in.ClientKey, in.DestinationChannelID, in.TargetMessageID, in.Request, digest, size}
+	}{in.ClientKey, in.DestinationChannelID, in.TargetMessageID, in.Request, in.KeepMedia, digest, size}
 	encoded, err := json.Marshal(fingerprintInput)
 	if err != nil {
 		return Accepted{}, err
 	}
 	sum := sha256.Sum256(encoded)
-	payload, err := json.Marshal(in.Request)
+	payload, err := json.Marshal(storedEditRequest{DirectSendRequest: in.Request, KeepMedia: in.KeepMedia})
 	if err != nil {
 		return Accepted{}, err
 	}
@@ -325,7 +336,7 @@ func (s *Service) Execute(ctx context.Context, job automation.Job) error {
 	if !ok || actor.Auth == nil || !actor.Auth.Allowed(channelstore.KindChannel, channelstore.ActionUpdate, channel.ID) {
 		return fail("permission_denied", "The account no longer has permission to edit this channel.")
 	}
-	request := publishing.DirectSendRequest{}
+	request := storedEditRequest{}
 	if err := json.Unmarshal([]byte(op.RequestPayload), &request); err != nil {
 		return fail(publishing.CodeStoreError, "The stored edit request could not be read.")
 	}
@@ -347,8 +358,11 @@ func (s *Service) Execute(ctx context.Context, job automation.Job) error {
 	if before == nil {
 		return fail(rpc.CodeNotFound, "The target message no longer exists.")
 	}
-	if request.Media == nil && before.Media != nil && before.Media.Type != "webpage" {
+	if request.Media == nil && !request.KeepMedia && before.Media != nil && before.Media.Type != "webpage" {
 		return fail(rpc.CodeEditMediaRemovalUnsupported, "Telegram media removal could not be verified safely.")
+	}
+	if request.KeepMedia && (before.Media == nil || before.Media.Type == "webpage") {
+		return fail(rpc.CodeMessageEditUnsupported, "The target message has no retainable media attachment.")
 	}
 	var media *rpc.SendMedia
 	if request.Media != nil {
@@ -361,7 +375,7 @@ func (s *Service) Execute(ctx context.Context, job automation.Job) error {
 			media.Duration = *request.Media.DurationSeconds
 		}
 	}
-	req := rpc.EditRequest{ChannelID: channelID, MessageID: int(op.TargetMessageID), Text: request.Text, Entities: request.Entities, Media: media, NoWebpage: request.Options.DisableWebPagePreview}
+	req := rpc.EditRequest{ChannelID: channelID, MessageID: int(op.TargetMessageID), Text: request.Text, Entities: request.Entities, Media: media, KeepMedia: request.KeepMedia, NoWebpage: request.Options.DisableWebPagePreview}
 	result, editErr := s.Editor.EditMessage(ctx, op.ClientKey, req)
 	// Read the same id after success and after an ambiguous transport error. It
 	// is the only safe way to resolve a lost response without issuing another edit.
@@ -394,7 +408,11 @@ func (s *Service) Execute(ctx context.Context, job automation.Job) error {
 		message := "Telegram could not confirm whether the requested attachment replaced the existing media."
 		return s.unknown(ctx, op, code, message)
 	}
-	if after.Text != request.Text || !sameEntities(after.Entities, request.Entities) || !sameMediaKind(after.Media, request.Media, request.Options.DisableWebPagePreview) {
+	mediaMatches := sameMediaKind(after.Media, request.Media, request.Options.DisableWebPagePreview)
+	if request.KeepMedia {
+		mediaMatches = sameExistingMedia(before.Media, after.Media)
+	}
+	if after.Text != request.Text || !sameEntities(after.Entities, request.Entities) || !mediaMatches {
 		if editErr != nil {
 			if errorCode(editErr) == rpc.CodeMessageEditOutcomeUnknown {
 				code := rpc.CodeMessageEditOutcomeUnknown
@@ -421,6 +439,13 @@ func (s *Service) Execute(ctx context.Context, job automation.Job) error {
 		return &automation.JobError{Code: publishing.CodeStoreError, Message: err.Error(), Retryable: true}
 	}
 	return nil
+}
+
+func sameExistingMedia(before, after *rpc.Media) bool {
+	if before == nil || after == nil {
+		return before == after
+	}
+	return reflect.DeepEqual(*before, *after)
 }
 
 func (s *Service) retry(ctx context.Context, op channelstore.MessageEditOperation, attempt int, stage, code, message string, delay time.Duration) error {

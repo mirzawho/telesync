@@ -18,6 +18,9 @@ type TelegramResult struct {
 	// Message is the message Telegram returned for the send. It is nil when the
 	// backend accepted the message but returned nothing that describes it.
 	Message *rpc.Message
+	// Messages and GroupedID are populated for confirmed native albums.
+	Messages  []rpc.Message
+	GroupedID string
 	// DestinationChannelID is the destination channel id as the route reports
 	// it, a decimal string so JavaScript cannot truncate it.
 	DestinationChannelID string
@@ -79,6 +82,51 @@ func (s *Service) PublishTelegram(ctx context.Context, a Actor, clientKey string
 		}, nil
 	}
 
+	if len(source.members) > 0 {
+		album, buildErr := s.buildAlbumSend(ctx, source, req)
+		if buildErr != nil {
+			s.finishPublish(ctx, operation, channelstore.PublishFailed, "", CodeOf(buildErr))
+			return TelegramResult{}, buildErr
+		}
+		albumWorker, ok := destination.(AlbumWorker)
+		if !ok {
+			unsupported := &Error{http.StatusBadRequest, CodePublishUnsupported,
+				"The destination connection does not support native media albums."}
+			s.finishPublish(ctx, operation, channelstore.PublishFailed, "", unsupported.Code)
+			return TelegramResult{}, unsupported
+		}
+		result, sendErr := albumWorker.SendAlbum(ctx, album)
+		if sendErr != nil {
+			status, failure := classifySend(sendErr, true)
+			s.finishPublish(ctx, operation, status, "", failure.Code)
+			return TelegramResult{}, failure
+		}
+		if len(result.Messages) != len(album.Items) || result.GroupedID == "" {
+			failure := &Error{http.StatusConflict, CodePublishUnknown,
+				"The destination accepted the album request but did not confirm every grouped message; it will not be resent automatically."}
+			s.finishPublish(ctx, operation, channelstore.PublishUnknown, "", failure.Code)
+			return TelegramResult{}, failure
+		}
+		body := map[string]any{
+			"messages":    result.Messages,
+			"grouped_id":  result.GroupedID,
+			"destination": map[string]any{"client_key": clientKey, "channel_id": req.Destination.ChannelID},
+		}
+		if result.UnsendableEntities > 0 {
+			body["unsendable_entities"] = result.UnsendableEntities
+		}
+		payload, marshalErr := json.Marshal(body)
+		if marshalErr != nil {
+			s.finishPublish(ctx, operation, channelstore.PublishUnknown, "", CodeStoreError)
+			return TelegramResult{}, &Error{http.StatusInternalServerError, CodeStoreError, "The album result could not be encoded."}
+		}
+		s.finishPublish(ctx, operation, channelstore.PublishSucceeded, string(payload), "")
+		return TelegramResult{
+			Messages: result.Messages, GroupedID: result.GroupedID,
+			DestinationChannelID: req.Destination.ChannelID,
+			UnsendableEntities:   result.UnsendableEntities, Payload: payload,
+		}, nil
+	}
 	send, err := s.buildSend(ctx, source, req)
 	if err != nil {
 		// Nothing has been sent: the draft failed while it was being prepared,

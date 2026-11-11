@@ -50,9 +50,10 @@ type userView struct {
 
 // accessView summarises the caller's read access to the local API's sections.
 type accessView struct {
-	Channels   bool `json:"channels"`
-	Categories bool `json:"categories"`
-	Users      bool `json:"users"`
+	Channels       bool `json:"channels"`
+	ChannelsCreate bool `json:"channels_create"`
+	Categories     bool `json:"categories"`
+	Users          bool `json:"users"`
 	// Servers is the global "servers.view" permission: the Telegram servers'
 	// status page.
 	Servers bool `json:"servers"`

@@ -768,6 +768,32 @@ var migrations = []migration{
 	END`,
 		},
 	},
+	{
+		version: 20,
+		name:    "channel_creation_operations",
+		stmts: []string{
+			`CREATE TABLE channel_creation_operations (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id INTEGER NOT NULL CHECK (user_id >= 0),
+	client_key TEXT NOT NULL CHECK (length(trim(client_key)) > 0),
+	idempotency_key TEXT NOT NULL CHECK (length(trim(idempotency_key)) > 0),
+	request_fingerprint TEXT NOT NULL CHECK (length(request_fingerprint) > 0),
+	request_payload TEXT NOT NULL,
+	status TEXT NOT NULL CHECK (status IN ('pending', 'unknown', 'created', 'created_partial')),
+	remote_channel_id INTEGER NOT NULL DEFAULT 0 CHECK (remote_channel_id >= 0),
+	local_channel_id INTEGER NOT NULL DEFAULT 0 CHECK (local_channel_id >= 0),
+	channel_created INTEGER NOT NULL DEFAULT 0 CHECK (channel_created IN (0, 1)),
+	username_assigned INTEGER NOT NULL DEFAULT 0 CHECK (username_assigned IN (0, 1)),
+	avatar_updated INTEGER NOT NULL DEFAULT 0 CHECK (avatar_updated IN (0, 1)),
+	locally_registered INTEGER NOT NULL DEFAULT 0 CHECK (locally_registered IN (0, 1)),
+	error_code TEXT NOT NULL DEFAULT '',
+	error_message TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE (user_id, client_key, idempotency_key))`,
+			`CREATE INDEX channel_creation_operations_created_idx ON channel_creation_operations (created_at)`,
+		},
+	},
 }
 
 // migrate brings the schema up to the latest version.

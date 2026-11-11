@@ -33,14 +33,16 @@ from.
 | Route | Source | Avatar URL |
 | --- | --- | --- |
 | `/api/v1/telegram/{key}/channels/{channel_id}` | Telegram, read live on every request | `/api/v1/telegram/…/channels/…/avatar` |
-| `/api/v1/local/channels/{id}` | the SQLite record, as the last join wrote it | `/api/v1/local/channels/{id}/avatar` |
+| `/api/v1/local/channels/{id}` | metadata from the SQLite record; Telegram permissions resolved live through its mapped worker | `/api/v1/local/channels/{id}/avatar` |
 
-The local route reads SQLite only: no worker is contacted, no channel is
-resolved through MTProto, and nothing is synchronized as a side effect. It is
-the stored snapshot, so it answers while every Telegram client is down, and it
-can be **stale**: `membership_status`, the participant count, the notices and
-the permissions are what Telegram last said, not what it says now. A caller that
-needs the current state asks the Telegram route.
+The local detail route first authorizes and loads the local record, then resolves
+current permissions through the worker named by that record's `client_key`,
+using its Telegram `channel_id`. Only the four `permissions` values come from
+that live response; the other detail fields remain the stored metadata and may
+be stale. The GET does not write or refresh SQLite. If the mapped client or its
+live permission lookup is unavailable, the endpoint returns an error rather than
+presenting stale all-false permissions as a confirmed denial. The channel list
+continues to read records from SQLite only.
 
 ```json
 {
@@ -68,28 +70,27 @@ needs the current state asks the Telegram route.
 - `type` is `channel` or `group` (the stored `peer_type`).
 - `avatar_available` is whether Telegram reported a photo; `avatar_url` is
   present only when it did, and points at the local avatar route.
-- `is_member` is true only for a record whose `membership_status` is `member`
-  — the state Telegram confirmed when the join was recorded. `join_pending` and
-  `unknown` are `is_member: false`.
+- `is_member` and `membership_status` describe the stored membership report;
+  they are not a substitute for live `permissions`.
 - `is_managed` is always `true` here: the record exists because the channel is
   managed.
-- `permissions` are the four rights Telegram normalized when the channel was
-  recorded, `false` when they were never reported. `read` is a subscriber's
-  ability to read the history.
+- `permissions` are the four rights the selected Telegram account currently has,
+  normalized by the worker on each detail request. `read` is independent of
+  posting and administrative rights.
 - `verified`, `scam`, `fake` are Telegram's channel notices as recorded.
 - `participants_count` is `null` when Telegram never reported one.
 - `username` and `description` are omitted when empty, exactly as the Telegram
   route omits them.
 
-**Unknown is not the same as "no".** A record written before these fields were
-stored — or by a join that never confirmed a membership — does not know the
-notices or the permissions. It answers them `false` rather than guessing, and
-the snapshot is refreshed the next time that channel is joined (a repeated
-join rewrites every stored field).
+**Unknown is not the same as "no".** An unknown or stale permission snapshot in
+SQLite does not override a successful live detail lookup. If current permissions
+cannot be obtained, the endpoint fails rather than returning those stored
+booleans as current rights. Notices and other metadata remain the stored report.
 
-The local storage details — the owning client key, the timestamps, the raw
-Telegram id as a number — are not part of this object. They belong to the
-record, and the listing below is where a record is shown as a record.
+The `client_key` is not part of the canonical `channel` object. Local detail
+returns it as the sibling `data.client_key` value so clients can address message
+operations through the same worker that owns the record. The raw Telegram id as
+a number and timestamps remain record/listing fields.
 
 ## The listing's row
 
@@ -118,10 +119,15 @@ worker is contacted, so it answers while every Telegram client is down.
 
 ## `GET /api/v1/local/channels/{id}`
 
-One record, as the channel object above. `404 not_found` when no row has that
-local id — before permission is considered, so a caller cannot learn "forbidden"
-about a row that is not there. A record the caller may not see is `403
-forbidden`, with no reason.
+One record, as the channel object above, plus `data.client_key` from the
+authorized local mapping. This key identifies the connection; `data.channel.id`
+remains the remote Telegram id. `404 not_found` when no row has that local id —
+before permission is considered, so a caller cannot learn "forbidden" about a
+row that is not there. A record the caller may not see is `403 forbidden`, with
+no reason. After authorization, current permissions are fetched from the
+record's own Telegram worker; worker errors are returned using the Telegram
+route's existing error classification (for example, `503 worker_unavailable`
+or `504 worker_timeout`). This request does not update the stored record.
 
 ## `GET /api/v1/local/channels/{id}/messages`
 

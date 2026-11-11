@@ -244,7 +244,11 @@ type Media struct {
 	// Duration is the recording length in seconds from the document's
 	// documentAttributeAudio. Zero is omitted: it means the attachment is not
 	// audio, or the backend reported no length, and is never a byte count.
-	Duration int `json:"duration,omitempty"`
+	Duration          int  `json:"duration,omitempty"`
+	Width             int  `json:"width,omitempty"`
+	Height            int  `json:"height,omitempty"`
+	SupportsStreaming bool `json:"supports_streaming,omitempty"`
+	RoundMessage      bool `json:"round_message,omitempty"`
 	// Waveform is the voice message's own bitpacked amplitude samples, from
 	// the same attribute. It is omitted when the message is not a voice
 	// recording or the backend reported none: a waveform is never invented.
@@ -340,6 +344,7 @@ type Message struct {
 	Text             string    `json:"text"`
 	Sender           *Sender   `json:"sender,omitempty"`
 	Media            *Media    `json:"media,omitempty"`
+	GroupedID        string    `json:"grouped_id,omitempty"`
 	ReplyToMessageID int       `json:"reply_to_message_id,omitempty"`
 	// Views is Telegram's own view counter. It is always present: null when
 	// Telegram did not report one, the real count (including 0) otherwise.
@@ -452,7 +457,11 @@ type SendMedia struct {
 	Data []byte `json:"-"`
 	// Duration is the recording length in seconds, for "audio" and "voice".
 	// Zero means unknown and is sent as no length rather than as a guess.
-	Duration int `json:"duration,omitempty"`
+	Duration          int  `json:"duration,omitempty"`
+	Width             int  `json:"width,omitempty"`
+	Height            int  `json:"height,omitempty"`
+	SupportsStreaming bool `json:"supports_streaming,omitempty"`
+	RoundMessage      bool `json:"round_message,omitempty"`
 	// Waveform is a voice message's own bitpacked amplitude samples, for
 	// "voice" only. Nil sends none: a waveform is never made up.
 	Waveform []byte `json:"waveform,omitempty"`
@@ -472,6 +481,34 @@ type SendResult struct {
 	UnsendableEntities int `json:"unsendable_entities,omitempty"`
 }
 
+// SendAlbumItem is one captioned media item in a native album.
+type SendAlbumItem struct {
+	Media    *SendMedia `json:"media"`
+	Text     string     `json:"text"`
+	Entities []Entity   `json:"entities"`
+	RandomID int64      `json:"random_id"`
+}
+
+// SendAlbumRequest is one native messages.sendMultiMedia operation. The media
+// bytes travel as ordered repeated multipart "media" parts, never JSON.
+type SendAlbumRequest struct {
+	ChannelID int64           `json:"channel_id"`
+	Items     []SendAlbumItem `json:"items"`
+	Silent    bool            `json:"silent,omitempty"`
+}
+
+type SendAlbumResult struct {
+	Messages           []Message `json:"messages"`
+	ChannelID          string    `json:"channel_id"`
+	GroupedID          string    `json:"grouped_id,omitempty"`
+	UnsendableEntities int       `json:"unsendable_entities,omitempty"`
+}
+
+// AlbumBackend is optional for compatibility with existing worker backends.
+type AlbumBackend interface {
+	SendAlbum(context.Context, SendAlbumRequest) (SendAlbumResult, error)
+}
+
 // EditRequest replaces the complete content of one existing channel message.
 // Media is always explicit at the worker boundary: nil means the desired
 // result has no attachment, and a non-nil media describes a new upload.
@@ -481,7 +518,11 @@ type EditRequest struct {
 	Text      string     `json:"text"`
 	Entities  []Entity   `json:"entities"`
 	Media     *SendMedia `json:"media,omitempty"`
-	NoWebpage bool       `json:"no_web_page,omitempty"`
+	// KeepMedia omits the media field from Telegram's native edit request.
+	// It is mutually exclusive with Media and explicitly retains the current
+	// attachment; false preserves the historical full-replacement behavior.
+	KeepMedia bool `json:"keep_media,omitempty"`
+	NoWebpage bool `json:"no_web_page,omitempty"`
 }
 
 // EditResult is the remote message read back after the edit attempt. The
@@ -502,9 +543,46 @@ type DeleteMessageResult struct {
 	Deleted bool `json:"deleted"`
 }
 
+// UsernameAvailability is an advisory lookup. Assignable stays nil because
+// only the final Telegram username assignment is authoritative.
+type UsernameAvailability struct {
+	Username   string `json:"username"`
+	Status     string `json:"status"`
+	Assignable *bool  `json:"assignable"`
+}
+
+type UsernameAvailabilityRequest struct {
+	Username string `json:"username"`
+}
+
+type CreateChannelRequest struct {
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Visibility  string     `json:"visibility"`
+	Username    string     `json:"username,omitempty"`
+	Avatar      *SendMedia `json:"avatar,omitempty"`
+}
+
+type CreateChannelResult struct {
+	ChannelCreated   bool           `json:"channel_created"`
+	UsernameAssigned bool           `json:"username_assigned"`
+	AvatarUpdated    bool           `json:"avatar_updated"`
+	Channel          *ChannelResult `json:"channel,omitempty"`
+	ErrorCode        string         `json:"error_code,omitempty"`
+	ErrorMessage     string         `json:"error_message,omitempty"`
+}
+
+// ChannelCreationBackend is optional to preserve compatibility with workers
+// that do not yet implement native creation.
+type ChannelCreationBackend interface {
+	CheckUsername(ctx context.Context, req UsernameAvailabilityRequest) (UsernameAvailability, error)
+	CreateChannel(ctx context.Context, req CreateChannelRequest) (CreateChannelResult, error)
+}
+
 // MaxSendMediaBytes is the largest attachment one send may carry. It matches
 // the download limit, so content that can be read can be sent on.
 const MaxSendMediaBytes = 32 << 20
+const MaxChannelAvatarBytes = 5 << 20
 
 // Backend is the worker-side implementation behind the RPC server.
 type Backend interface {
@@ -751,6 +829,24 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	case path == "/channels":
+		if r.Method == http.MethodPost {
+			backend, ok := h.backend.(ChannelCreationBackend)
+			if !ok {
+				h.fail(w, NewError(CodeMethodNotAllowed, "method not allowed", 0))
+				return
+			}
+			req, ok := h.decodeCreateChannel(w, r)
+			if !ok {
+				return
+			}
+			out, err := backend.CreateChannel(r.Context(), req)
+			if err != nil {
+				h.fail(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, out)
+			return
+		}
 		if r.Method != http.MethodGet {
 			h.fail(w, NewError(CodeMethodNotAllowed, "method not allowed", 0))
 			return
@@ -761,6 +857,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out, err := h.backend.Channels(r.Context(), page, perPage)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	case path == "/username-availability":
+		if r.Method != http.MethodGet {
+			h.fail(w, NewError(CodeMethodNotAllowed, "method not allowed", 0))
+			return
+		}
+		backend, ok := h.backend.(ChannelCreationBackend)
+		if !ok {
+			h.fail(w, NewError(CodeNotFound, "username lookup is unavailable", 0))
+			return
+		}
+		out, err := backend.CheckUsername(r.Context(), UsernameAvailabilityRequest{Username: r.URL.Query().Get("username")})
 		if err != nil {
 			h.fail(w, err)
 			return
@@ -827,6 +939,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out, err := h.backend.SendMessage(r.Context(), req)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	case path == "/send_album":
+		backend, ok := h.backend.(AlbumBackend)
+		if !ok {
+			h.fail(w, NewError(CodeMethodNotAllowed, "native albums are unavailable", 0))
+			return
+		}
+		req, ok := h.decodeSendAlbum(w, r)
+		if !ok {
+			return
+		}
+		out, err := backend.SendAlbum(r.Context(), req)
 		if err != nil {
 			h.fail(w, err)
 			return
@@ -938,6 +1066,82 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
+}
+
+func (h *handler) decodeCreateChannel(w http.ResponseWriter, r *http.Request) (CreateChannelRequest, bool) {
+	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err == nil && mediaType == "application/json" {
+		var req CreateChannelRequest
+		if !h.decode(w, r, &req) {
+			return CreateChannelRequest{}, false
+		}
+		return req, true
+	}
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		h.fail(w, NewError(CodeInvalidInput, "request must be JSON or multipart/form-data", 0))
+		return CreateChannelRequest{}, false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, MaxChannelAvatarBytes+(64<<10))
+	reader := multipart.NewReader(r.Body, params["boundary"])
+	var req CreateChannelRequest
+	sawRequest, sawMedia := false, false
+	for {
+		part, nextErr := reader.NextPart()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			h.fail(w, NewError(CodeInvalidInput, "invalid multipart channel creation body", 0))
+			return CreateChannelRequest{}, false
+		}
+		switch part.FormName() {
+		case "request":
+			if sawRequest {
+				part.Close()
+				h.fail(w, NewError(CodeInvalidInput, "duplicate request part", 0))
+				return CreateChannelRequest{}, false
+			}
+			sawRequest = true
+			data, readErr := io.ReadAll(io.LimitReader(part, 64<<10+1))
+			if readErr != nil || len(data) > 64<<10 || json.Unmarshal(data, &req) != nil {
+				part.Close()
+				h.fail(w, NewError(CodeInvalidInput, "invalid channel creation request part", 0))
+				return CreateChannelRequest{}, false
+			}
+		case "media":
+			if sawMedia {
+				part.Close()
+				h.fail(w, NewError(CodeInvalidInput, "duplicate avatar part", 0))
+				return CreateChannelRequest{}, false
+			}
+			sawMedia = true
+			data, readErr := io.ReadAll(io.LimitReader(part, MaxChannelAvatarBytes+1))
+			if readErr != nil || len(data) == 0 || len(data) > MaxChannelAvatarBytes {
+				part.Close()
+				h.fail(w, NewError(CodeMediaTooLarge, "avatar must be between 1 byte and 5 MiB", 0))
+				return CreateChannelRequest{}, false
+			}
+			if req.Avatar == nil {
+				req.Avatar = &SendMedia{}
+			}
+			req.Avatar.Name = part.FileName()
+			req.Avatar.Data = data
+		default:
+			part.Close()
+			h.fail(w, NewError(CodeInvalidInput, "unexpected multipart part", 0))
+			return CreateChannelRequest{}, false
+		}
+		_ = part.Close()
+	}
+	if !sawRequest || sawMedia && req.Avatar == nil {
+		h.fail(w, NewError(CodeInvalidInput, "request part is required", 0))
+		return CreateChannelRequest{}, false
+	}
+	if req.Avatar != nil && !sawMedia {
+		h.fail(w, NewError(CodeInvalidInput, "avatar metadata requires an avatar file", 0))
+		return CreateChannelRequest{}, false
+	}
+	return req, true
 }
 
 type routeKind int
@@ -1158,6 +1362,74 @@ func (h *handler) decodeSend(w http.ResponseWriter, r *http.Request) (SendReques
 		// The bytes came from the file part; the description came from the
 		// request part. Both are needed to name what is being sent.
 		req.Media.Data = mediaData
+	}
+	return req, true
+}
+
+func (h *handler) decodeSendAlbum(w http.ResponseWriter, r *http.Request) (SendAlbumRequest, bool) {
+	if r.Method != http.MethodPost {
+		h.fail(w, NewError(CodeMethodNotAllowed, "method not allowed", 0))
+		return SendAlbumRequest{}, false
+	}
+	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		h.fail(w, NewError(CodeInvalidInput, "the album body must be multipart/form-data", 0))
+		return SendAlbumRequest{}, false
+	}
+	const maxAlbumItems = 10
+	r.Body = http.MaxBytesReader(w, r.Body, int64(MaxSendMediaBytes*maxAlbumItems+(1<<20)))
+	reader := multipart.NewReader(r.Body, params["boundary"])
+	var req SendAlbumRequest
+	var files [][]byte
+	sawRequest := false
+	for {
+		part, nextErr := reader.NextPart()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			h.fail(w, NewError(CodeInvalidInput, "the multipart album body is not readable", 0))
+			return SendAlbumRequest{}, false
+		}
+		switch part.FormName() {
+		case "request":
+			if sawRequest {
+				h.fail(w, NewError(CodeInvalidInput, "the request part must appear once", 0))
+				return SendAlbumRequest{}, false
+			}
+			dec := json.NewDecoder(io.LimitReader(part, 1<<20))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&req); err != nil {
+				h.fail(w, NewError(CodeInvalidInput, "the album request part is not valid", 0))
+				return SendAlbumRequest{}, false
+			}
+			sawRequest = true
+		case "media":
+			if len(files) >= maxAlbumItems {
+				h.fail(w, NewError(CodeInvalidInput, "an album may contain at most 10 media files", 0))
+				return SendAlbumRequest{}, false
+			}
+			data, readErr := io.ReadAll(io.LimitReader(part, MaxSendMediaBytes+1))
+			if readErr != nil || len(data) == 0 || len(data) > MaxSendMediaBytes {
+				h.fail(w, NewError(CodeMediaTooLarge, "an album attachment is empty or exceeds the per-file limit", 0))
+				return SendAlbumRequest{}, false
+			}
+			files = append(files, data)
+		default:
+			h.fail(w, NewError(CodeInvalidInput, fmt.Sprintf("unknown multipart part %q", part.FormName()), 0))
+			return SendAlbumRequest{}, false
+		}
+	}
+	if !sawRequest || len(req.Items) < 2 || len(req.Items) > maxAlbumItems || len(files) != len(req.Items) {
+		h.fail(w, NewError(CodeInvalidInput, "an album needs 2-10 ordered item descriptions and matching media parts", 0))
+		return SendAlbumRequest{}, false
+	}
+	for i := range req.Items {
+		if req.Items[i].Media == nil || req.Items[i].Media.Kind == "" {
+			h.fail(w, NewError(CodeInvalidInput, fmt.Sprintf("album item %d has no media description", i), 0))
+			return SendAlbumRequest{}, false
+		}
+		req.Items[i].Media.Data = files[i]
 	}
 	return req, true
 }

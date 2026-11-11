@@ -60,10 +60,11 @@ type editStatusView struct {
 // valid with an attachment, but an omitted text field is never a replacement
 // instruction.
 type editPayload struct {
-	Text     *string                     `json:"text"`
-	Entities []rpc.Entity                `json:"entities"`
-	Media    *publishing.DirectSendMedia `json:"media"`
-	Options  editPayloadOptions          `json:"options"`
+	Text      *string                     `json:"text"`
+	Entities  []rpc.Entity                `json:"entities"`
+	Media     *publishing.DirectSendMedia `json:"media"`
+	KeepMedia bool                        `json:"keep_media,omitempty"`
+	Options   editPayloadOptions          `json:"options"`
 }
 
 type editPayloadOptions struct {
@@ -317,6 +318,7 @@ func (s *Server) readMessageEditRequest(w http.ResponseWriter, r *http.Request,
 		Text: *payload.Text, Entities: payload.Entities, Media: payload.Media,
 		Options: publishing.RequestOptions{DisableWebPagePreview: payload.Options.DisableWebPagePreview},
 	}
+	in.KeepMedia = payload.KeepMedia
 	keep = true
 	return in, nil
 }

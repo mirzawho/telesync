@@ -1,6 +1,120 @@
 # Current state
 
-**Updated:** 2026-11-11 (asynchronous full Telegram message replacement is
+**Latest update — floating chat footer and message actions (2026-11-11):**
+Implemented approved handoff
+`.agents/handoffs/v0.0.4-floating-message-composer-layout.md`. Message actions
+are positioned at the physical bottom-right inside their own bubble with reserved
+content/reaction space. The existing composer now floats inside the message pane
+with `bg-background/80 backdrop-blur-xl`; a ResizeObserver measures its full
+height and updates timeline clearance and Jump-to-latest offset. Panel tests,
+`npm test`, typecheck, production build, and `git diff --check` passed. Browser
+verification was unavailable (no browser executable/Playwright command found).
+
+**Latest update — native media semantics and album publishing (2026-11-11):**
+Implemented source-native video and round-video classification/metadata through
+gotd, worker DTO, RPC and publishing; added destination video attributes and
+native `sendMultiMedia` with ordered upload/preparation and no standalone
+fallback. RPC/worker forwarding, publishing source-member validation/send,
+workflow album-scoped idempotency, and Channel Explorer album grouping/gallery
+and publish payload are wired. `go test ./... -count=1`, `go vet ./...`,
+`go build ./...`, docsgen check/apidocs tests, web typecheck and `git diff
+--check` pass. Panel tests are 163/164; one existing floating-footer class
+assertion fails against current working-tree markup. Remaining gaps: Direct Send
+durable multi-file operation and Workflow's event-to-album aggregation into one
+publication; API cannot verify that supplied source member IDs are the complete
+group, and the gallery action currently relies on complete loaded history. Live
+Telegram/Cat behavior remains unverified. Approved handoff is still implementing;
+preserve all pre-existing dirty worktree edits.
+
+**Latest update — floating message composer layout preparation (2026-11-11):**
+Added `web/apps/web/app/components/channel-explorer/chat-layout.test.tsx` and
+registered it in the panel test runner. The two new SSR assertions fail against
+the current top-left menu and normal-flow composer layout as expected; 158 other
+panel tests passed. No production changes made. Handoff
+`.agents/handoffs/v0.0.4-floating-message-composer-layout.md` is awaiting
+approval. Browser verification not run.
+
+**Latest update — shared composer edit mode (2026-11-11):** Implemented the
+approved `.agents/handoffs/v0.0.4-shared-chat-composer-edit-mode.md`. Send and
+Edit now use one `ChannelMessageComposer`, one textarea, the existing attachment
+Sheet, and a single mode-dependent primary action. Removed the separate
+`ChannelMessageEdit` form/component and obsolete tests. Edit drafts are keyed by
+message ID; Send draft remains in the shared component while editing. The pane
+retains existing PUT and async polling, retries history refresh after confirmed
+`edited`, and updates the existing message ID. `npm test`, `npm run typecheck`,
+`npm run build`, focused panel tests, and `git diff --check` passed. Browser and
+live Telegram verification were not run; media transitions remain unverified
+against a live destination. See the handoff for exact results.
+
+**Latest update — message composer/send UX (2026-11-11):** The channel composer
+now uses a compact RTL messenger layout with one Paperclip-triggered bottom
+sheet, five direct media actions, kind-aware previews, and Ogg/Opus validation
+for voice. Accepted sends are represented by content-free timeline placeholders,
+polled by operation identity, and reconciled against fetched history with bounded
+refreshes; failed drafts can be restored without automatic resend. Focused panel
+tests (161), full web tests, typecheck, production build, and `git diff --check`
+pass. No browser interaction or live Telegram send was performed. Details and
+remaining sync caveat are in `.agents/handoffs/v0.0.4-message-composer-sending-ux.md`.
+
+**Updated:** 2026-11-11 (Create Channel now opens as an explorer Dialog instead
+of a dedicated page; the legacy URL redirects into the open dialog while
+preserving query filters. The form has a hidden-input circular avatar picker,
+public/private radio tiles, inline username feedback, and tested multipart/API
+integration. Web typecheck and production build pass; panel tests pass 151/151.
+No browser viewport verification was available. Native channel creation/availability/explorer UX is
+complete; see `.agents/handoffs/v0.0.4-native-channel-creation-availability-explorer.md`.
+Public create and username-advisory routes, worker/gotd pipeline, bounded
+multipart avatar path, durable idempotency/partial registration, generated docs,
+and explorer form/menu/detail UI are implemented. `go test ./...`, `go vet
+./...`, `go build ./...`, docsgen/apidocs checks, web typecheck, 138 panel tests,
+and web production build pass. Browser and live Telegram/Cat verification were
+not performed. Channel message management is complete in
+`.agents/handoffs/v0.0.4-channel-message-management-ui.md`: UI/API operations,
+fail-closed permissions, identity-safe polling/reconciliation, and explicit
+`keep_media` edit semantics are in place. Typecheck/build, focused feature Go
+tests and docs checks pass. Full Go tests and frontend `npm test` (609) pass. No
+browser or live Telegram/Cat verification was performed. Graphify stats/currentness could not
+be verified.
+
+The Channel Information Dialog profile redesign is implemented and DONE in
+`.agents/handoffs/v0.0.4-channel-information-dialog-profile.md`. It uses the
+authenticated local-avatar path, distinguishes local route/avatar ID from
+remote Telegram detail/copy ID, gates View on actual read permission, and keeps
+stale request identity isolated. `npm test` (626), forced frontend typecheck,
+production build, and `git diff --check` pass. Public link/server metadata were
+omitted because the detail response provides no authoritative safe values.
+Browser verification was not performed. Graphify freshness remains unknown.
+
+Permission-resolution preparation is recorded in
+`.agents/handoffs/v0.0.4-telegram-channel-permission-resolution.md` (DONE after
+explicit approval). The gateway now preserves known Telegram capabilities from
+the worker through created-channel persistence, response, replay, and local
+detail; focused and full Go tests plus vet/build pass. Live selected-session
+identity and channel 98 ownership remain unverified.
+
+Live Local Channel Detail permission refresh is implemented in
+`.agents/handoffs/v0.0.4-live-local-channel-permissions.md` (DONE). Detail calls
+the local row's exact keyed worker with its stored remote ID, overlays only live
+permissions, and returns the classified worker error on failed resolution. The
+gotd resolver no longer accepts an incomplete reconstructed dialog as current
+rights. Focused Go tests, vet, docs checks, and a separate executable build pass.
+DB row 2 is `cat` / remote 98 with an unknown all-false snapshot, but the
+authenticated live API and MTProto role remain unverified; running PID 53744
+uses the old `bin/telesync` and was not restarted.
+
+Channel Explorer's Persian destination/permissions warning was caused by
+missing destination identity, not permission parsing: the child route reads
+`data.client_key`, while local detail returned only `data.channel`. Local detail
+now adds the stored row's key as sibling `data.client_key`, and the pane labels
+missing identity separately from send denial. The exact route and UI regressions,
+157 panel tests, typecheck/build, gateway tests, vet, docs checks and a separate
+binary build pass. Handoff
+`.agents/handoffs/v0.0.4-channel-explorer-destination-key.md` is DONE. Live UI
+remains unverified: PID 58331 serves old embedded bundle
+`channel-messages-main-DF75S9b3.js` (still with old warning); current source
+build produces `channel-messages-main-C886CuXI.js`. API auth returned 401 and
+deep-link HTTP returned 404. No embed, restart, or deployment was done.
+Earlier state: asynchronous full Telegram message replacement is
 implemented and recorded DONE in
 `.agents/handoffs/v0.0.4-telegram-message-edit.md`. `go test ./...`,
 `go build ./...`, `go vet ./...`, docs generation checks, and API docs tests
@@ -559,9 +673,10 @@ design-system upgrade was done.
 
 Routing detail worth keeping: `channels.tsx` exports `shouldRevalidate` that
 returns true only for a form submission, so moving between channels or changing
-filters never refetches the channel list. The list is read whole with `listAll`
-(capped at 5 × 100) and search + category chips filter **client-side**, so
-typing needs no request and no submit button.
+filters never refetches the channel list. The list is read across all pages with
+`listAll`; search + server + category filters apply **client-side**, so changing
+them needs no request and no submit button. Pagination follows `meta.has_more`,
+so server filtering does not operate on only the first page.
 
 VERIFIED here: `tsc --noEmit` clean; 57 new behaviour tests plus the existing 21
 content and 19 media tests pass (`node scripts/test-panel.mjs` and the other
@@ -1065,3 +1180,22 @@ in the same tree while this ran (moving the publish route to
 `internal/gateway/publish_voice_test.go` resolves the live publish path at run
 time (`/messages/copy`, falling back to `/messages`) so it is not coupled to
 which address wins.
+
+## Channel Explorer server filter (2026-11-11)
+
+The category toolbar now has a compact server multi-select on the physical
+right under RTL. Empty selection means all configured connections; repeated
+`server` query params select a deduplicated union by `Channel.client_key`.
+Server, category and search filters apply together to the client-loaded channel
+inventory. The loader now follows all `/local/channels` pages instead of
+stopping after 500 rows. Query changes preserve unrelated params and channel
+links retain filter state; if the selected channel no longer matches the active
+filters, its timeline is hidden and the route returns to the unselected
+explorer state.
+
+**Verified:** `npm run typecheck`, focused `node scripts/test-panel.mjs`
+(150/150), `npm test` (all suites green, including 151 panel assertions), and
+`npm run build` in `web/apps/web`.
+**Not visually verified:** desktop/mobile RTL layout or live dropdown keyboard
+interaction; no browser session was available. Handoff:
+`.agents/handoffs/v0.0.4-channel-server-multiselect.md` (DONE).

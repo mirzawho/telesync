@@ -130,10 +130,11 @@
     "a.auth.CanList(channelstore.KindChannel)  (auth.go:me)",
     "a.auth.CanList(channelstore.KindUser)  (auth.go:me)",
     "a.auth.Global(channelstore.PermissionAutomationView)  (auth.go:me)",
+    "a.auth.Global(channelstore.PermissionChannelsCreate)  (auth.go:me)",
     "a.auth.Global(channelstore.PermissionContentPublish)  (auth.go:me)",
     "a.auth.Global(channelstore.PermissionServersView)  (auth.go:me)"
    ],
-   "credential_count": 6,
+   "credential_count": 7,
    "probe": [
     {
      "caller": "anonymous",
@@ -171,6 +172,7 @@
        "updated_at": "",
        "access": {
         "channels": true,
+        "channels_create": true,
         "categories": true,
         "users": true,
         "servers": true,
@@ -215,6 +217,7 @@
        },
        "access": {
         "channels": false,
+        "channels_create": false,
         "categories": false,
         "users": false,
         "servers": false,
@@ -266,6 +269,7 @@
        },
        "access": {
         "channels": true,
+        "channels_create": true,
         "categories": true,
         "users": true,
         "servers": true,
@@ -296,6 +300,7 @@
        "updated_at": "",
        "access": {
         "channels": true,
+        "channels_create": true,
         "categories": true,
         "users": true,
         "servers": true,
@@ -324,6 +329,7 @@
        "updated_at": "",
        "access": {
         "channels": true,
+        "channels_create": true,
         "categories": true,
         "users": true,
         "servers": true,
@@ -3143,7 +3149,7 @@
    "handler": "getLocalChannel",
    "file": "local_channels.go",
    "line": 0,
-   "response": "envelope{ Data: map[string]any{\"channel\": localChannelDetail(ch)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "response": "envelope{ Data: map[string]any{\"channel\": view, \"client_key\": ch.ClientKey}, Meta: metaFor(requestID, s.cfg.Now()), }",
    "status_name": "StatusOK",
    "status": 200,
    "credentials": [
@@ -3249,7 +3255,8 @@
         "scam": false,
         "fake": false,
         "participants_count": null
-       }
+       },
+       "client_key": "doc-client"
       },
       "meta": {
        "generated_at": "2026-10-25T10:00:00Z",
@@ -5938,6 +5945,14 @@
    ]
   },
   {
+   "pattern": "/api/v1/telegram/{key}/channels",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
    "pattern": "/api/v1/telegram/{key}/channels/find",
    "method": "GET",
    "handler": "find",
@@ -6017,6 +6032,85 @@
       "error": {
        "code": "invalid_input",
        "message": "q is required",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/telegram/{key}/channels/username-availability",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/telegram/official/channels/username-availability",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/username-availability",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "username is required",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels/username-availability",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/telegram/official/channels/username-availability",
+     "status": 400,
+     "code": "invalid_input",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "invalid_input",
+       "message": "username is required",
        "request_id": "docsgen"
       }
      }

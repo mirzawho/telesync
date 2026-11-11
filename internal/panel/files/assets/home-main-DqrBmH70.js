@@ -1,0 +1,1 @@
+import{c as e,t}from"./jsx-runtime-B3UgTxmm.js";import{n}from"./states-C2a_vU1H.js";var r=t(),i=e(function({error:e}){return(0,r.jsx)(`div`,{className:`flex min-h-svh items-center justify-center p-6`,children:(0,r.jsx)(n,{message:e instanceof Error?e.message:`این مسیر باز نشد.`})})});export{i as ErrorBoundary};

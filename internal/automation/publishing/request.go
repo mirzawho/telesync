@@ -26,6 +26,9 @@ type RequestSource struct {
 	// LocalChannelID is the managed_channels row, never a Telegram id.
 	LocalChannelID int64 `json:"local_channel_id"`
 	MessageID      int   `json:"message_id"`
+	// MessageIDs names every member when the selected source message belongs to
+	// an album. Empty preserves the historical single-message contract.
+	MessageIDs []int `json:"message_ids,omitempty"`
 }
 
 // RequestDestination names where the post goes. ChannelID is the Telegram
@@ -116,6 +119,29 @@ func Validate(req Request) error {
 	}
 	if req.Source.MessageID <= 0 {
 		return errors.New("source.message_id must be a positive message id")
+	}
+	if len(req.Source.MessageIDs) != 0 {
+		if req.Media.Mode != MediaPreserveSource {
+			return errors.New("source.message_ids requires media.mode preserve_source")
+		}
+		if len(req.Source.MessageIDs) < 2 || len(req.Source.MessageIDs) > 10 {
+			return errors.New("source.message_ids must contain 2-10 album members")
+		}
+		seen := make(map[int]struct{}, len(req.Source.MessageIDs))
+		selected := false
+		for _, id := range req.Source.MessageIDs {
+			if id <= 0 {
+				return errors.New("source.message_ids must contain positive message ids")
+			}
+			if _, duplicate := seen[id]; duplicate {
+				return errors.New("source.message_ids must not contain duplicates")
+			}
+			seen[id] = struct{}{}
+			selected = selected || id == req.Source.MessageID
+		}
+		if !selected {
+			return errors.New("source.message_ids must include source.message_id")
+		}
 	}
 	if req.Media.Mode != MediaPreserveSource && req.Media.Mode != MediaOmit {
 		return fmt.Errorf("media.mode must be %q or %q", MediaPreserveSource, MediaOmit)

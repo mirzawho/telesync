@@ -56,6 +56,11 @@ type Worker interface {
 	DeleteMessage(ctx context.Context, req rpc.DeleteMessageRequest) (rpc.DeleteMessageResult, error)
 }
 
+type channelCreationWorker interface {
+	CheckUsername(ctx context.Context, req rpc.UsernameAvailabilityRequest) (rpc.UsernameAvailability, error)
+	CreateChannel(ctx context.Context, req rpc.CreateChannelRequest) (rpc.CreateChannelResult, error)
+}
+
 // Registry maps configured client keys to their workers.
 type Registry interface {
 	Worker(key string) (Worker, bool)
@@ -72,7 +77,8 @@ type Config struct {
 	RequestTimeout time.Duration
 	// Channels is the local managed-channel store. Nil disables join, and the
 	// avatar then streams without a persistent cache.
-	Channels ManagedStore
+	Channels         ManagedStore
+	ChannelCreations ChannelCreationStore
 	// Avatars is the persistent avatar cache. Nil serves avatars directly.
 	Avatars AvatarCache
 	// Categories is the local category store. Nil answers the local category
@@ -388,6 +394,19 @@ func (s *Server) serveTelegram(w http.ResponseWriter, r *http.Request, requestID
 // routeTelegram is the per-resource part of the Telegram routes.
 func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *http.Request,
 	key string, worker Worker, resource string, segments []string, requestID string) {
+	if resource == "channels" && len(segments) == 2 && r.Method == http.MethodPost {
+		s.createChannel(ctx, w, r, key, worker, requestID)
+		return
+	}
+	if resource == "channels" && len(segments) == 3 && segments[2] == "username-availability" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "Username availability is read-only and supports GET.", requestID)
+			return
+		}
+		s.channelUsernameAvailability(ctx, w, r, key, worker, requestID)
+		return
+	}
 	// join, copy, send, delete and edit are the state-changing routes. Everything else is
 	// read-only and answers 405 to anything but GET.
 	//
@@ -745,9 +764,14 @@ type mediaView struct {
 	// when Telegram never reported one: an attachment with no name must not
 	// grow a name this build invented. It never replaces Label, which is the
 	// localised description of the media kind.
-	Filename string `json:"filename,omitempty"`
-	MimeType string `json:"mime_type,omitempty"`
-	Size     int64  `json:"size,omitempty"`
+	Filename          string `json:"filename,omitempty"`
+	MimeType          string `json:"mime_type,omitempty"`
+	Size              int64  `json:"size,omitempty"`
+	Duration          int    `json:"duration,omitempty"`
+	Width             int    `json:"width,omitempty"`
+	Height            int    `json:"height,omitempty"`
+	SupportsStreaming bool   `json:"supports_streaming,omitempty"`
+	RoundMessage      bool   `json:"round_message,omitempty"`
 	// URL streams the bytes. It is a path below the API root ("/telegram/…"),
 	// not an absolute URL: a client joins it to the root it already talks to
 	// and the answer is correct behind any host, proxy or mount.
@@ -759,7 +783,7 @@ type mediaView struct {
 // locations, links and anything a backend could not classify do not.
 func mediaHasBytes(mediaType string) bool {
 	switch mediaType {
-	case "photo", "video", "document", "audio", "voice", "sticker", "gif":
+	case "photo", "video", "round_video", "document", "audio", "voice", "sticker", "gif":
 		return true
 	default:
 		return false
@@ -780,12 +804,17 @@ func messageViewOf(key string, channelID int64, msg rpc.Message) messageView {
 		return out
 	}
 	out.Media = &mediaView{
-		ID:       msg.Media.ID,
-		Type:     msg.Media.Type,
-		Label:    msg.Media.Label,
-		Filename: msg.Media.Filename,
-		MimeType: msg.Media.MimeType,
-		Size:     msg.Media.Size,
+		ID:                msg.Media.ID,
+		Type:              msg.Media.Type,
+		Label:             msg.Media.Label,
+		Filename:          msg.Media.Filename,
+		MimeType:          msg.Media.MimeType,
+		Size:              msg.Media.Size,
+		Duration:          msg.Media.Duration,
+		Width:             msg.Media.Width,
+		Height:            msg.Media.Height,
+		SupportsStreaming: msg.Media.SupportsStreaming,
+		RoundMessage:      msg.Media.RoundMessage,
 	}
 	// Only an attachment whose bytes the media route can fetch has a URL. A
 	// poll, a location, a link preview and a deleted document have nothing to

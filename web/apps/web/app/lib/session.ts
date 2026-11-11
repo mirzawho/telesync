@@ -40,8 +40,10 @@ export interface Me {
   is_active: boolean
   created_at: string
   updated_at: string
+  permissions?: { global: string[] }
   access?: {
     channels: boolean
+    channels_create?: boolean
     categories: boolean
     users: boolean
     servers: boolean

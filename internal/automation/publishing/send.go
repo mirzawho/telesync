@@ -65,14 +65,91 @@ func (s *Service) buildSend(ctx context.Context, source sourceMessage, req Reque
 		return rpc.SendRequest{}, s.sourceMediaFailure(source, err)
 	}
 	send.Media = &rpc.SendMedia{
-		Kind:     sendKind(source.message.Media),
-		Name:     sendFileName(source.message.Media),
-		MimeType: stream.MimeType,
-		Data:     data,
-		Duration: source.message.Media.Duration,
-		Waveform: source.message.Media.Waveform,
+		Kind:              sendKind(source.message.Media),
+		Name:              sendFileName(source.message.Media),
+		MimeType:          mediaMimeType(source.message.Media, stream.MimeType),
+		Data:              data,
+		Duration:          source.message.Media.Duration,
+		Waveform:          source.message.Media.Waveform,
+		Width:             source.message.Media.Width,
+		Height:            source.message.Media.Height,
+		SupportsStreaming: source.message.Media.SupportsStreaming,
+		RoundMessage:      source.message.Media.RoundMessage,
 	}
 	return send, nil
+}
+
+func (s *Service) buildAlbumSend(ctx context.Context, source sourceMessage, req Request) (rpc.SendAlbumRequest, error) {
+	if len(source.members) < 2 || len(source.members) > 10 {
+		return rpc.SendAlbumRequest{}, &Error{http.StatusBadRequest, CodeInvalidInput, "The source album must contain 2-10 members."}
+	}
+	out := rpc.SendAlbumRequest{
+		ChannelID: mustChannelID(req.Destination.ChannelID),
+		Silent:    req.Options.Silent,
+		Items:     make([]rpc.SendAlbumItem, 0, len(source.members)),
+	}
+	visual := map[string]bool{"photo": true, "video": true, "round_video": true}
+	bucket := ""
+	for _, member := range source.members {
+		if member.Media == nil || !mediaHasBytes(member.Media.Type) {
+			return rpc.SendAlbumRequest{}, &Error{http.StatusBadRequest, CodeInvalidInput,
+				"Every source album member must contain supported media."}
+		}
+		current := member.Media.Type
+		if visual[current] {
+			current = "visual"
+		} else if current != "document" {
+			return rpc.SendAlbumRequest{}, &Error{http.StatusBadRequest, CodeInvalidInput,
+				"This album contains a media kind that cannot be grouped natively."}
+		}
+		if bucket == "" {
+			bucket = current
+		} else if current != bucket {
+			return rpc.SendAlbumRequest{}, &Error{http.StatusBadRequest, CodeInvalidInput,
+				"This album contains incompatible media kinds."}
+		}
+		stream, err := source.worker.Media(ctx, source.row.ChannelID, member.ID, largestPhotoSize, rpc.MediaSlice{})
+		if err != nil {
+			return rpc.SendAlbumRequest{}, s.sourceMediaFailure(source, err)
+		}
+		data, err := stream.ReadAll()
+		if err != nil {
+			return rpc.SendAlbumRequest{}, s.sourceMediaFailure(source, err)
+		}
+		text, entities := member.Text, member.Entities
+		if member.ID == source.message.ID {
+			text, entities = req.Content.Text, req.Content.Entities
+		}
+		out.Items = append(out.Items, rpc.SendAlbumItem{
+			Media: &rpc.SendMedia{
+				Kind: sendKind(member.Media), Name: sendFileName(member.Media),
+				MimeType: mediaMimeType(member.Media, stream.MimeType), Data: data,
+				Duration: member.Media.Duration, Waveform: member.Media.Waveform,
+				Width: member.Media.Width, Height: member.Media.Height,
+				SupportsStreaming: member.Media.SupportsStreaming,
+				RoundMessage:      member.Media.RoundMessage,
+			},
+			Text: text, Entities: entities, RandomID: albumRandomID(req, member.ID),
+		})
+	}
+	return out, nil
+}
+
+func albumRandomID(req Request, messageID int) int64 {
+	key := requestHash(req) + ":" + strconv.Itoa(messageID)
+	sum := sha256.Sum256([]byte(key))
+	id := int64(binary.LittleEndian.Uint64(sum[:8]))
+	if id == 0 {
+		return 1
+	}
+	return id
+}
+
+func mediaMimeType(media *rpc.Media, downloaded string) string {
+	if media != nil && media.MimeType != "" {
+		return media.MimeType
+	}
+	return downloaded
 }
 
 // sendKind is the outgoing media kind of a source attachment.
@@ -94,6 +171,10 @@ func sendKind(m *rpc.Media) string {
 	switch m.Type {
 	case "photo":
 		return "photo"
+	case "video":
+		return "video"
+	case "round_video":
+		return "round_video"
 	case "voice":
 		return "voice"
 	case "audio":
@@ -130,7 +211,7 @@ func (s *Service) logSourceMedia(source sourceMessage, err error) {
 // can receive, so there is nothing to preserve.
 func mediaHasBytes(mediaType string) bool {
 	switch mediaType {
-	case "photo", "video", "document", "audio", "voice", "sticker", "gif":
+	case "photo", "video", "round_video", "document", "audio", "voice", "sticker", "gif":
 		return true
 	default:
 		return false

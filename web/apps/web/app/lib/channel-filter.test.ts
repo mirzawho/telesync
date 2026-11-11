@@ -74,6 +74,39 @@ test("an unfiltered list is returned untouched", () => {
   assert.deepEqual(ids(rows), [1, 2, 3, 4])
 })
 
+test("all servers is the default and selected servers filter by client key", () => {
+  const crossServer = { ...CHANNELS[0], id: 5, client_key: "official", channel_id: CHANNELS[0].channel_id }
+  const rows = filterChannels([...CHANNELS, crossServer], {
+    search: "",
+    categoryIds: [],
+    filed: FILED,
+  })
+  assert.deepEqual(ids(rows), [1, 2, 3, 4, 5])
+  assert.deepEqual(ids(filterChannels([...CHANNELS, crossServer], {
+    search: "", categoryIds: [], filed: FILED, serverKeys: ["official"],
+  })), [5])
+})
+
+test("multiple server filters form a union without conflating Telegram ids", () => {
+  const official = { ...CHANNELS[0], id: 5, client_key: "official", channel_id: 1001 }
+  const other = { ...CHANNELS[0], id: 6, client_key: "another", channel_id: 1001 }
+  const rows = filterChannels([...CHANNELS, official, other], {
+    search: "", categoryIds: [], filed: FILED, serverKeys: ["official", "cat"],
+  })
+  assert.deepEqual(ids(rows), [1, 2, 3, 4, 5])
+})
+
+test("server, search and category filters combine with AND", () => {
+  const official = { ...CHANNELS[0], id: 5, client_key: "official", title: "Tech news" }
+  const rows = filterChannels([...CHANNELS, official], {
+    search: "tech", categoryIds: [10], filed: { ...FILED, 5: [10] }, serverKeys: ["official"],
+  })
+  assert.deepEqual(ids(rows), [5])
+  assert.deepEqual(filterChannels([...CHANNELS, official], {
+    search: "missing", categoryIds: [], filed: FILED, serverKeys: ["official"],
+  }), [])
+})
+
 test("selected categories match by OR across membership", () => {
   const rows = filterChannels(CHANNELS, {
     search: "",

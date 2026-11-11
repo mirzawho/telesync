@@ -1,1 +1,0 @@
-import{U as e,V as t}from"./utils-Ba9q0Lno.js";import{i as n}from"./button-BuRKrf-e.js";var r=e(t(),1).forwardRef(function(e,t){let{className:r,render:i,orientation:a=`horizontal`,style:o,...s}=e;return n(`div`,e,{state:{orientation:a},ref:t,props:[{role:`separator`,"aria-orientation":a},s]})});export{r as t};

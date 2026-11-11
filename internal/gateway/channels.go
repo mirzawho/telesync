@@ -23,6 +23,11 @@ type ManagedStore interface {
 	Upsert(ctx context.Context, ch channelstore.Channel) (channelstore.Channel, error)
 }
 
+type ChannelCreationStore interface {
+	BeginChannelCreation(ctx context.Context, userID int64, clientKey, idempotencyKey, fingerprint, payload string) (channelstore.ChannelCreationOperation, bool, error)
+	UpdateChannelCreation(ctx context.Context, op channelstore.ChannelCreationOperation) error
+}
+
 // AvatarCache is the persistent profile-photo cache.
 type AvatarCache interface {
 	Get(ctx context.Context, clientKey string, channelID int64, fetch avatarcache.FetchFunc) (avatarcache.Image, error)

@@ -220,13 +220,17 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 
 	handler := gateway.New(gateway.Config{
-		Workers:         registry(opts.Workers),
-		Servers:         Servers(opts.Config, opts.Workers),
-		RequestTimeout:  opts.Config.API.RequestTimeout,
-		Operator:        opts.Config.API.OperatorToken(),
-		Users:           opts.Users,
-		Tokens:          opts.Tokens,
-		Channels:        opts.Channels,
+		Workers:        registry(opts.Workers),
+		Servers:        Servers(opts.Config, opts.Workers),
+		RequestTimeout: opts.Config.API.RequestTimeout,
+		Operator:       opts.Config.API.OperatorToken(),
+		Users:          opts.Users,
+		Tokens:         opts.Tokens,
+		Channels:       opts.Channels,
+		ChannelCreations: func() gateway.ChannelCreationStore {
+			store, _ := opts.Channels.(gateway.ChannelCreationStore)
+			return store
+		}(),
 		Categories:      opts.Categories,
 		Publishes:       opts.Publishes,
 		Send:            opts.Send,

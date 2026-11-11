@@ -2,8 +2,10 @@ import {
   Link,
   redirect,
   useNavigation,
+  useNavigate,
   useOutlet,
   useParams,
+  useRevalidator,
   useSearchParams,
   useSubmit,
   type ShouldRevalidateFunctionArgs,
@@ -19,8 +21,11 @@ import * as React from "react"
 import { CategoryMultiSelect } from "@/components/category-multi-select"
 import { ChannelListPane } from "@/components/channel-explorer/channel-list"
 import { ChannelDeleteDialog } from "@/components/channel-explorer/channel-delete-dialog"
+import { ChannelInformationDialog, channelMessagePath } from "@/components/channel-explorer/channel-information-dialog"
+import { CreateChannelDialog } from "@/components/channel-explorer/create-channel-dialog"
 import { fullBleedSection, pageMeta } from "@/lib/page"
 import { filterChannels, toggleCategory } from "@/lib/channel-filter"
+import { parseServerSelection, toggleServerSelection, writeServerSelection } from "@/lib/channel-server-filter"
 import { deleteChannelForm, fileCategoriesForm } from "@/lib/channel-actions"
 import { EmptyState, ErrorState } from "@/components/states"
 import { SubmitButton } from "@/components/submit-button"
@@ -51,16 +56,15 @@ import type {
   Category,
   Channel,
   ChannelAvailability,
+  ChannelDetail,
   FoundChannel,
   TelegramServer,
 } from "@/lib/types"
 
 import type { Route } from "./+types/channels"
 
-// The whole managed-channel list is read into the workspace so the search and
-// the category chips answer as the reader types. A deployment with a very large
-// inventory sees the first `LIST_PAGES * 100` channels.
-const LIST_PAGES = 5
+// The server/category/search filters are local and must apply to the complete
+// authorized managed-channel inventory, not an arbitrary first-page prefix.
 
 interface ChannelList {
   channels: Channel[]
@@ -125,7 +129,8 @@ function parseIDList(raw: FormDataEntryValue | FormDataEntryValue[]): number[] {
 // The workspace holds the channel list and the categories; which channel is
 // open is the child route's job, so that a channel carries no Telegram ids.
 export async function clientLoader({ request }: Route.LoaderArgs) {
-  const { token } = await requireSession(request)
+  const { token, me } = await requireSession(request)
+  const canCreate = me.access?.channels_create ?? me.permissions?.global?.includes("channels.create") ?? false
   const url = requestURL(request)
   const wanted = (url.searchParams.get("server") ?? "").trim()
 
@@ -162,7 +167,7 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
       "/local/channels",
       (data) => (data as ChannelList).channels ?? [],
       {},
-      LIST_PAGES
+      Number.POSITIVE_INFINITY
     )
     availability = {
       state: "ready",
@@ -219,6 +224,7 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
 
   return {
     token,
+    canCreate,
     server,
     servers,
     serversError,
@@ -468,7 +474,7 @@ export const meta = () => pageMeta("کانال‌ها")
 export const handle = fullBleedSection("کانال‌ها")
 
 export default function Channels({ loaderData, actionData }: Route.ComponentProps) {
-  const { categories, filed, availability, servers, server, serversError } =
+  const { categories, filed, availability, servers, server, serversError, canCreate, token } =
     loaderData
   const params = useParams()
   const selectedId = parseLocalID(params.id)
@@ -477,6 +483,8 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
   const outlet = useOutlet()
   const navigation = useNavigation()
   const submit = useSubmit()
+  const navigate = useNavigate()
+  const revalidator = useRevalidator()
   const { toast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -487,8 +495,22 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
   const categoryFilterIds = [
     ...new Set(searchParams.getAll("category_ids").flatMap(parseCategoryFilter)),
   ]
+  const serverKeys = [...new Set(servers.map((item) => item.key))]
+  const selectedServers = serversError
+    ? [...new Set(searchParams.getAll("server").map((key) => key.trim()).filter(Boolean))]
+    : parseServerSelection(searchParams, serverKeys)
   const [search, setSearch] = React.useState(q)
   React.useEffect(() => setSearch(q), [q])
+
+  // Drop stale/invalid keys only after the authoritative server list loaded.
+  // On a temporary API error retain the URL selection and show that failure.
+  React.useEffect(() => {
+    if (serversError) return
+    const normalized = writeServerSelection(searchParams, selectedServers)
+    if (normalized.toString() !== searchParams.toString()) {
+      setSearchParams(normalized, { replace: true })
+    }
+  }, [searchParams, selectedServers, setSearchParams, serversError])
 
   const applySearch = (value: string) => {
     setSearch(value)
@@ -506,6 +528,10 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
     setSearchParams(next, { replace: true })
   }
 
+  const applyServers = (keys: string[]) => {
+    setSearchParams(writeServerSelection(searchParams, keys))
+  }
+
   const clearFilters = () => {
     setSearch("")
     const next = new URLSearchParams(searchParams)
@@ -514,7 +540,15 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
     setSearchParams(next, { replace: true })
   }
 
-  const filtersActive = q.trim() !== "" || categoryFilterIds.length > 0
+  const filtersActive = q.trim() !== "" || categoryFilterIds.length > 0 || selectedServers.length > 0
+  const createOpen = searchParams.get("create") === "1"
+
+  const setCreateOpen = (open: boolean) => {
+    const next = new URLSearchParams(searchParams)
+    if (open) next.set("create", "1")
+    else next.delete("create")
+    setSearchParams(next, { replace: true })
+  }
 
   const rows =
     availability.state === "ready"
@@ -522,14 +556,28 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
           search,
           categoryIds: categoryFilterIds,
           filed,
+          serverKeys: selectedServers,
         })
       : []
+
+  const selectedIsVisible = selectedId === null || rows.some((channel) => channel.id === selectedId)
+  React.useEffect(() => {
+    if (selectedId !== null && availability.state === "ready" && !selectedIsVisible) {
+      navigate({ pathname: "/channels", search: searchParams.toString() ? `?${searchParams}` : "" }, { replace: true })
+    }
+  }, [availability.state, navigate, searchParams, selectedId, selectedIsVisible])
 
   // --- mutations ----------------------------------------------------------
   const submitting = navigation.state === "submitting"
   const [confirming, setConfirming] = React.useState<Channel | null>(null)
   const [defining, setDefining] = React.useState(false)
   const [editing, setEditing] = React.useState<Channel | null>(null)
+  const [information, setInformation] = React.useState<Channel | null>(null)
+
+  const fetchChannelDetail = React.useCallback(async (clientKey: string, telegramChannelId: string, signal: AbortSignal) => {
+    const { data } = await apiRequest<{ channel: ChannelDetail }>("GET", `/telegram/${encodeURIComponent(clientKey)}/channels/${encodeURIComponent(telegramChannelId)}`, { token, signal })
+    return data.channel
+  }, [token])
 
   // A successful action answers with a redirect, so actionData is gone by the
   // time it lands; the intent recorded from the submit that just left is what
@@ -636,10 +684,21 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
               search={search}
               onSearchChange={applySearch}
               selectedCategories={categoryFilterIds}
+              servers={servers}
+              selectedServers={selectedServers}
+              onToggleServer={(key) => applyServers(toggleServerSelection(selectedServers, key, serverKeys))}
+              onSelectAllServers={() => applyServers([])}
+              serversError={serversError}
+              serversLoading={navigation.state === "loading"}
+              onRetryServers={() => window.location.reload()}
               onToggleCategory={(id) =>
                 applyCategories(toggleCategory(categoryFilterIds, id))
               }
               onAdd={() => setDefining(true)}
+              onCreate={() => setCreateOpen(true)}
+              canCreate={canCreate}
+              canJoin={canCreate}
+              onInformation={setInformation}
               onEditCategories={setEditing}
               onDelete={setConfirming}
               hasChannels={availability.channels.length > 0}
@@ -655,12 +714,13 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
             showMessages ? "flex" : "hidden lg:flex"
           )}
         >
-          {outlet ?? (
+          {selectedIsVisible && outlet ? outlet : (
             <WorkspaceEmptyState
-              hasChannels={
-                availability.state === "ready" && availability.channels.length > 0
-              }
-              onAdd={() => setDefining(true)}
+                hasChannels={
+                  availability.state === "ready" && availability.channels.length > 0
+                }
+                onAdd={() => setDefining(true)}
+                canJoin={canCreate}
             />
           )}
         </div>
@@ -677,6 +737,38 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
           submit(deleteChannelForm(confirming.id, { leaveTelegram }), {
             method: "post",
           })
+        }}
+      />
+
+      {information && <ChannelInformationDialog
+        open
+        clientKey={information.client_key}
+        telegramChannelId={String(information.channel_id)}
+        localChannelId={information.id}
+        onOpenChange={(open) => !open && setInformation(null)}
+        onView={() => {
+          navigate(channelMessagePath(information.id, searchParams.toString()))
+          setInformation(null)
+        }}
+        onEditCategories={() => { setInformation(null); setEditing(information) }}
+        onDelete={() => { setInformation(null); setConfirming(information) }}
+        fetchDetail={fetchChannelDetail}
+      />}
+
+      <CreateChannelDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        token={token}
+        servers={servers}
+        canCreate={canCreate}
+        initialClientKey={selectedServers.length === 1 ? selectedServers[0] : undefined}
+        onCreated={(result, clientKey) => {
+          revalidator.revalidate()
+          if (result.locally_registered && result.local_channel_id && !result.status.toLowerCase().includes("partial")) {
+            const next = writeServerSelection(new URLSearchParams(searchParams), [clientKey])
+            next.delete("create")
+            navigate({ pathname: `/channels/${result.local_channel_id}/messages`, search: next.toString() })
+          }
         }}
       />
 
@@ -727,9 +819,11 @@ const PLACEHOLDER_CHANNEL: Channel = {
 function WorkspaceEmptyState({
   hasChannels,
   onAdd,
+  canJoin,
 }: {
   hasChannels: boolean
   onAdd: () => void
+  canJoin: boolean
 }) {
   return (
     <div className="flex flex-1 items-center justify-center p-6">
@@ -738,15 +832,15 @@ function WorkspaceEmptyState({
         title={hasChannels ? "یک کانال انتخاب کنید" : "هنوز کانالی ثبت نشده است"}
         description={
           hasChannels
-            ? "برای مشاهده پیام‌ها، یک کانال از فهرست انتخاب کنید یا کانال جدیدی اضافه کنید."
+            ? "برای مشاهده پیام‌ها، یک کانال از فهرست انتخاب کنید یا به کانال دیگری بپیوندید."
             : "کانال‌ها پس از پیوستن موفق به یک کانال در اینجا ظاهر می‌شوند."
         }
-        action={
+        action={canJoin ? (
           <Button onClick={onAdd}>
             <PlusIcon data-icon="inline-start" />
-            کانال جدید
+            پیوستن به کانال
           </Button>
-        }
+        ) : undefined}
       />
     </div>
   )
@@ -821,7 +915,7 @@ function DefineChannelDialog({
     <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>کانال جدید</DialogTitle>
+          <DialogTitle>پیوستن به کانال</DialogTitle>
           <DialogDescription>
             کانال در سرور انتخاب‌شده پیدا و عضو می‌شود و در فهرست محلی ثبت
             می‌گردد. اگر دسته‌ای انتخاب کنید، بعد از ثبت در همان دسته قرار

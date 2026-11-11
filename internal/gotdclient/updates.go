@@ -188,6 +188,7 @@ func rpcMessageFromTG(msg *tg.Message, users map[int64]*tg.User, channelID int64
 		ID:               base.ID,
 		Date:             base.Date,
 		Text:             base.Text,
+		GroupedID:        base.GroupedID,
 		ReplyToMessageID: base.ReplyToMessageID,
 		Views:            base.Views,
 		Reactions:        make([]rpc.Reaction, 0, len(base.Reactions)),

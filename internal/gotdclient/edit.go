@@ -36,8 +36,14 @@ func (m *Manager) EditMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 		return tgapi.EditResult{}, tgapi.ErrMessageEditUnsupported
 	}
 
-	var media tg.InputMediaClass = &tg.InputMediaEmpty{}
+	var media tg.InputMediaClass
+	if !req.KeepMedia {
+		media = &tg.InputMediaEmpty{}
+	}
 	if req.Media != nil {
+		if req.KeepMedia {
+			return tgapi.EditResult{}, tgapi.ErrMessageEditUnsupported
+		}
 		file, err := uploader.NewUploader(api).FromBytes(ctx, req.Media.Name, req.Media.Data)
 		if err != nil {
 			return tgapi.EditResult{}, classifyEditError(err)
@@ -58,7 +64,7 @@ func (m *Manager) EditMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 	})
 	notModified := tgerr.Is(editErr, "MESSAGE_NOT_MODIFIED")
 	if editErr != nil && !notModified {
-		if req.Media == nil && tgerr.Is(editErr, "MEDIA_EMPTY", "MEDIA_INVALID", "MEDIA_PREV_INVALID") {
+		if req.Media == nil && !req.KeepMedia && tgerr.Is(editErr, "MEDIA_EMPTY", "MEDIA_INVALID", "MEDIA_PREV_INVALID") {
 			return tgapi.EditResult{}, errors.Join(tgapi.ErrEditMediaRemovalUnsupported, editErr)
 		}
 		return tgapi.EditResult{}, classifyEditError(editErr)
@@ -80,7 +86,10 @@ func (m *Manager) EditMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 	if updated.Text != req.Text || !sameEntities(updated.Entities, req.Entities) {
 		return tgapi.EditResult{}, tgapi.ErrMessageEditOutcomeUnknown
 	}
-	if req.Media == nil {
+	if req.KeepMedia {
+		// The absent media flag means retain the existing media. The worker's
+		// readback verifies it remained unchanged.
+	} else if req.Media == nil {
 		if updated.Media != nil {
 			return tgapi.EditResult{}, tgapi.ErrEditMediaRemovalUnsupported
 		}

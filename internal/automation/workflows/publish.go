@@ -2,7 +2,10 @@ package workflows
 
 import (
 	"context"
-	"fmt"
+	"crypto/sha256"
+	"encoding/hex"
+	"strconv"
+	"strings"
 
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/automation/publishing"
@@ -189,7 +192,7 @@ func (h *Handler) publishOne(ctx context.Context, workflow automation.Workflow, 
 		// the source attachment unless the destination says otherwise. Images
 		// the AI never saw are still published.
 		Options:        automation.PublishOptions{},
-		IdempotencyKey: idempotencyKey(runID, pub.ID),
+		IdempotencyKey: idempotencyKey(event, workflow.ID, pub),
 		UserID:         authorID,
 	})
 	if err != nil && res.ErrorCode == "" {
@@ -219,13 +222,24 @@ func (h *Handler) publishOne(ctx context.Context, workflow automation.Workflow, 
 	return res
 }
 
-// idempotencyKey is the key one destination of one run publishes under.
-//
-// It names the run and the destination, so a retry reuses the same stored
-// attempt: a post that may already exist is never sent again, and a confirmed
-// success is replayed rather than repeated.
-func idempotencyKey(runID, publicationID int64) string {
-	return fmt.Sprintf("wf-run-%d-dest-%d", runID, publicationID)
+// idempotencyKey names the logical source item, workflow and destination.
+// Album members share GroupedID, so their independently queued jobs arrive at
+// the publisher under the same key. Standalone messages retain message-level
+// identity. Hashing keeps the key bounded and avoids putting source metadata in
+// the publisher's idempotency record.
+func idempotencyKey(event automation.MessageEvent, workflowID int64, pub automation.WorkflowPublication) string {
+	sourceItem := "message:" + strconv.FormatInt(event.MessageID, 10)
+	if event.GroupedID != nil && *event.GroupedID != 0 {
+		sourceItem = "group:" + strconv.FormatInt(*event.GroupedID, 10)
+	}
+	identity := strings.Join([]string{
+		"workflow-publication-v2", event.NetworkKey,
+		strconv.FormatInt(event.TelegramChannelID, 10), sourceItem,
+		strconv.FormatInt(workflowID, 10), pub.DestinationType, pub.ClientKey,
+		strconv.FormatInt(pub.ChannelID, 10), strconv.FormatInt(pub.SiteID, 10),
+	}, "\x00")
+	sum := sha256.Sum256([]byte(identity))
+	return "wf-pub-v2-" + hex.EncodeToString(sum[:])
 }
 
 // optionsFor is the destination's own publishing options.

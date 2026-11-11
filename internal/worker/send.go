@@ -58,12 +58,16 @@ func sendMediaFromWire(m *rpc.SendMedia) *tgapi.SendMedia {
 		return nil
 	}
 	return &tgapi.SendMedia{
-		Kind:     m.Kind,
-		Name:     m.Name,
-		MimeType: m.MimeType,
-		Data:     m.Data,
-		Duration: m.Duration,
-		Waveform: m.Waveform,
+		Kind:              m.Kind,
+		Name:              m.Name,
+		MimeType:          m.MimeType,
+		Data:              m.Data,
+		Duration:          m.Duration,
+		Waveform:          m.Waveform,
+		Width:             m.Width,
+		Height:            m.Height,
+		SupportsStreaming: m.SupportsStreaming,
+		RoundMessage:      m.RoundMessage,
 	}
 }
 

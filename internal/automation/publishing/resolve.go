@@ -3,6 +3,7 @@ package publishing
 import (
 	"context"
 	"net/http"
+	"sort"
 
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/rpc"
@@ -41,6 +42,7 @@ func visible(authr *channelstore.Authorizer, kind channelstore.ResourceKind, act
 type sourceMessage struct {
 	row     channelstore.Channel
 	message rpc.Message
+	members []rpc.Message
 	worker  Worker
 }
 
@@ -81,7 +83,32 @@ func (s *Service) resolvePublishSource(ctx context.Context, a Actor, req Request
 		return sourceMessage{}, &Error{http.StatusNotFound, CodePublishSourceMissing,
 			"The source message is not available."}
 	}
-	return sourceMessage{row: row, message: page.Messages[0], worker: worker}, nil
+	message := page.Messages[0]
+	source := sourceMessage{row: row, message: message, worker: worker}
+	if len(req.Source.MessageIDs) > 0 {
+		if message.GroupedID == "" {
+			return sourceMessage{}, &Error{http.StatusBadRequest, CodeInvalidInput,
+				"source.message_id does not belong to an album."}
+		}
+		for _, id := range req.Source.MessageIDs {
+			member := message
+			if id != message.ID {
+				memberPage, fetchErr := worker.Message(ctx, row.ChannelID, id)
+				if fetchErr != nil || len(memberPage.Messages) != 1 {
+					return sourceMessage{}, &Error{http.StatusBadRequest, CodeInvalidInput,
+						"Every source.message_ids entry must name an available member of the same album."}
+				}
+				member = memberPage.Messages[0]
+			}
+			if member.GroupedID != message.GroupedID {
+				return sourceMessage{}, &Error{http.StatusBadRequest, CodeInvalidInput,
+					"Every source.message_ids entry must belong to the selected album."}
+			}
+			source.members = append(source.members, member)
+		}
+		sort.Slice(source.members, func(i, j int) bool { return source.members[i].ID < source.members[j].ID })
+	}
+	return source, nil
 }
 
 // resolvePublishDestination checks the destination is one this actor may name

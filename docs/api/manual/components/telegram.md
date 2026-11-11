@@ -87,6 +87,39 @@ recent activity first, sliced from a dialog snapshot (see the pagination
 paragraph). `unread_count` is absent when Telegram reported none; it is never
 defaulted to 0.
 
+### Creating a broadcast channel
+
+`POST /api/v1/telegram/{key}/channels` requires the global `channels.create`
+permission and an `Idempotency-Key` header (1–128 characters). The operation
+uses only the named connection. It creates broadcast channels, never groups or
+supergroups. The body is either JSON or `multipart/form-data` with a `request`
+JSON part and optional `media` image part.
+
+The request fields are `title` (required, 1–128 characters), `description`
+(optional, at most 255 characters), `visibility` (`private` by default or
+`public`), and `username` (required for public channels; 5–32 ASCII letters,
+digits or underscores, beginning with a letter). Optional avatar uploads are
+JPEG, PNG, WebP or GIF and at most 5 MiB. The backend checks content type and
+Telegram remains authoritative for username assignment.
+
+`GET /api/v1/telegram/{key}/channels/username-availability?username=...` uses
+the same permission and selected connection. Its `status` is `occupied`,
+`unclaimed`, `invalid` or `unknown`; `assignable` is always `null`. `unclaimed`
+is advisory and does not reserve the username.
+
+The successful create response carries the Telegram ID (`remote_channel_id`),
+local managed row ID (`local_channel_id`), the channel view, and per-stage flags.
+If Telegram created the channel but username/avatar setup or local registration
+failed, `status` is `created_partial`; the channel is not deleted. Reusing the
+same key and same payload replays the recorded result. Reusing it with different
+input is `409 idempotency_conflict`. An unconfirmed Telegram result is recorded
+as unknown and is not blindly retried: retrying a non-idempotent MTProto create
+could make a duplicate. Reconcile that attempt before using a new key.
+
+`GET /api/v1/auth/me` includes `access.channels_create`, a navigation summary of
+the same global permission. It does not grant access; the two routes above
+re-check `channels.create` on every request.
+
 `find?q=` accepts a `@username`, a public `t.me/` link, an invite link, a
 numeric channel id and free text; a bare word is text. It returns an array,
 empty for no match. A numeric id this client has never resolved answers
@@ -102,8 +135,9 @@ object the API has: `id` (Telegram's id, a string), `type`, `title`, `username`,
 `description`, `avatar_available`, `avatar_url`, `is_member`, `is_managed`,
 `membership_status`, `permissions`, `verified`, `scam`, `fake` and
 `participants_count`, every value read from Telegram on this request. The local
-channel detail (`GET /api/v1/local/channels/{id}`) answers the same object from
-the stored snapshot; `docs/api/local/channels.md` explains the difference.
+channel detail (`GET /api/v1/local/channels/{id}`) answers the same object using
+stored channel metadata and permissions resolved live through the record's
+mapped worker; `docs/api/local/channels.md` explains the difference.
 
 ## Channel ids
 
@@ -139,6 +173,30 @@ refusal answers 403 `message_delete_forbidden`. Telegram rate limits answer 429
 with `Retry-After`.
 If the upstream result is ambiguous after a timeout, the API reports the
 timeout and does not retry the destructive request automatically.
+
+### Keeping media while editing text
+
+The message-edit route is a full replacement by default. For an existing
+attachment, a caption-only edit must explicitly set `keep_media: true` and omit
+both `media` and `file`. The asynchronous edit then omits Telegram's optional
+media field, preserving the attachment, and confirms the same message and media
+descriptor on readback. `keep_media` is edit-only and cannot be combined with a
+replacement file or `media.kind`. Omitting it retains the existing full
+replacement semantics; it does not mean “keep”. A target without retainable
+media is rejected rather than treated as a successful keep.
+
+```json
+{
+  "text": "کپشن تازه",
+  "entities": [],
+  "keep_media": true,
+  "options": { "disable_web_page_preview": false }
+}
+```
+
+To replace media, send the usual multipart `payload` plus one `file` and
+`media.kind`. Media removal remains subject to Telegram's native support; the
+server never deletes and reposts a message to simulate it.
 
 ### The `media` descriptor
 

@@ -62,6 +62,7 @@ export interface PublishDialogProps {
   onOpenChange: (open: boolean) => void
   localChannelId: number
   message: MessageLike
+  albumMessages?: MessageLike[]
   onSuccess: (summary: string) => void
 }
 
@@ -150,6 +151,7 @@ export function PublishDialog({
   onOpenChange,
   localChannelId,
   message,
+  albumMessages,
   onSuccess,
 }: PublishDialogProps) {
   const { toast } = useToast()
@@ -162,11 +164,12 @@ export function PublishDialog({
     () => ({
       localChannelId,
       messageId: message.id,
+      ...(albumMessages && albumMessages.length > 1 ? { messageIds: albumMessages.map((item) => item.id) } : {}),
       text: message.text ?? "",
       entities: message.entities ?? [],
       attachments: sourceAttachmentsFrom(message.media),
     }),
-    [localChannelId, message],
+    [localChannelId, message, albumMessages],
   )
   const draft = usePublishMessageDraft(source)
 

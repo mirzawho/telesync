@@ -1,0 +1,1 @@
+import{I as e,n as t,s as n,t as r}from"./jsx-runtime-B3UgTxmm.js";var i=r();function a(e){let t=new URLSearchParams(e);return t.set(`create`,`1`),`/channels?${t.toString()}`}var o=n(function(){let n=e();return(0,i.jsx)(t,{to:a(n.search),replace:!0})});export{o as default};

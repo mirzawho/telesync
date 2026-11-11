@@ -10,7 +10,9 @@
 | Method | Path | Source | Success | Responses observed | Document |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/v1/telegram/{key}/channels` | `Server.channels` | `200` | 4 | [api-v1-telegram-key-channels](telegram/api-v1-telegram-key-channels.md) |
+| POST | `/api/v1/telegram/{key}/channels` | `Server.` | — | — | [api-v1-telegram-key-channels](telegram/api-v1-telegram-key-channels.md) |
 | GET | `/api/v1/telegram/{key}/channels/find` | `Server.find` | `200` | 4 | [api-v1-telegram-key-channels-find](telegram/api-v1-telegram-key-channels-find.md) |
+| GET | `/api/v1/telegram/{key}/channels/username-availability` | `Server.` | — | 4 | [api-v1-telegram-key-channels-username-availability](telegram/api-v1-telegram-key-channels-username-availability.md) |
 | GET | `/api/v1/telegram/{key}/channels/{channel_id}` | `Server.channel` | `200` | 10 | [api-v1-telegram-key-channels-channel-id](telegram/api-v1-telegram-key-channels-channel-id.md) |
 | GET | `/api/v1/telegram/{key}/channels/{channel_id}/avatar` | `Server.avatar` | — | 6 | [api-v1-telegram-key-channels-channel-id-avatar](telegram/api-v1-telegram-key-channels-channel-id-avatar.md) |
 | POST | `/api/v1/telegram/{key}/channels/{channel_id}/join` | `Server.join` | `200` | 8 | [api-v1-telegram-key-channels-channel-id-join](telegram/api-v1-telegram-key-channels-channel-id-join.md) |

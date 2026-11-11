@@ -16,6 +16,7 @@ export default [
     route("channels", "routes/_panel/channels.tsx", [
       route(":id/messages", "routes/_panel/channel-messages.tsx"),
     ]),
+    route("channels/new", "routes/_panel/channel-create-legacy.tsx"),
     route("wordpress", "routes/_panel/wordpress.tsx"),
     route("administrators", "routes/_panel/administrators.tsx"),
     // The automation area: a status front page and the two collections it

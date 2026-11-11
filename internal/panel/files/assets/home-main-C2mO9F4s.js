@@ -1,1 +1,0 @@
-import{s as e,t}from"./jsx-runtime-8Q2-kT8u.js";import{n}from"./states-Stx_M7MH.js";var r=t(),i=e(function({error:e}){return(0,r.jsx)(`div`,{className:`flex min-h-svh items-center justify-center p-6`,children:(0,r.jsx)(n,{message:e instanceof Error?e.message:`این مسیر باز نشد.`})})});export{i as ErrorBoundary};

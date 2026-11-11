@@ -159,6 +159,53 @@ func TestMediaDurationIsAbsentWithoutAnAudioAttribute(t *testing.T) {
 	}
 }
 
+func TestVideoMediaMetadataComesOnlyFromDocumentAttribute(t *testing.T) {
+	video := &tg.MessageMediaDocument{Document: &tg.Document{
+		MimeType: "video/mp4",
+		Attributes: []tg.DocumentAttributeClass{
+			&tg.DocumentAttributeFilename{FileName: "clip.mp4"},
+			&tg.DocumentAttributeVideo{Duration: 12, W: 1280, H: 720, SupportsStreaming: true},
+		},
+	}}
+	if got := gotdclient.MediaType(video); got != "video" {
+		t.Fatalf("MediaType = %q, want video", got)
+	}
+	if got := gotdclient.MediaDuration(video); got != 12 {
+		t.Fatalf("MediaDuration = %d, want 12", got)
+	}
+	if got := gotdclient.MediaWidth(video); got != 1280 {
+		t.Fatalf("MediaWidth = %d, want 1280", got)
+	}
+	if got := gotdclient.MediaHeight(video); got != 720 {
+		t.Fatalf("MediaHeight = %d, want 720", got)
+	}
+	if !gotdclient.MediaSupportsStreaming(video) {
+		t.Fatal("source streaming flag was lost")
+	}
+
+	document := &tg.MessageMediaDocument{Document: &tg.Document{
+		MimeType: "video/mp4",
+		Attributes: []tg.DocumentAttributeClass{
+			&tg.DocumentAttributeFilename{FileName: "movie.mp4"},
+		},
+	}}
+	if got := gotdclient.MediaType(document); got != "document" {
+		t.Fatalf("MP4 document without video attribute = %q, want document", got)
+	}
+}
+
+func TestRoundVideoRemainsDistinct(t *testing.T) {
+	media := &tg.MessageMediaDocument{Document: &tg.Document{
+		Attributes: []tg.DocumentAttributeClass{&tg.DocumentAttributeVideo{RoundMessage: true}},
+	}}
+	if got := gotdclient.MediaType(media); got != "round_video" {
+		t.Fatalf("MediaType = %q, want round_video", got)
+	}
+	if !gotdclient.MediaRoundMessage(media) {
+		t.Fatal("round_message flag was lost")
+	}
+}
+
 // capturedSend is the media request the fake destination actually received.
 type capturedSend struct {
 	mu      sync.Mutex

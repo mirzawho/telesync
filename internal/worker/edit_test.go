@@ -68,6 +68,26 @@ func TestEditMessagePassesTargetAndReplacementToTheSelectedAdapter(t *testing.T)
 	}
 }
 
+func TestEditMessagePassesExplicitMediaRetentionToTheSelectedAdapter(t *testing.T) {
+	tg := &editTelegram{
+		fakeTelegram: &fakeTelegram{
+			status:     tgapi.Status{State: tgapi.StateReady, User: &tgapi.Account{ID: 7}},
+			dialogs:    []tgapi.Channel{{ID: 98}},
+			oneMessage: tgapi.Message{ID: 11, Sender: &tgapi.Sender{ID: 7}, Media: &tgapi.Media{Type: "photo"}},
+		},
+		result: tgapi.EditResult{Message: &tgapi.Message{ID: 11, Text: "caption", Media: &tgapi.Media{Type: "photo"}}},
+	}
+	_, err := worker.NewService(appconfig.Client{Key: "cat", Type: appconfig.Custom}, tg, worker.Options{}).EditMessage(context.Background(), rpc.EditRequest{
+		ChannelID: 98, MessageID: 11, Text: "caption", KeepMedia: true,
+	})
+	if err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	if !tg.got.KeepMedia || tg.got.Media != nil {
+		t.Fatalf("adapter request = %+v; want explicit retention without a replacement upload", tg.got)
+	}
+}
+
 func TestEditMessageAllowsChannelEditPermissionForAnotherAuthorsPost(t *testing.T) {
 	tg := &editTelegram{
 		fakeTelegram: &fakeTelegram{

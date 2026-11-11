@@ -1,0 +1,1 @@
+import{i as e}from"./button-DFMi9ygj.js";function t(t){return e(t.defaultTagName??`div`,t,t)}export{t};

@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -158,6 +159,30 @@ func (c *Client) Join(ctx context.Context, ref ChannelRef) (JoinResult, error) {
 	return out, err
 }
 
+func (c *Client) CheckUsername(ctx context.Context, req UsernameAvailabilityRequest) (UsernameAvailability, error) {
+	var out UsernameAvailability
+	err := c.get(ctx, "/username-availability?username="+url.QueryEscape(req.Username), &out)
+	return out, err
+}
+
+func (c *Client) CreateChannel(ctx context.Context, req CreateChannelRequest) (CreateChannelResult, error) {
+	var out CreateChannelResult
+	var media *SendMedia
+	if req.Avatar != nil {
+		copy := *req.Avatar
+		if len(copy.Data) > MaxChannelAvatarBytes {
+			return out, fmt.Errorf("%w: channel avatar exceeds the %d byte limit", ErrMediaTooLarge, MaxChannelAvatarBytes)
+		}
+		media = &copy
+		req.Avatar = &SendMedia{Kind: copy.Kind, Name: copy.Name, MimeType: copy.MimeType}
+	}
+	if media != nil {
+		return out, c.postMultipart(ctx, "/channels", req, media, &out)
+	}
+	err := c.post(ctx, "/channels", req, &out)
+	return out, err
+}
+
 // Avatar downloads the channel's profile photo.
 func (c *Client) Avatar(ctx context.Context, ref ChannelRef) (AvatarFile, error) {
 	var out AvatarFile
@@ -181,6 +206,53 @@ func (c *Client) SendMessage(ctx context.Context, req SendRequest) (SendResult, 
 	var out SendResult
 	err := c.postMultipart(ctx, "/messages", req, req.Media, &out)
 	return out, err
+}
+
+// SendAlbum sends one native media group through this worker. Multipart media
+// parts are emitted in the same order as req.Items; filenames are not used to
+// recover item order.
+func (c *Client) SendAlbum(ctx context.Context, req SendAlbumRequest) (SendAlbumResult, error) {
+	var out SendAlbumResult
+	if len(req.Items) < 2 || len(req.Items) > 10 {
+		return out, fmt.Errorf("rpc: album requires 2-10 items")
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	jsonPart, err := w.CreateFormField("request")
+	if err != nil {
+		return out, err
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return out, fmt.Errorf("encode worker album request: %w", err)
+	}
+	if _, err := jsonPart.Write(payload); err != nil {
+		return out, err
+	}
+	for i, item := range req.Items {
+		if item.Media == nil || len(item.Media.Data) == 0 || len(item.Media.Data) > MaxSendMediaBytes {
+			return out, fmt.Errorf("rpc: album item %d has invalid media bytes", i)
+		}
+		part, err := w.CreateFormFile("media", item.Media.Name)
+		if err != nil {
+			return out, err
+		}
+		if _, err := part.Write(item.Media.Data); err != nil {
+			return out, err
+		}
+	}
+	if err := w.Close(); err != nil {
+		return out, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://worker/send_album", &buf)
+	if err != nil {
+		return out, err
+	}
+	request.Header.Set("Content-Type", w.FormDataContentType())
+	if err := c.do(request, &out); err != nil {
+		return SendAlbumResult{}, err
+	}
+	return out, nil
 }
 
 // EditMessage asks this worker to replace one existing channel message. The

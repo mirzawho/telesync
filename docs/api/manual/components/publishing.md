@@ -65,6 +65,24 @@ uploaded through the **destination** one: the two sessions never share a file
 reference. An attachment larger than 32 MiB cannot be sent
 (`publish_media_too_large`), matching the download limit.
 
+### Native Telegram albums
+
+For a source media group, `source.message_ids` may name its 2–10 member message
+IDs and must include `source.message_id`. The backend verifies that each named
+message belongs to the same Telegram `grouped_id`, orders members by message
+ID, and sends one native album. The selected message uses `content.text` and
+`content.entities`; other members keep their source captions and entities.
+Members are downloaded from the source connection and uploaded to the named
+destination connection. Unsupported or incompatible media groups are refused;
+they are never split into standalone posts. A destination result that does not
+confirm every member is recorded as an unknown outcome and must not be blindly
+retried.
+
+The request must supply the full album member list. The current backend verifies
+membership of every supplied ID but cannot independently prove that no group
+members were omitted; clients must only send the album action when the complete
+group is available in source history.
+
 ## WordPress
 
 `POST /api/v1/local/wordpress/{id}/posts` publishes to the registered site

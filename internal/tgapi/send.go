@@ -41,7 +41,11 @@ type SendMedia struct {
 	Data []byte
 	// Duration is the recording length in seconds, for "audio" and "voice".
 	// Zero means unknown and is sent as no length rather than as a guess.
-	Duration int
+	Duration          int
+	Width             int
+	Height            int
+	SupportsStreaming bool
+	RoundMessage      bool
 	// Waveform is the voice message's own bitpacked amplitude samples, for
 	// "voice" only. Nil sends none; a waveform is never made up.
 	Waveform []byte
@@ -49,11 +53,12 @@ type SendMedia struct {
 
 // Media kinds an outgoing attachment can be sent as.
 const (
-	SendMediaPhoto    = "photo"
-	SendMediaVideo    = "video"
-	SendMediaDocument = "document"
-	SendMediaAudio    = "audio"
-	SendMediaVoice    = "voice"
+	SendMediaPhoto      = "photo"
+	SendMediaVideo      = "video"
+	SendMediaRoundVideo = "round_video"
+	SendMediaDocument   = "document"
+	SendMediaAudio      = "audio"
+	SendMediaVoice      = "voice"
 )
 
 // SendResult is what the destination confirmed about the sent message.
@@ -69,13 +74,37 @@ type SendResult struct {
 	UnsendableEntities int
 }
 
-// EditRequest completely replaces one existing message. A nil Media means the
-// requested final state has no attachment; it never means retain the old one.
+// SendAlbumItem is one attachment and caption in an outgoing album.
+type SendAlbumItem struct {
+	Media    *SendMedia
+	Text     string
+	Entities []Entity
+	RandomID int64
+}
+
+// SendAlbumRequest sends all items as one native Telegram album.
+type SendAlbumRequest struct {
+	Items  []SendAlbumItem
+	Silent bool
+}
+
+// SendAlbumResult contains only messages and grouping confirmed by Telegram updates.
+type SendAlbumResult struct {
+	Messages           []Message
+	ChannelID          int64
+	GroupedID          int64
+	UnsendableEntities int
+}
+
+// EditRequest replaces one existing message. A nil Media requests the
+// historical no-media replacement; KeepMedia explicitly omits the media field
+// from Telegram's native request to retain the target's existing attachment.
 type EditRequest struct {
 	MessageID int
 	Text      string
 	Entities  []Entity
 	Media     *SendMedia
+	KeepMedia bool
 	NoWebpage bool
 }
 

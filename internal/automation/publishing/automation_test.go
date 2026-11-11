@@ -29,8 +29,10 @@ import (
 // what makes "the destination never reads the source" visible in a test rather
 // than merely intended.
 type fakeWorker struct {
-	sends   []rpc.SendRequest
-	sendErr error
+	sends       []rpc.SendRequest
+	sendErr     error
+	albums      []rpc.SendAlbumRequest
+	albumResult rpc.SendAlbumResult
 
 	page      rpc.MessagePage
 	media     []byte
@@ -46,6 +48,11 @@ type fakeWorker struct {
 
 func (w *fakeWorker) Message(_ context.Context, channelID int64, messageID int) (rpc.MessagePage, error) {
 	if w.page.Messages != nil {
+		for _, message := range w.page.Messages {
+			if message.ID == messageID {
+				return rpc.MessagePage{Channel: w.page.Channel, Messages: []rpc.Message{message}}, nil
+			}
+		}
 		return w.page, nil
 	}
 	return rpc.MessagePage{
@@ -88,6 +95,11 @@ func (w *fakeWorker) SendMessage(_ context.Context, req rpc.SendRequest) (rpc.Se
 	}
 	return rpc.SendResult{Message: &rpc.Message{ID: 4321, Text: req.Text},
 		ChannelID: strconv.FormatInt(req.ChannelID, 10)}, nil
+}
+
+func (w *fakeWorker) SendAlbum(_ context.Context, req rpc.SendAlbumRequest) (rpc.SendAlbumResult, error) {
+	w.albums = append(w.albums, req)
+	return w.albumResult, w.sendErr
 }
 
 // keyedRegistry hands out one connection per configured client key, so a test

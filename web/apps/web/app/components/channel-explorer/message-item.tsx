@@ -2,6 +2,7 @@ import { EyeIcon, StickerIcon } from "lucide-react"
 import * as React from "react"
 
 import { ChannelMessageMedia } from "@/components/channel-explorer/message-media"
+import { MessageActions } from "@/components/channel-explorer/message-actions"
 import { MessageText } from "@/components/channel-explorer/message-text"
 import { faDigits, faTime } from "@/components/persian-digits"
 import { fetchMedia } from "@/lib/message-media"
@@ -36,6 +37,14 @@ export function ChannelMessageItem({
   message,
   client,
   onPublish,
+  canEdit = false,
+  canDelete = false,
+  deleting = false,
+  deleteError = null,
+  onEdit,
+  onDelete,
+  editing = false,
+  editStatus = null,
 }: {
   message: ChannelMessage
   // client: the Telegram client key the message came from. A custom-emoji
@@ -43,6 +52,14 @@ export function ChannelMessageItem({
   client: string
   // onPublish, when present, opens the publishing dialog for this message.
   onPublish?: () => void
+  canEdit?: boolean
+  canDelete?: boolean
+  deleting?: boolean
+  deleteError?: string | null
+  onEdit?: () => void
+  onDelete?: () => void
+  editing?: boolean
+  editStatus?: string | null
 }) {
   const text = typeof message.text === "string" ? message.text : ""
   const hasText = text.trim() !== ""
@@ -63,7 +80,10 @@ export function ChannelMessageItem({
           <Bubble variant="muted" className="min-w-75">
             <BubbleContent
               className={
-                onPublish && reactions.length === 0 ? actionBand : undefined
+                cn(
+                  onPublish && reactions.length === 0 ? actionBand : undefined,
+                  (canEdit || canDelete) && reactions.length === 0 && "pb-12"
+                )
               }
             >
               {message.media && <ChannelMessageMedia media={message.media} />}
@@ -72,7 +92,10 @@ export function ChannelMessageItem({
 
             {reactions.length > 0 && (
               <BubbleReactions
-                className={onPublish ? actionBand : undefined}
+                className={cn(
+                  onPublish ? actionBand : undefined,
+                  (canEdit || canDelete) && "pb-12"
+                )}
                 aria-label={reactionLabel(reactions, client)}
               >
                 {reactions.map((reaction, index) => (
@@ -84,13 +107,28 @@ export function ChannelMessageItem({
                 ))}
               </BubbleReactions>
             )}
+            {(canEdit || canDelete) && (
+              <div
+                data-slot="message-actions-position"
+                className="absolute -bottom-4 -right-8 z-20"
+              >
+                <MessageActions
+                  canEdit={canEdit}
+                  canDelete={canDelete}
+                  deleting={deleting}
+                  deleteError={deleteError}
+                  onEdit={() => onEdit?.()}
+                  onDelete={() => onDelete?.()}
+                />
+              </div>
+            )}
           </Bubble>
 
           {onPublish && (
             // Under RTL `justify-start` is the physical right, which is where
             // the product wants the action; the negative margin lifts it onto
             // the bubble's bottom edge so it reads as part of that bubble.
-            <div className="flex justify-start">
+            <div className="flex justify-start pr-4">
               <Button
                 data-slot="message-publish"
                 variant="secondary"
@@ -105,7 +143,12 @@ export function ChannelMessageItem({
           )}
         </div>
 
-        <MessageFooter className="-mt-1.5">
+        <MessageFooter className="-mt-7">
+          {editing && editStatus && ["queued", "processing", "retrying"].includes(editStatus) && (
+            <span role="status" className="text-muted-foreground">
+              {editStatus === "queued" ? "ویرایش در صف…" : editStatus === "retrying" ? "تلاش دوباره برای ویرایش…" : "در حال ویرایش…"}
+            </span>
+          )}
           <Views message={message} />
           <span aria-hidden="true" className="text-muted-foreground/60">
             ·

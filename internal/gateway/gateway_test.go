@@ -102,6 +102,19 @@ type fakeWorker struct {
 	deleteReq    rpc.DeleteMessageRequest
 	deleteResult rpc.DeleteMessageResult
 	deleteE      error
+	createResult rpc.CreateChannelResult
+	createCalls  int
+}
+
+func (f *fakeWorker) CheckUsername(context.Context, rpc.UsernameAvailabilityRequest) (rpc.UsernameAvailability, error) {
+	return rpc.UsernameAvailability{Username: "example_channel", Status: "unclaimed"}, nil
+}
+
+func (f *fakeWorker) CreateChannel(context.Context, rpc.CreateChannelRequest) (rpc.CreateChannelResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.createCalls++
+	return f.createResult, nil
 }
 
 func (f *fakeWorker) Health(context.Context) (rpc.Health, error) {

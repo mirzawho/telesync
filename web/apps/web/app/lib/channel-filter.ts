@@ -12,6 +12,8 @@ export interface ChannelFilter {
   search: string
   categoryIds: readonly number[]
   filed: Readonly<Record<number, readonly number[]>>
+  // Empty means all connections; otherwise keys are Telegram client keys.
+  serverKeys?: readonly string[]
 }
 
 // toggleCategory is one click on a category chip: an inactive category is
@@ -49,6 +51,7 @@ export function filterChannels(
 ): Channel[] {
   const wanted = filter.categoryIds
   return channels.filter((channel) => {
+    if (filter.serverKeys?.length && !filter.serverKeys.includes(channel.client_key)) return false
     if (!matchesSearch(channel, filter.search)) return false
     if (wanted.length === 0) return true
     const under = filter.filed[channel.id] ?? []

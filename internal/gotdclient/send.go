@@ -137,12 +137,16 @@ func sendMediaInput(file tg.InputFileClass, m *tgapi.SendMedia) (tg.InputMediaCl
 		}
 
 	case tgapi.SendMediaVideo:
-		// Dimensions are read from the file by the destination; none are
-		// claimed here that this build has not measured.
 		doc.MimeType = mimeTypeOr(m, "video/mp4")
 		doc.Attributes = []tg.DocumentAttributeClass{
-			&tg.DocumentAttributeVideo{Duration: float64(m.Duration)},
+			&tg.DocumentAttributeVideo{Duration: float64(m.Duration), W: m.Width, H: m.Height, SupportsStreaming: m.SupportsStreaming},
 			&tg.DocumentAttributeFilename{FileName: sendFileName(m)},
+		}
+
+	case tgapi.SendMediaRoundVideo:
+		doc.MimeType = mimeTypeOr(m, "video/mp4")
+		doc.Attributes = []tg.DocumentAttributeClass{
+			&tg.DocumentAttributeVideo{Duration: float64(m.Duration), W: m.Width, H: m.Height, RoundMessage: true},
 		}
 
 	case tgapi.SendMediaDocument, "":

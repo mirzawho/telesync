@@ -4,10 +4,11 @@ import { test } from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import { ChannelMessageItem } from "@/components/channel-explorer/message-item"
-import { ChannelCategoryChips } from "@/components/channel-explorer/channel-list"
+import { ChannelMessagesPane } from "@/components/channel-explorer/channel-messages-pane"
+import { ChannelCategoryChips, ChannelListPane } from "@/components/channel-explorer/channel-list"
 import { ChannelDeleteDialogContent } from "@/components/channel-explorer/channel-delete-dialog"
 import { deleteChannelForm } from "@/lib/channel-actions"
-import type { Category, Channel, ChannelMessage } from "@/lib/types"
+import type { Category, Channel, ChannelDetail, ChannelMessage, TelegramServer } from "@/lib/types"
 import { AlertDialog } from "@workspace/ui/components/alert-dialog"
 
 // The panel is `dir="rtl"` end to end, so the logical utilities map to the
@@ -326,6 +327,11 @@ const CATEGORIES: Category[] = [
   { id: 20, name: "فناوری", description: "", created_at: "", updated_at: "" },
 ]
 
+const SERVERS: TelegramServer[] = [
+  { key: "official", type: "official", enabled: true, health_checkable: true, state: "connected", authorized: true, transport: "ready", last_success_at: null, last_error: "" },
+  { key: "cat", type: "custom", enabled: true, health_checkable: true, state: "error", authorized: null, transport: "disconnected", last_success_at: null, last_error: "offline" },
+]
+
 test("category chips expose their pressed state to assistive tech", () => {
   const out = html(
     <ChannelCategoryChips
@@ -348,6 +354,112 @@ test("an empty category list renders no chips at all", () => {
     <ChannelCategoryChips categories={[]} selected={[]} onToggle={() => undefined} />
   )
   assert.doesNotMatch(out, /aria-pressed/)
+})
+
+test("channel list replaces the add button with the global channel menu trigger", () => {
+  const out = html(
+    <ChannelListPane
+      channels={[]}
+      categories={[]}
+      filed={{}}
+      selectedId={null}
+      search=""
+      onSearchChange={() => undefined}
+      selectedCategories={[]}
+      onToggleCategory={() => undefined}
+      onAdd={() => undefined}
+      onCreate={() => undefined}
+      onEditCategories={() => undefined}
+      onDelete={() => undefined}
+    />
+  )
+  assert.match(out, /aria-label="عملیات کانال‌ها"/)
+  assert.doesNotMatch(out, /aria-label="کانال جدید"/)
+  assert.match(out, /جستجو در کانال‌ها/)
+  assert.match(out, /data-slot="server-multi-select"/)
+  assert.match(out, /data-slot="channel-filter-toolbar"/)
+  assert.ok(out.indexOf('data-slot="server-multi-select"') < out.indexOf('data-slot="category-chips"'))
+  const toolbar = out.match(/data-slot="channel-filter-toolbar"[^>]*>/)?.[0] ?? ""
+  assert.match(toolbar, /dir="rtl"/)
+  assert.match(toolbar, /min-w-0/)
+  assert.match(out, /overflow-x-auto/)
+})
+
+test("server selector uses configured keys, shows selection summary and connection status", () => {
+  const out = html(
+    <ChannelListPane
+      channels={[]}
+      categories={CATEGORIES}
+      filed={{}}
+      selectedId={null}
+      search=""
+      onSearchChange={() => undefined}
+      selectedCategories={[]}
+      onToggleCategory={() => undefined}
+      servers={SERVERS}
+      selectedServers={["cat"]}
+      onToggleServer={() => undefined}
+      onSelectAllServers={() => undefined}
+      onAdd={() => undefined}
+      onEditCategories={() => undefined}
+      onDelete={() => undefined}
+    />
+  )
+  assert.match(out, /aria-label="فیلتر سرورها: cat"/)
+  assert.match(out, /data-slot="server-multi-select"/)
+})
+
+// --- channel message management permissions -------------------------------
+
+const DETAIL: ChannelDetail = {
+  id: "141",
+  type: "channel",
+  title: "کانال آزمایشی",
+  avatar_available: false,
+  is_member: true,
+  is_managed: true,
+  membership_status: "member",
+  permissions: { new: true, edit: false, delete: false, read: true },
+  verified: false,
+  scam: false,
+  fake: false,
+  participants_count: 1,
+}
+
+test("channel message viewer shows the composer only with new permission", () => {
+  const writable = html(
+    <ChannelMessagesPane channel={DETAIL} channelId={7} client="cat" />
+  )
+  assert.match(writable, /پیام خود را بنویسید/)
+  assert.doesNotMatch(writable, /ویرایش پیام|حذف پیام/)
+
+  const readOnly = html(
+    <ChannelMessagesPane
+      channel={{ ...DETAIL, permissions: { new: false, edit: false, delete: false, read: true } }}
+      channelId={7}
+      client="cat"
+    />
+  )
+  assert.doesNotMatch(readOnly, /پیام خود را بنویسید/)
+})
+
+test("a missing destination is distinct from a confirmed Send denial", () => {
+  const allGranted = { ...DETAIL, permissions: { new: true, edit: true, delete: true, read: true } }
+  const missingDestination = html(
+    <ChannelMessagesPane channel={allGranted} channelId={2} client="" />
+  )
+  assert.match(missingDestination, /اطلاعات مقصد کانال در دسترس نیست/)
+  assert.doesNotMatch(missingDestination, /مقصد یا مجوز کانال در دسترس نیست/)
+
+  const deniedSend = html(
+    <ChannelMessagesPane
+      channel={{ ...allGranted, permissions: { new: false, edit: true, delete: true, read: true } }}
+      channelId={2}
+      client="cat"
+    />
+  )
+  assert.match(deniedSend, /امکان ارسال پیام برای این کانال فعال نیست/)
+  assert.doesNotMatch(deniedSend, /اطلاعات مقصد کانال در دسترس نیست/)
 })
 
 // --- deletion -------------------------------------------------------------

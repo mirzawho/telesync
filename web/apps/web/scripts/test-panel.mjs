@@ -23,9 +23,22 @@ const outDir = join(appDir, ".test-out-panel")
 const tests = [
   join(appDir, "app/lib/message-entities.test.ts"),
   join(appDir, "app/lib/channel-filter.test.ts"),
+  join(appDir, "app/lib/channel-server-filter.test.ts"),
   join(appDir, "app/lib/message-timeline.test.ts"),
+  join(appDir, "app/lib/message-albums.test.ts"),
+  join(appDir, "app/lib/channel-message-api.test.ts"),
+  join(appDir, "app/lib/channel-message-permissions.test.ts"),
   join(appDir, "app/lib/scroll-anchor.test.ts"),
   join(appDir, "app/components/channel-explorer.test.tsx"),
+  join(appDir, "app/components/channel-explorer/create-channel-form.test.tsx"),
+  join(appDir, "app/routes/_panel/channel-create-legacy.test.ts"),
+  join(appDir, "app/routes/_panel/channel-messages.test.tsx"),
+  join(appDir, "app/components/channel-explorer/channel-information-dialog.test.tsx"),
+  join(appDir, "app/components/channel-explorer/channel-message-composer.test.tsx"),
+  join(appDir, "app/components/channel-explorer/channel-message-edit-composer.test.tsx"),
+  join(appDir, "app/components/channel-explorer/chat-layout.test.tsx"),
+  join(appDir, "app/components/channel-explorer/channel-message-pending.test.tsx"),
+  join(appDir, "app/components/channel-explorer/message-actions.test.tsx"),
   join(appDir, "app/components/tabs.test.tsx"),
 ]
 

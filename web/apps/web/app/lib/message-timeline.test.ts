@@ -8,6 +8,9 @@ import {
   failLoad,
   followNewest,
   nextRequest,
+  mergeLatest,
+  replaceMessage,
+  removeMessage,
   resetTimeline,
   retry,
   showJumpToLatest,
@@ -41,6 +44,25 @@ const loaded = (...ids: number[]): TimelineState =>
   }, "initial")
 
 const ids = (state: TimelineState) => state.messages.map((m) => m.id)
+
+test("confirmed newest refresh replaces IDs and deduplicates without resetting loaded pages", () => {
+  const state = { ...loaded(81, 82, 83), page: 3, hasOlder: true }
+  const edited = { ...msg(82), text: "updated" }
+  const refreshed = mergeLatest(state, [msg(84), edited, msg(84)], true)
+  assert.deepEqual(ids(refreshed), [81, 82, 83, 84])
+  assert.equal(refreshed.messages[1].text, "updated")
+  assert.equal(refreshed.page, 3)
+  assert.equal(refreshed.hasOlder, true)
+})
+
+test("edit replacement preserves position and delete removes only the target ID", () => {
+  const state = loaded(81, 82, 83)
+  const edited = replaceMessage(state, { ...msg(82), text: "updated" })
+  assert.deepEqual(ids(edited), [81, 82, 83])
+  assert.equal(edited.messages[1].text, "updated")
+  const deleted = removeMessage(edited, 82)
+  assert.deepEqual(ids(deleted), [81, 83])
+})
 
 // --- opening a channel ----------------------------------------------------
 

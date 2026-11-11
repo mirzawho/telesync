@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mirza/telesync/internal/appconfig"
+	"github.com/mirza/telesync/internal/gotdclient"
 	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/tgapi"
 )
@@ -87,6 +88,16 @@ type Telegram interface {
 	EditMessage(ctx context.Context, ref tgapi.ChannelRef, req tgapi.EditRequest) (tgapi.EditResult, error)
 	// DeleteMessage deletes exactly one post from a resolved channel.
 	DeleteMessage(ctx context.Context, channel tgapi.Channel, messageID int) error
+}
+
+// ChannelCreationTelegram is an optional capability implemented only by the
+// concrete selected gotd manager. Keeping it separate avoids giving every test
+// double (or alternate adapter) an implicit remote-write capability.
+type ChannelCreationTelegram interface {
+	CheckUsername(context.Context, string) (gotdclient.UsernameCheck, error)
+	CreateBroadcastChannel(context.Context, string, string) (tgapi.ChannelInfo, error)
+	SetBroadcastChannelUsername(context.Context, int64, string) error
+	SetBroadcastChannelAvatar(context.Context, int64, string, string, []byte) (int64, error)
 }
 
 // DeleteMessage implements rpc.Backend. It first proves that this exact
@@ -446,6 +457,7 @@ func (s *Service) messageDTO(channelID int64, m tgapi.Message) rpc.Message {
 		ID:               m.ID,
 		Date:             m.Date.UTC(),
 		Text:             m.Text,
+		GroupedID:        m.GroupedID,
 		ReplyToMessageID: m.ReplyToMessageID,
 		Views:            m.Views,
 		Reactions:        make([]rpc.Reaction, 0, len(m.Reactions)),
@@ -480,14 +492,18 @@ func (s *Service) messageDTO(channelID int64, m tgapi.Message) rpc.Message {
 	}
 	if m.Media != nil {
 		out.Media = &rpc.Media{
-			ID:       fmt.Sprintf("%d:%d", channelID, m.ID),
-			Type:     m.Media.Type,
-			Label:    m.Media.Label,
-			Filename: m.Media.Filename,
-			MimeType: m.Media.MimeType,
-			Size:     m.Media.Size,
-			Duration: m.Media.Duration,
-			Waveform: m.Media.Waveform,
+			ID:                fmt.Sprintf("%d:%d", channelID, m.ID),
+			Type:              m.Media.Type,
+			Label:             m.Media.Label,
+			Filename:          m.Media.Filename,
+			MimeType:          m.Media.MimeType,
+			Size:              m.Media.Size,
+			Duration:          m.Media.Duration,
+			Waveform:          m.Media.Waveform,
+			Width:             m.Media.Width,
+			Height:            m.Media.Height,
+			SupportsStreaming: m.Media.SupportsStreaming,
+			RoundMessage:      m.Media.RoundMessage,
 		}
 	}
 	return out

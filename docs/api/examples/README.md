@@ -17,6 +17,7 @@ requests after it.
 | GET | `/api/v1/telegram/{key}/health` | — | below |
 | GET | `/api/v1/telegram/{key}/profile` | — | below |
 | GET | `/api/v1/telegram/{key}/channels` | — | below |
+| GET | `/api/v1/telegram/{key}/channels/username-availability` | — | below |
 | GET | `/api/v1/telegram/{key}/channels/find` | — | below |
 | GET | `/api/v1/telegram/{key}/channels/{channel_id}` | — | below |
 | POST | `/api/v1/telegram/{key}/channels/{channel_id}/join` | — | below |

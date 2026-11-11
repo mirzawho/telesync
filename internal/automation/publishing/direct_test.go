@@ -283,6 +283,20 @@ func TestJInvalidDirectRequestsAreRefusedWithAReason(t *testing.T) {
 	}
 }
 
+func TestValidateDirectEditAllowsOnlyExplicitExistingMediaForEmptyText(t *testing.T) {
+	if err := publishing.ValidateDirectEdit(publishing.DirectSendRequest{Entities: []rpc.Entity{}}, false, true); err != nil {
+		t.Fatalf("explicit media retention for a media-only message: %v", err)
+	}
+	if err := publishing.ValidateDirectEdit(publishing.DirectSendRequest{Entities: []rpc.Entity{}}, false, false); err == nil {
+		t.Fatal("empty text without an attachment or explicit keep must be rejected")
+	}
+	if err := publishing.ValidateDirectEdit(publishing.DirectSendRequest{
+		Text: "caption", Media: &publishing.DirectSendMedia{Kind: publishing.DirectMediaPhoto},
+	}, false, true); err == nil {
+		t.Fatal("retention must not be combined with a replacement media kind")
+	}
+}
+
 // Test K. A caption is not a message body. The shorter limit is the one that
 // applies beside an attachment, and the reason says which one was exceeded so
 // the fix is obvious.

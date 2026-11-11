@@ -160,6 +160,7 @@ func TestDDocumentKeepsTheSendersFileName(t *testing.T) {
 func TestEVideoIsSentWithItsOwnAttribute(t *testing.T) {
 	input, err := sendMediaInput(uploadedFile(), &tgapi.SendMedia{
 		Kind: tgapi.SendMediaVideo, Name: "clip.mp4", MimeType: "video/mp4", Duration: 12,
+		Width: 1280, Height: 720, SupportsStreaming: true,
 	})
 	if err != nil {
 		t.Fatalf("sendMediaInput: %v", err)
@@ -174,11 +175,34 @@ func TestEVideoIsSentWithItsOwnAttribute(t *testing.T) {
 	if video == nil {
 		t.Fatal("the video carries no documentAttributeVideo; it would arrive as a plain file")
 	}
-	if video.Duration != 12 {
-		t.Fatalf("duration = %v, want the length that was given", video.Duration)
+	if video.Duration != 12 || video.W != 1280 || video.H != 720 || !video.SupportsStreaming {
+		t.Fatalf("video metadata = duration %v, %dx%d, streaming %v; want 12s 1280x720 streaming",
+			video.Duration, video.W, video.H, video.SupportsStreaming)
+	}
+	if doc, ok := input.(*tg.InputMediaUploadedDocument); !ok || doc.ForceFile {
+		t.Fatalf("media = %#v; video must not be force_file", input)
 	}
 	if name := filenameAttribute(t, attrs); name != "clip.mp4" {
 		t.Fatalf("file name = %q, want the sender's own", name)
+	}
+}
+
+func TestRoundVideoHasRoundMessageAttribute(t *testing.T) {
+	input, err := sendMediaInput(uploadedFile(), &tgapi.SendMedia{
+		Kind: tgapi.SendMediaRoundVideo, MimeType: "video/mp4", Duration: 8, Width: 480, Height: 480,
+	})
+	if err != nil {
+		t.Fatalf("sendMediaInput: %v", err)
+	}
+	attrs := attributesOf(t, input)
+	var video *tg.DocumentAttributeVideo
+	for _, attr := range attrs {
+		if got, ok := attr.(*tg.DocumentAttributeVideo); ok {
+			video = got
+		}
+	}
+	if video == nil || !video.RoundMessage || video.W != 480 || video.H != 480 {
+		t.Fatalf("round-video attribute = %#v", video)
 	}
 }
 

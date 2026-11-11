@@ -1,5 +1,9 @@
 import {
+  InfoIcon,
+  ChevronDownIcon,
+  LoaderCircleIcon,
   MoreHorizontalIcon,
+  MoreVerticalIcon,
   PlusIcon,
   TagsIcon,
   Trash2Icon,
@@ -20,7 +24,11 @@ import {
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
 import { ScrollArea } from "@workspace/ui/components/scroll-area"
+import { Checkbox } from "@workspace/ui/components/checkbox"
 import { cn } from "@workspace/ui/lib/utils"
+import { Popover } from "@base-ui/react/popover"
+import { connectionOf, connectionLabels } from "@/lib/server-state"
+import type { TelegramServer } from "@/lib/types"
 
 // The channel list is a local workspace pane beside the message timeline — not
 // the application's navigation, which the sidebar keeps owning. It is search,
@@ -35,7 +43,18 @@ export function ChannelListPane({
   onSearchChange,
   selectedCategories,
   onToggleCategory,
+  servers = [],
+  selectedServers = [],
+  onToggleServer,
+  onSelectAllServers,
+  serversError,
+  serversLoading = false,
+  onRetryServers,
   onAdd,
+  onCreate,
+  canCreate = true,
+  canJoin = true,
+  onInformation,
   onEditCategories,
   onDelete,
   hasChannels = true,
@@ -56,7 +75,18 @@ export function ChannelListPane({
   onSearchChange: (value: string) => void
   selectedCategories: number[]
   onToggleCategory: (id: number) => void
+  servers?: TelegramServer[]
+  selectedServers?: string[]
+  onToggleServer?: (key: string) => void
+  onSelectAllServers?: () => void
+  serversError?: string
+  serversLoading?: boolean
+  onRetryServers?: () => void
   onAdd: () => void
+  onCreate?: () => void
+  canCreate?: boolean
+  canJoin?: boolean
+  onInformation?: (channel: Channel) => void
   onEditCategories: (channel: Channel) => void
   onDelete: (channel: Channel) => void
   // hasChannels is about the whole workspace, not the current filter: it
@@ -85,22 +115,33 @@ export function ChannelListPane({
           />
           {/* Adding a channel lives here, in the list it adds to, rather than
               in a page header above the workspace. */}
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={onAdd}
-            title="کانال جدید"
-            aria-label="کانال جدید"
-            className="shrink-0"
-          >
-            <PlusIcon data-icon="inline-start" />
-          </Button>
+          {(canCreate && onCreate || canJoin) && <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="outline" size="icon" aria-label="عملیات کانال‌ها" className="shrink-0" />}>
+              <MoreVerticalIcon />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canCreate && onCreate && <DropdownMenuItem onClick={onCreate}><PlusIcon />ساخت کانال</DropdownMenuItem>}
+              {canJoin && <DropdownMenuItem onClick={onAdd}><PlusIcon />پیوستن به کانال</DropdownMenuItem>}
+            </DropdownMenuContent>
+          </DropdownMenu>}
         </div>
-        <ChannelCategoryChips
-          categories={categories}
-          selected={selectedCategories}
-          onToggle={onToggleCategory}
-        />
+        <div data-slot="channel-filter-toolbar" dir="rtl" className="flex min-w-0 items-center gap-2">
+          <ServerMultiSelect
+            servers={servers}
+            selected={selectedServers}
+            onToggle={onToggleServer ?? (() => undefined)}
+            onSelectAll={onSelectAllServers ?? (() => undefined)}
+            error={serversError}
+            loading={serversLoading}
+            onRetry={onRetryServers}
+          />
+          <ChannelCategoryChips
+            categories={categories}
+            selected={selectedCategories}
+            onToggle={onToggleCategory}
+            className="min-w-0 flex-1"
+          />
+        </div>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -110,17 +151,17 @@ export function ChannelListPane({
               {!hasChannels
                 ? "هنوز کانالی ثبت نشده است"
                 : filtersActive
-                  ? "نتیجه‌ای پیدا نشد"
+                  ? "کانالی با فیلترهای انتخاب‌شده پیدا نشد."
                   : "هنوز کانالی ثبت نشده است"}
             </p>
             {filtersActive && onClearFilters ? (
               <Button variant="outline" size="sm" onClick={onClearFilters}>
                 پاک کردن فیلترها
               </Button>
-            ) : !hasChannels ? (
+            ) : !hasChannels && canJoin ? (
               <Button variant="outline" size="sm" onClick={onAdd}>
                 <PlusIcon data-icon="inline-start" />
-                کانال جدید
+                پیوستن به کانال
               </Button>
             ) : null}
           </div>
@@ -135,12 +176,112 @@ export function ChannelListPane({
                 selected={channel.id === selectedId}
                 onEditCategories={onEditCategories}
                 onDelete={onDelete}
+                onInformation={onInformation}
               />
             ))}
           </ul>
         )}
       </ScrollArea>
     </aside>
+  )
+}
+
+function ServerMultiSelect({
+  servers,
+  selected,
+  onToggle,
+  onSelectAll,
+  error,
+  loading,
+  onRetry,
+}: {
+  servers: TelegramServer[]
+  selected: string[]
+  onToggle: (key: string) => void
+  onSelectAll: () => void
+  error?: string
+  loading: boolean
+  onRetry?: () => void
+}) {
+  const [query, setQuery] = React.useState("")
+  const countLabel = new Intl.NumberFormat("fa").format(selected.length)
+  const selectedServer = selected.length === 1
+    ? servers.find((server) => server.key === selected[0])
+    : undefined
+  const triggerLabel = selected.length === 0
+    ? "همه سرورها"
+    : selected.length === 1
+      ? selectedServer?.key ?? selected[0]
+      : `${countLabel} سرور`
+  const matches = servers.filter((server) =>
+    `${server.key} ${connectionLabels[connectionOf(server)]}`
+      .toLocaleLowerCase("fa").includes(query.trim().toLocaleLowerCase("fa"))
+  )
+  const checked = (key: string) => selected.includes(key)
+  const allChecked = selected.length === 0
+
+  return (
+    <Popover.Root>
+      <Popover.Trigger
+        render={<Button
+          data-slot="server-multi-select"
+          variant="outline"
+          size="sm"
+          dir="ltr"
+          className="h-7 max-w-28 shrink-0 gap-1 px-2 rounded-full border-0 bg-muted"
+          aria-label={`فیلتر سرورها: ${triggerLabel}`}
+          disabled={loading}
+        />}
+      >
+        {loading ? <LoaderCircleIcon className="animate-spin" /> : null}
+        <span className="truncate" dir="auto">{error ? "سرورها نامشخص" : triggerLabel}</span>
+        <ChevronDownIcon className="size-3.5 shrink-0" />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner side="bottom" align="start" sideOffset={5} className="z-50 max-w-[calc(100vw-1rem)] outline-none">
+          <Popover.Popup dir="rtl" className="w-[min(18rem,calc(100vw-1rem))] rounded-lg border bg-popover p-2 text-popover-foreground shadow-md">
+            <label className="sr-only" htmlFor="server-filter-search">جستجو در سرورها</label>
+            <input
+              id="server-filter-search"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="جستجو در سرورها..."
+              className="mb-2 h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {error ? (
+              <div className="flex items-center justify-between gap-2 py-2 text-xs text-destructive" role="alert">
+                <span>بارگذاری سرورها ناموفق بود.</span>
+                {onRetry && <button type="button" className="underline" onClick={onRetry}>تلاش دوباره</button>}
+              </div>
+            ) : servers.length === 0 ? (
+              <p className="py-2 text-center text-xs text-muted-foreground">سروری پیکربندی نشده است.</p>
+            ) : (
+              <>
+                <div className="max-h-52 overflow-y-auto" role="group" aria-label="سرورها">
+                  <button type="button" role="checkbox" aria-checked={allChecked} onClick={onSelectAll} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-right text-sm hover:bg-accent">
+                    <Checkbox checked={allChecked} tabIndex={-1} aria-hidden="true" />
+                    <span>همه سرورها</span>
+                  </button>
+                  <div className="my-1 border-t" />
+                  {matches.map((server) => (
+                    <button key={server.key} type="button" role="checkbox" aria-checked={checked(server.key)} onClick={() => onToggle(server.key)} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-right text-sm hover:bg-accent">
+                      <Checkbox checked={checked(server.key)} tabIndex={-1} aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate font-mono" dir="ltr">{server.key}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{connectionLabels[connectionOf(server)]}</span>
+                    </button>
+                  ))}
+                  {matches.length === 0 && <p className="py-3 text-center text-xs text-muted-foreground">سروری یافت نشد.</p>}
+                </div>
+                <div className="mt-1 border-t pt-1">
+                  <button type="button" onClick={onSelectAll} className="w-full rounded px-2 py-1.5 text-right text-xs text-muted-foreground hover:bg-accent hover:text-foreground">بازنشانی</button>
+                </div>
+              </>
+            )}
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   )
 }
 
@@ -210,6 +351,7 @@ function ChannelListItem({
   selected,
   onEditCategories,
   onDelete,
+  onInformation,
 }: {
   channel: Channel
   categories: number[]
@@ -217,6 +359,7 @@ function ChannelListItem({
   selected: boolean
   onEditCategories: (channel: Channel) => void
   onDelete: (channel: Channel) => void
+  onInformation?: (channel: Channel) => void
 }) {
   // Choosing a channel carries the search and the category chips with it, so
   // opening one does not throw away the filter the reader set up to find it.
@@ -285,6 +428,7 @@ function ChannelListItem({
               <MoreHorizontalIcon />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {onInformation && <DropdownMenuItem onClick={() => onInformation(channel)}><InfoIcon />اطلاعات کانال</DropdownMenuItem>}
               <DropdownMenuItem onClick={() => onEditCategories(channel)}>
                 <TagsIcon />
                 ویرایش دسته‌بندی

@@ -21,7 +21,7 @@ function SheetContent({
   ...props
 }: DialogPrimitive.Popup.Props & {
   className?: string
-  side?: "start" | "end"
+  side?: "start" | "end" | "bottom"
 }) {
   return (
     <DialogPrimitive.Portal>
@@ -32,10 +32,11 @@ function SheetContent({
       <DialogPrimitive.Popup
         data-slot="sheet-content"
         className={cn(
-          "fixed inset-y-0 z-50 flex h-full w-3/4 max-w-sm flex-col gap-4 bg-background shadow-lg duration-200 data-open:animate-in data-closed:animate-out data-closed:duration-200",
-          side === "end"
-            ? "end-0 border-s data-open:slide-in-from-left data-closed:slide-out-to-left rtl:data-open:slide-in-from-right rtl:data-closed:slide-out-to-right"
-            : "start-0 border-e data-open:slide-in-from-right data-closed:slide-out-to-right rtl:data-open:slide-in-from-left rtl:data-closed:slide-out-to-left",
+          side === "bottom"
+            ? "fixed inset-x-0 bottom-0 top-auto z-50 mx-auto h-auto max-h-[85dvh] w-full max-w-2xl flex-col gap-4 rounded-t-2xl border-t bg-background shadow-lg duration-200 data-open:animate-in data-closed:animate-out data-open:slide-in-from-bottom data-closed:slide-out-to-bottom"
+            : "fixed inset-y-0 z-50 flex h-full w-3/4 max-w-sm flex-col gap-4 bg-background shadow-lg duration-200 data-open:animate-in data-closed:animate-out data-closed:duration-200",
+          side === "end" && "end-0 border-s data-open:slide-in-from-left data-closed:slide-out-to-left rtl:data-open:slide-in-from-right rtl:data-closed:slide-out-to-right",
+          side === "start" && "start-0 border-e data-open:slide-in-from-right data-closed:slide-out-to-right rtl:data-open:slide-in-from-left rtl:data-closed:slide-out-to-left",
           className
         )}
         {...props}

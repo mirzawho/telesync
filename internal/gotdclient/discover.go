@@ -276,7 +276,12 @@ func (m *Manager) ResolveChannel(ctx context.Context, ref tgapi.ChannelRef) (tga
 	if err != nil {
 		return tgapi.ChannelInfo{}, err
 	}
-	ch, err := m.resolveOne(ctx, api, ref)
+	var ch *tg.Channel
+	if ref.IsInvite() {
+		ch, err = m.resolveOne(ctx, api, ref)
+	} else {
+		ch, err = m.knownChannelForCurrentState(ctx, ref.ID)
+	}
 	if err != nil {
 		return tgapi.ChannelInfo{}, err
 	}
@@ -536,6 +541,16 @@ func (m *Manager) resolveOne(ctx context.Context, api *tg.Client, ref tgapi.Chan
 // addresses a channel by (id, access hash), so an unseen id is reported as
 // unresolvable rather than guessed at.
 func (m *Manager) knownChannel(ctx context.Context, id int64) (*tg.Channel, error) {
+	return m.knownChannelWithFallback(ctx, id, true)
+}
+
+// knownChannelForCurrentState requires Telegram to return a channel object;
+// dialog metadata alone is insufficient evidence for current rights.
+func (m *Manager) knownChannelForCurrentState(ctx context.Context, id int64) (*tg.Channel, error) {
+	return m.knownChannelWithFallback(ctx, id, false)
+}
+
+func (m *Manager) knownChannelWithFallback(ctx context.Context, id int64, allowDialogFallback bool) (*tg.Channel, error) {
 	_, api, err := m.apiClient(ctx)
 	if err != nil {
 		return nil, err
@@ -553,7 +568,14 @@ func (m *Manager) knownChannel(ctx context.Context, id int64) (*tg.Channel, erro
 						m.remember(ch)
 						return ch, nil
 					}
+				} else if !allowDialogFallback {
+					return nil, ClassifyError(err)
 				}
+				if !allowDialogFallback {
+					return nil, tgapi.ErrChannelNotFound
+				}
+				// Other operations retain their historical dialog fallback. The
+				// current permission path above must not treat it as authoritative.
 				m.remember(&tg.Channel{ID: d.ID, AccessHash: d.AccessHash})
 				return &tg.Channel{
 					ID: d.ID, AccessHash: d.AccessHash, Title: d.Title, Username: d.Username,

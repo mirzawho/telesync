@@ -297,12 +297,13 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, requestID string) {
 	// caller may read. A summary of the permission rules, not a new grant —
 	// each route still checks for itself.
 	view.Access = &accessView{
-		Channels:   a.auth.CanList(channelstore.KindChannel),
-		Categories: a.auth.CanList(channelstore.KindCategory),
-		Users:      a.auth.CanList(channelstore.KindUser),
-		Servers:    a.auth.Global(channelstore.PermissionServersView),
-		Content:    a.auth.Global(channelstore.PermissionContentPublish),
-		Automation: a.auth.Global(channelstore.PermissionAutomationView),
+		Channels:       a.auth.CanList(channelstore.KindChannel),
+		ChannelsCreate: a.auth.Global(channelstore.PermissionChannelsCreate),
+		Categories:     a.auth.CanList(channelstore.KindCategory),
+		Users:          a.auth.CanList(channelstore.KindUser),
+		Servers:        a.auth.Global(channelstore.PermissionServersView),
+		Content:        a.auth.Global(channelstore.PermissionContentPublish),
+		Automation:     a.auth.Global(channelstore.PermissionAutomationView),
 	}
 	writeJSON(w, http.StatusOK, envelope{
 		Data: view,

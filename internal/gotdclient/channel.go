@@ -72,6 +72,16 @@ func MediaType(media tg.MessageMediaClass) string {
 }
 
 func documentType(d *tg.Document) string {
+	// Audio semantics are more specific than the generic document constructor;
+	// filenames and MIME types below never promote a document.
+	for _, attr := range d.Attributes {
+		if a, ok := attr.(*tg.DocumentAttributeAudio); ok {
+			if a.Voice {
+				return "voice"
+			}
+			return "audio"
+		}
+	}
 	for _, attr := range d.Attributes {
 		switch a := attr.(type) {
 		case *tg.DocumentAttributeAnimated:
@@ -80,17 +90,54 @@ func documentType(d *tg.Document) string {
 			return "sticker"
 		case *tg.DocumentAttributeVideo:
 			if a.RoundMessage {
-				return "video"
+				return "round_video"
 			}
 			return "video"
-		case *tg.DocumentAttributeAudio:
-			if a.Voice {
-				return "voice"
-			}
-			return "audio"
 		}
 	}
 	return "document"
+}
+
+// MediaVideoAttribute returns Telegram's authoritative video metadata, if any.
+func MediaVideoAttribute(media tg.MessageMediaClass) *tg.DocumentAttributeVideo {
+	doc, ok := media.(*tg.MessageMediaDocument)
+	if !ok {
+		return nil
+	}
+	d, ok := doc.Document.(*tg.Document)
+	if !ok {
+		return nil
+	}
+	for _, attr := range d.Attributes {
+		if video, ok := attr.(*tg.DocumentAttributeVideo); ok {
+			return video
+		}
+	}
+	return nil
+}
+
+func MediaWidth(media tg.MessageMediaClass) int {
+	if video := MediaVideoAttribute(media); video != nil {
+		return video.W
+	}
+	return 0
+}
+
+func MediaHeight(media tg.MessageMediaClass) int {
+	if video := MediaVideoAttribute(media); video != nil {
+		return video.H
+	}
+	return 0
+}
+
+func MediaSupportsStreaming(media tg.MessageMediaClass) bool {
+	video := MediaVideoAttribute(media)
+	return video != nil && video.SupportsStreaming
+}
+
+func MediaRoundMessage(media tg.MessageMediaClass) bool {
+	video := MediaVideoAttribute(media)
+	return video != nil && video.RoundMessage
 }
 
 // MediaLabel renders a Persian label for a media type.
@@ -99,6 +146,8 @@ func MediaLabel(kind string) string {
 	case "photo":
 		return "عکس"
 	case "video":
+		return "ویدیو"
+	case "round_video":
 		return "ویدیو"
 	case "document":
 		return "فایل"
@@ -317,11 +366,13 @@ func MediaSize(media tg.MessageMediaClass) int64 {
 // else. It is a length in time and never a byte count: a 1.3 KB recording is
 // about five seconds long and must not be reported as 1300 of anything.
 func MediaDuration(media tg.MessageMediaClass) int {
-	attr := mediaAudioAttribute(media)
-	if attr == nil {
-		return 0
+	if attr := mediaAudioAttribute(media); attr != nil {
+		return attr.Duration
 	}
-	return attr.Duration
+	if video := MediaVideoAttribute(media); video != nil {
+		return int(video.Duration)
+	}
+	return 0
 }
 
 // MediaWaveform reports a voice message's own amplitude samples, when the
