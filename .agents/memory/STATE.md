@@ -1,5 +1,24 @@
 # Current state
 
+**Latest update — v0.0.4 release preparation (2026-11-12):** Prepared and
+tagged v0.0.4. The version in `web/apps/web/package.json` is `0.0.4`, the README
+describes the release, and the tag `v0.0.4` is on the release commit.
+
+Two panel tests (`.agents/handoffs/v0.0.4-floating-message-composer-layout.md`,
+approved and DONE 2026-11-11) were failing at `5dad14c`: that commit landed an
+older copy of `message-item.tsx` (`absolute -bottom-4 -right-8`) and
+`channel-messages-pane.tsx` (no `bg-background/80 backdrop-blur-xl`) together
+with the newer `chat-layout.test.tsx`. The approved classes
+(`absolute bottom-1 right-1`, and the translucent blurred footer) were restored;
+no test was changed. Panel suite 164/164.
+
+**Verified:** `gofmt -l` (only the untracked nested `.claude/worktrees` checkout),
+`go vet ./...`, `go test ./... -count=1` (all packages ok), `go build`,
+docsgen `--check` (88 unchanged, 0 stale), web typecheck, web build, and all
+eight web suites (26, 19, 164, 108, 50, 202, 18, 48) green. **Not verified:**
+anything against live Telegram, WordPress, an AI provider or an external
+webhook receiver; the panel in a browser.
+
 **Latest update — floating chat footer and message actions (2026-11-11):**
 Implemented approved handoff
 `.agents/handoffs/v0.0.4-floating-message-composer-layout.md`. Message actions
@@ -156,11 +175,15 @@ holds for this change).
 
 ## Milestone
 
-v0.0.3 is released (2026-11-09): the automation feature, the webhook/workflow
-page forms, the loopback exception, the channel labels in the webhook payload,
-`telesync serve-webhook`, and the release fixes in the LOG. `internal/worker`'s
-two socket tests now pass as well — one of them had been hiding a real defect,
-`worker.Listen` stealing a live socket from another worker.
+v0.0.4 is released (2026-11-12): direct asynchronous message sending, the
+Channel Explorer with native message edit/delete, native media semantics and
+album publishing, the copy-route rename, and voice messages that stay voice
+messages. v0.0.3 is released (2026-11-09): the automation feature, the
+webhook/workflow page forms, the loopback exception, the channel labels in the
+webhook payload, `telesync serve-webhook`, and the release fixes in the LOG.
+`internal/worker`'s two socket tests now pass as well — one of them had been
+hiding a real defect, `worker.Listen` stealing a live socket from another
+worker.
 
 Telesync is a multi-client MTProto runtime with a supervised worker per client,
 JSON HTTP API v1, SQLite channel/category/user/site inventory, permissions, and

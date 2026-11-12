@@ -110,7 +110,7 @@ export function ChannelMessageItem({
             {(canEdit || canDelete) && (
               <div
                 data-slot="message-actions-position"
-                className="absolute -bottom-4 -right-8 z-20"
+                className="absolute bottom-1 right-1 z-20"
               >
                 <MessageActions
                   canEdit={canEdit}

@@ -2122,3 +2122,33 @@ is not part of this entry.
   produced `channel-messages-main-C886CuXI.js`. API returned 401 without auth;
   direct deep link returned 404. No embedded asset replacement, restart, or
   deployment was done.
+
+## 2026-11-12 — v0.0.4 release preparation
+
+Prepared and tagged v0.0.4. The release surface is `make version v0.0.4`
+(`web/apps/web/package.json` now holds `0.0.4`), the README describes the
+Channel Explorer and asynchronous send/edit, and the tag is on the release
+commit.
+
+- **Two panel assertions were red at HEAD, and the tests were right.** Commit
+  `5dad14c` ("before submitting version 4") landed an *older* copy of
+  `message-item.tsx` and `channel-messages-pane.tsx` in the same tree as the
+  *newer* `chat-layout.test.tsx`. The approved handoff
+  `.agents/handoffs/v0.0.4-floating-message-composer-layout.md` (DONE
+  2026-11-11) specified `absolute bottom-1 right-1` for the in-bubble action
+  menu and a `bg-background/80 backdrop-blur-xl` floating footer; the landed
+  components had `absolute -bottom-4 -right-8` and no translucent/blur layer.
+  A history search found the approved classes in no commit or branch, so the
+  handoff text is the only record of them and the implementation is restored
+  to it. No test was edited.
+- **Nothing else needed a release-side fix.** The `gofmt -l` hit is
+  `.claude/worktrees/full-message-replacement-api-b6e9bd/internal/rpc/rpc.go`
+  — an untracked nested checkout (`git ls-files .claude/worktrees` is empty),
+  not a tracked file, and the same known skip v0.0.3 recorded.
+
+**Verified:** `gofmt -l` (nested checkout only), `go vet ./...`, `go test ./...
+-count=1` (all 30 packages ok), `go build ./cmd/telesync`, docsgen `--check`
+(88 unchanged, 0 stale), `npm run typecheck`, `npm run build`, and all eight
+web suites (26 + 19 + 164 + 108 + 50 + 202 + 18 + 48). **Not verified:**
+anything against live Telegram, WordPress, an AI provider or an external
+webhook receiver; the panel in a browser.

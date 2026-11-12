@@ -886,7 +886,7 @@ export function ChannelMessagesPane({
           <div
             ref={footer}
             data-slot="floating-chat-footer"
-            className="pointer-events-none absolute bottom-0 inset-x-0 z-20"
+            className="pointer-events-none absolute bottom-0 inset-x-0 z-20 bg-background/80 backdrop-blur-xl"
             style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           >
             <div className="pointer-events-auto mx-auto max-w-3xl md:py-3">

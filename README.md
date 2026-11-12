@@ -26,7 +26,16 @@ site.** Reading never marks messages as read; publishing is always an explicit
 user action. The status of every capability is the matrix in
 [PROJECT_BRIEF.md](PROJECT_BRIEF.md#9-implementation-status).
 
-v0.0.3 adds **background automation**: new messages in a managed channel become
+v0.0.4 adds a **channel explorer**: browse a channel's history in the panel,
+compose a new message or an attachment and send it, edit or delete an existing
+message, and publish a message or a native album onward. Sends and edits are
+**asynchronous** — the API answers `202` with an operation id and
+`GET .../messages/send/{operation_id}` (or `.../messages/{id}/edit/{operation_id}`)
+reports the outcome, so nothing is sent inside the request. A recording goes out
+as a real Telegram voice message. See [docs/VERIFYING-MEDIA-PUBLISH.md](docs/VERIFYING-MEDIA-PUBLISH.md)
+for the media kinds and their wire shapes.
+
+v0.0.3 added **background automation**: new messages in a managed channel become
 durable events that drive outbound **webhooks** and per-channel publishing
 **workflows** (optionally polished by an OpenAI-compatible model first), with no
 browser open and no HTTP request made. See [docs/AUTOMATION.md](docs/AUTOMATION.md).
