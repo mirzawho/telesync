@@ -34,6 +34,10 @@ type LocalChannelStore interface {
 	ListChannels(ctx context.Context, q channelstore.ChannelListQuery) ([]channelstore.Channel, int, error)
 	// ListChannelsByIDs lists the rows among ids in the listing order.
 	ListChannelsByIDs(ctx context.Context, ids []int64) ([]channelstore.Channel, error)
+	// Owner-scoped reads enforce the current principal's account ownership in
+	// SQL. accountIDs nil means all of that owner's accounts.
+	GetByIDForOwner(ctx context.Context, ownerUserID, id int64) (channelstore.Channel, bool, error)
+	ListChannelsForOwner(ctx context.Context, ownerUserID int64, accountIDs []string, q channelstore.ChannelListQuery) ([]channelstore.Channel, int, error)
 	// DeleteChannelRow removes one record by its local id. Telegram is not
 	// contacted; the permission assignments that reference the row go with it.
 	DeleteChannelRow(ctx context.Context, id int64) error
@@ -45,6 +49,8 @@ const localChannelsPrefix = "/api/v1/local/channels"
 // maxLeaveBody bounds a leave request body. It holds one boolean and an
 // optional token.
 const maxLeaveBody = 16 << 10
+
+const maxLocalChannelAccountIDs = 100
 
 // CodePartialFailure means Telegram's part of an operation succeeded and the
 // local part did not.
@@ -61,6 +67,7 @@ const CodePartialFailure = "partial_failure"
 type localChannelView struct {
 	ID        int64  `json:"id"`
 	ClientKey string `json:"client_key"`
+	AccountID string `json:"account_id"`
 	// ChannelID is Telegram's channel id, a number because it is the same value
 	// the Telegram routes report for the channel.
 	ChannelID         int64  `json:"channel_id"`
@@ -83,6 +90,7 @@ func localChannelViewOf(ch channelstore.Channel) localChannelView {
 	out := localChannelView{
 		ID:                ch.ID,
 		ClientKey:         ch.ClientKey,
+		AccountID:         ch.AccountID,
 		ChannelID:         ch.ChannelID,
 		Type:              ch.PeerType,
 		Title:             ch.Title,
@@ -281,7 +289,7 @@ func (s *Server) localChannels(w http.ResponseWriter, r *http.Request, requestID
 }
 
 func (s *Server) listLocalChannels(w http.ResponseWriter, r *http.Request, requestID string) {
-	page, perPage, q, categoryIDs, err := parseLocalChannelQuery(r.URL.Query())
+	page, perPage, q, categoryIDs, accountIDs, err := parseLocalChannelQuery(r.URL.Query())
 	if err != nil {
 		s.fail(w, http.StatusBadRequest, CodeInvalidInput, err.Error(), requestID)
 		return
@@ -291,45 +299,21 @@ func (s *Server) listLocalChannels(w http.ResponseWriter, r *http.Request, reque
 		return
 	}
 
-	var (
-		rows  []channelstore.Channel
-		total int
-	)
-	// The global view lists every record unless one carries an explicit deny;
-	// without the global view the list is the per-record allows alone. The
-	// denied records are dropped first, so the page, the order and the total
-	// describe only what the caller may see.
-	//
-	// The category filter is passed to the store both ways, so it is applied
-	// before pagination and before the total — alongside the search text, and
-	// inside the caller's own visibility.
 	authr := actorAuth(r)
-	global := authr.CanList(channelstore.KindChannel)
-	denies := authr.HasDenies(channelstore.KindChannel, channelstore.ActionView)
-	restricted := !global || denies
-	ids := authr.ResourceIDs(channelstore.KindChannel, channelstore.ActionView)
-	if !restricted {
-		rows, total, err = store.ListChannels(r.Context(), channelstore.ChannelListQuery{
-			Page: page, PerPage: perPage, Query: q, CategoryIDs: categoryIDs,
-		})
-	} else {
-		var all []channelstore.Channel
-		all, err = s.channelsVisibleTo(r.Context(), store, authr, q, categoryIDs, global, ids)
-		if err == nil {
-			visible := make([]channelstore.Channel, 0, len(all))
-			for _, ch := range all {
-				if localChannelMatches(ch, q) && visibleChannel(authr, ch.ID) {
-					visible = append(visible, ch)
-				}
-			}
-			total = len(visible)
-			rows = pageSlice(visible, page, perPage)
-		}
-	}
+	all, _, err := store.ListChannelsForOwner(r.Context(), actorOf(r).user.ID, accountIDs,
+		channelstore.ChannelListQuery{Query: q, CategoryIDs: categoryIDs})
 	if err != nil {
 		s.storeError(w, "list_local_channels", err, requestID)
 		return
 	}
+	visible := make([]channelstore.Channel, 0, len(all))
+	for _, ch := range all {
+		if localChannelMatches(ch, q) && visibleChannel(authr, ch.ID) {
+			visible = append(visible, ch)
+		}
+	}
+	total := len(visible)
+	rows := pageSlice(visible, page, perPage)
 
 	views := make([]localChannelView, 0, len(rows))
 	for _, ch := range rows {
@@ -351,7 +335,7 @@ func (s *Server) getLocalChannel(w http.ResponseWriter, r *http.Request, id int6
 	if !ok {
 		return
 	}
-	worker, ok := s.workerFor(w, ch.ClientKey, requestID)
+	worker, ok := s.workerFor(w, ch, requestID)
 	if !ok {
 		return
 	}
@@ -380,7 +364,7 @@ func (s *Server) localChannelMessages(w http.ResponseWriter, r *http.Request, id
 		s.fail(w, http.StatusBadRequest, CodeInvalidInput, err.Error(), requestID)
 		return
 	}
-	worker, ok := s.workerFor(w, ch.ClientKey, requestID)
+	worker, ok := s.workerFor(w, ch, requestID)
 	if !ok {
 		return
 	}
@@ -415,21 +399,20 @@ func (s *Server) localChannelAvatar(w http.ResponseWriter, r *http.Request, id i
 	if !ok {
 		return
 	}
-	worker, ok := s.workerFor(w, ch.ClientKey, requestID)
+	worker, ok := s.workerFor(w, ch, requestID)
 	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
-	// The existing avatar path, keyed by the client and Telegram id the record
-	// names, so the same image is cached once whichever route asked for it.
+	// Persisted account identity isolates identical remote channels across users.
 	ref := rpc.ChannelRef{ChannelID: ch.ChannelID}
 	if s.cfg.Avatars == nil {
-		s.serveAvatarDirect(ctx, w, ch.ClientKey, worker, ref, requestID)
+		s.serveAvatarDirect(ctx, w, ch.AccountID, worker, ref, requestID)
 		return
 	}
-	img, err := s.cfg.Avatars.Get(ctx, ch.ClientKey, ch.ChannelID, func(fctx context.Context) ([]byte, string, int64, error) {
+	img, err := s.cfg.Avatars.Get(ctx, ch.AccountID, ch.ChannelID, func(fctx context.Context) ([]byte, string, int64, error) {
 		file, fetchErr := worker.Avatar(fctx, ref)
 		if fetchErr != nil {
 			if isNoAvatar(fetchErr) {
@@ -474,7 +457,7 @@ func (s *Server) leaveLocalChannel(w http.ResponseWriter, r *http.Request, id in
 		s.fail(w, statusOfAuthError(err), codeOfAuthError(err), s.authMessage(err), requestID)
 		return
 	}
-	ch, found, lookupErr := store.GetByID(r.Context(), id)
+	ch, found, lookupErr := store.GetByIDForOwner(r.Context(), caller.user.ID, id)
 	if lookupErr != nil {
 		s.storeError(w, "get_local_channel", lookupErr, requestID)
 		return
@@ -597,7 +580,7 @@ func decodeOptionalBody(body io.Reader, v any) error {
 // local is removed. It answers the error itself and reports false when it
 // failed.
 func (s *Server) leaveOnTelegram(w http.ResponseWriter, ch channelstore.Channel, requestID string) bool {
-	worker, ok := s.workerFor(w, ch.ClientKey, requestID)
+	worker, ok := s.workerFor(w, ch, requestID)
 	if !ok {
 		return false
 	}
@@ -623,17 +606,26 @@ type leaverOf interface {
 	LeaveChannel(ctx context.Context, channelID int64) error
 }
 
-// workerFor returns the worker of the client the record names.
+// workerFor returns the worker that serves the account a channel record
+// belongs to.
 //
-// A client that is no longer configured is 404, the same answer the Telegram
-// routes give an unknown key, and never a different client's worker.
-func (s *Server) workerFor(w http.ResponseWriter, clientKey, requestID string) (Worker, bool) {
+// The worker is named by the account, not by the server key: one server may
+// carry many accounts, each with its own session, and reaching for "whatever
+// serves this server" would let one user's request run through another's
+// Telegram identity. A channel whose account has no worker — a quarantined
+// legacy record included — answers 404, never another account's worker.
+func (s *Server) workerFor(w http.ResponseWriter, ch channelstore.Channel, requestID string) (Worker, bool) {
 	if s.cfg.Workers == nil {
 		s.fail(w, http.StatusServiceUnavailable, CodeWorkerUnavail,
 			"The Telegram client is currently unavailable.", requestID)
 		return nil, false
 	}
-	worker, ok := s.cfg.Workers.Worker(clientKey)
+	if ch.AccountID == "" {
+		s.fail(w, http.StatusNotFound, CodeUnknownClient,
+			"The Telegram client this channel belongs to is no longer configured.", requestID)
+		return nil, false
+	}
+	worker, ok := s.cfg.Workers.Worker(ch.AccountID)
 	if !ok {
 		s.fail(w, http.StatusNotFound, CodeUnknownClient,
 			"The Telegram client this channel belongs to is no longer configured.", requestID)
@@ -654,7 +646,7 @@ func (s *Server) requireLocalChannel(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return channelstore.Channel{}, false
 	}
-	ch, found, err := store.GetByID(r.Context(), id)
+	ch, found, err := store.GetByIDForOwner(r.Context(), actorOf(r).user.ID, id)
 	if err != nil {
 		s.storeError(w, "get_local_channel", err, requestID)
 		return channelstore.Channel{}, false
@@ -721,23 +713,42 @@ func (s *Server) authMessage(err error) string {
 // the channels catalogue takes. The shared page/Q parser is strict about
 // unknown parameters, so `category_ids` is taken out first and read on its own
 // — the category and user listings keep rejecting it.
-func parseLocalChannelQuery(q map[string][]string) (int, int, string, []int64, error) {
+func parseLocalChannelQuery(q map[string][]string) (int, int, string, []int64, []string, error) {
 	categories, err := parseCategoryFilterIDs(q)
 	if err != nil {
-		return 0, 0, "", nil, err
+		return 0, 0, "", nil, nil, err
+	}
+	var accountIDs []string
+	if values, exists := q["account_ids"]; exists {
+		if len(values) != 1 || strings.TrimSpace(values[0]) == "" || strings.TrimSpace(values[0]) != values[0] {
+			return 0, 0, "", nil, nil, errors.New("account_ids must be a comma-separated list of account IDs.")
+		}
+		seen := map[string]bool{}
+		for _, id := range strings.Split(values[0], ",") {
+			if id == "" || strings.TrimSpace(id) != id {
+				return 0, 0, "", nil, nil, errors.New("account_ids must be a comma-separated list of account IDs.")
+			}
+			if !seen[id] {
+				seen[id] = true
+				accountIDs = append(accountIDs, id)
+			}
+			if len(accountIDs) > maxLocalChannelAccountIDs {
+				return 0, 0, "", nil, nil, errors.New("account_ids may name at most " + strconv.Itoa(maxLocalChannelAccountIDs) + " accounts.")
+			}
+		}
 	}
 	pageQ := make(map[string][]string, len(q))
 	for key, values := range q {
-		if key == "category_ids" {
+		if key == "category_ids" || key == "account_ids" {
 			continue
 		}
 		pageQ[key] = values
 	}
 	page, perPage, query, err := parsePageQuery(pageQ, channelstore.MaxCategoryDescriptionLen)
 	if err != nil {
-		return 0, 0, "", nil, err
+		return 0, 0, "", nil, nil, err
 	}
-	return page, perPage, query, categories, nil
+	return page, perPage, query, categories, accountIDs, nil
 }
 
 // channelsVisibleTo reads the records the listing may contain when the caller
@@ -867,7 +878,7 @@ func (s *Server) listChannelCategories(w http.ResponseWriter, r *http.Request, i
 	if !ok {
 		return
 	}
-	ids, err := store.AssignmentCounts(r.Context(), ch.ClientKey, strconv.FormatInt(ch.ChannelID, 10))
+	ids, err := store.AssignmentCounts(r.Context(), ch.AccountID, strconv.FormatInt(ch.ChannelID, 10))
 	if err != nil {
 		s.storeError(w, "list_channel_categories", err, requestID)
 		return
@@ -943,7 +954,7 @@ func (s *Server) setChannelCategories(w http.ResponseWriter, r *http.Request, id
 			return
 		}
 	}
-	if err := store.ReplaceCategories(r.Context(), ch.ClientKey, ch.ChannelID, req.CategoryIDs); err != nil {
+	if err := store.ReplaceCategories(r.Context(), ch.AccountID, ch.ChannelID, req.CategoryIDs); err != nil {
 		s.categoryWriteError(w, "set_channel_categories", err, requestID)
 		return
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/automation/publishing"
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/editing"
 	"github.com/mirza/telesync/internal/rpc"
@@ -22,13 +23,15 @@ type editJobs struct {
 		id     string
 		target int64
 	}
+	owners []automation.Owner
 }
 
-func (j *editJobs) EnqueueMessageEdit(_ context.Context, id string, target int64) error {
+func (j *editJobs) EnqueueMessageEdit(_ context.Context, id string, target int64, owner automation.Owner) error {
 	j.enqueued = append(j.enqueued, struct {
 		id     string
 		target int64
 	}{id, target})
+	j.owners = append(j.owners, owner)
 	return nil
 }
 
@@ -89,11 +92,25 @@ func editService(t *testing.T, editor *editEditor) (*editing.Service, *channelst
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	channel, err := store.Upsert(ctx, channelstore.Channel{ClientKey: "cat", ChannelID: 98, PeerType: channelstore.PeerChannel, MembershipStatus: channelstore.StatusMember})
+	// An edit runs through an account and stages its attachment under that
+	// account's ownership, so the fixture creates one rather than leaving the
+	// binding empty.
+	accID, err := accountid.New()
+	if err != nil {
+		t.Fatalf("accountid: %v", err)
+	}
+	if _, err := store.Create(ctx, channelstore.Account{
+		ID: accID, OwnerUserID: user.ID, ServerKey: "cat",
+		NetworkType: channelstore.NetworkCustom, RemoteUserID: 1,
+		Status: channelstore.AccountStatusConnected,
+	}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	channel, err := store.UpsertFor(ctx, accID, channelstore.Channel{ClientKey: "cat", ChannelID: 98, PeerType: channelstore.PeerChannel, MembershipStatus: channelstore.StatusMember})
 	if err != nil {
 		t.Fatalf("upsert channel: %v", err)
 	}
-	actor := publishing.Actor{UserID: user.ID, Auth: channelstore.NewAuthorizerFor(user.ID,
+	actor := publishing.Actor{UserID: user.ID, AccountID: accID, Auth: channelstore.NewAuthorizerFor(user.ID,
 		[]channelstore.GlobalPermission{channelstore.PermissionChannelsView}, nil)}
 	area, err := staging.Open(filepath.Join(t.TempDir(), "edit-staging"), 1<<20)
 	if err != nil {

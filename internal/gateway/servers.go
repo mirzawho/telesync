@@ -24,6 +24,8 @@ type ServerInfo struct {
 	Key     string
 	Type    string
 	Enabled bool
+	// LoginMethods lists only methods the account API can complete end to end.
+	LoginMethods []string
 	// Registered is true when a worker serves the client, so its health can be
 	// checked at all.
 	Registered bool
@@ -44,9 +46,10 @@ const serverStateUnavailable = "unavailable"
 // never conflated: a configured client whose worker is down is still listed,
 // with a state that says so.
 type serverView struct {
-	Key     string `json:"key"`
-	Type    string `json:"type"`
-	Enabled bool   `json:"enabled"`
+	Key          string   `json:"key"`
+	Type         string   `json:"type"`
+	Enabled      bool     `json:"enabled"`
+	LoginMethods []string `json:"login_methods"`
 	// HealthCheckable says whether a worker answered for this server, so a
 	// caller can tell "no worker" from "worker says unknown".
 	HealthCheckable bool   `json:"health_checkable"`
@@ -98,7 +101,11 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 // serverView asks one worker for its health, and turns every failure into a
 // state that names it rather than failing the listing.
 func (s *Server) serverView(ctx context.Context, info ServerInfo, requestID string) serverView {
-	out := serverView{Key: info.Key, Type: info.Type, Enabled: true, State: serverStateUnknown}
+	out := serverView{
+		Key: info.Key, Type: info.Type, Enabled: true,
+		LoginMethods: append([]string(nil), info.LoginMethods...),
+		State:        serverStateUnknown,
+	}
 	if !info.Registered {
 		out.LastError = "No worker serves this client."
 		return out

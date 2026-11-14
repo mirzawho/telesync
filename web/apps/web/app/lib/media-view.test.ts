@@ -30,7 +30,10 @@ test("classifies the media types the panel draws", () => {
     "document"
   )
   assert.equal(mediaKind({ type: "poll" }), "other")
-  assert.equal(mediaKind({ type: "sticker" }), "other")
+  assert.equal(mediaKind({ type: "sticker", mime_type: "image/webp" }), "image")
+  assert.equal(mediaKind({ type: "sticker", mime_type: "video/webm" }), "video")
+  assert.equal(mediaKind({ type: "sticker", mime_type: "application/x-tgsticker" }), "sticker")
+  assert.equal(mediaKind({ type: "document", mime_type: "image/webp" }), "document")
 })
 
 test("uses the sender's filename as the title", () => {

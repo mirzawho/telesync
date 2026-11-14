@@ -13,15 +13,16 @@ import (
 
 // server is one row of GET /api/v1/telegram.
 type server struct {
-	Key             string  `json:"key"`
-	Type            string  `json:"type"`
-	Enabled         bool    `json:"enabled"`
-	HealthCheckable bool    `json:"health_checkable"`
-	State           string  `json:"state"`
-	Authorized      *bool   `json:"authorized"`
-	Transport       string  `json:"transport"`
-	LastSuccessAt   *string `json:"last_success_at"`
-	LastError       string  `json:"last_error"`
+	Key             string   `json:"key"`
+	Type            string   `json:"type"`
+	Enabled         bool     `json:"enabled"`
+	LoginMethods    []string `json:"login_methods"`
+	HealthCheckable bool     `json:"health_checkable"`
+	State           string   `json:"state"`
+	Authorized      *bool    `json:"authorized"`
+	Transport       string   `json:"transport"`
+	LastSuccessAt   *string  `json:"last_success_at"`
+	LastError       string   `json:"last_error"`
 }
 
 type serverList struct {
@@ -41,7 +42,8 @@ func TestServerListReturnsTheEligibleServers(t *testing.T) {
 
 	env := newEnv(t, registry{"official": official, "the-cat": cat}, func(c *gateway.Config) {
 		c.Servers = []gateway.ServerInfo{
-			{Key: "official", Type: "official", Enabled: true, Registered: true},
+			{Key: "official", Type: "official", Enabled: true,
+				LoginMethods: []string{"phone"}},
 			// A candidate that was never registered has no worker: it stays
 			// visible, but says plainly that its health is unknown.
 			{Key: "not-running", Type: "custom", Enabled: true},
@@ -72,11 +74,14 @@ func TestServerListReturnsTheEligibleServers(t *testing.T) {
 	}
 
 	off := body.Data.Servers[0]
-	if !off.Enabled || off.Type != "official" || !off.HealthCheckable || off.State != "connected" {
+	if !off.Enabled || off.Type != "official" || off.HealthCheckable || off.State != "unknown" {
 		t.Fatalf("official = %+v", off)
 	}
-	if off.Authorized == nil || !*off.Authorized {
-		t.Fatalf("official authorized = %v", off.Authorized)
+	if off.Authorized != nil {
+		t.Fatalf("a backend row must not expose a personal account's authorization: %+v", off)
+	}
+	if strings.Join(off.LoginMethods, ",") != "phone" {
+		t.Fatalf("official login methods = %v, want phone only", off.LoginMethods)
 	}
 
 	unknown := body.Data.Servers[1]
@@ -84,10 +89,10 @@ func TestServerListReturnsTheEligibleServers(t *testing.T) {
 		t.Fatalf("a server with no worker must not claim health: %+v", unknown)
 	}
 
-	// The listing asks each eligible worker and no other: it never touches a
-	// disabled client's process.
-	// Health and identity per server, and nothing for a disabled client.
-	if official.callCount() != 2 || cat.callCount() != 0 {
+	// This environment's registry is account-keyed. The global server list must
+	// not look up a server key and accidentally report one owner's account as
+	// the backend's identity.
+	if official.callCount() != 0 || cat.callCount() != 0 {
 		t.Fatalf("calls: official=%d the-cat=%d", official.callCount(), cat.callCount())
 	}
 }
@@ -137,6 +142,7 @@ func TestServerListNeverExposesConfiguration(t *testing.T) {
 		"key": true, "type": true, "enabled": true, "health_checkable": true,
 		"state": true, "authorized": true,
 		"transport": true, "last_success_at": true, "last_error": true, "user": true,
+		"login_methods": true,
 	}
 	for name := range row {
 		if !want[name] {
@@ -221,6 +227,12 @@ func TestServerListReportsAnUnreachableWorker(t *testing.T) {
 	env := newEnv(t, registry{"official": worker}, func(c *gateway.Config) {
 		c.Servers = []gateway.ServerInfo{{Key: "official", Type: "official", Enabled: true, Registered: true}}
 	})
+	// This test covers the legacy configured-worker listing, not the account
+	// registry created by newEnvOn.
+	cfg := env.started
+	cfg.Workers = registry{"official": worker}
+	env.started = cfg
+	env.handler = gateway.New(cfg)
 
 	resp := env.get(t, "/api/v1/telegram")
 	if resp.StatusCode != http.StatusOK {

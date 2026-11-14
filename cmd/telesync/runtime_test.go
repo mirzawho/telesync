@@ -3,19 +3,334 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"log"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountauth"
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/appconfig"
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/automation/publishing"
 	"github.com/mirza/telesync/internal/automation/queue"
 	"github.com/mirza/telesync/internal/channelstore"
+	"github.com/mirza/telesync/internal/cli"
+	"github.com/mirza/telesync/internal/daemonlock"
 	"github.com/mirza/telesync/internal/rpc"
+	"github.com/mirza/telesync/internal/secrets"
 	"github.com/mirza/telesync/internal/sending"
+	"github.com/mirza/telesync/internal/sessionstore"
 	"github.com/mirza/telesync/internal/staging"
 )
+
+type notifyWriter struct {
+	mu      sync.Mutex
+	once    sync.Once
+	needle  string
+	reached chan struct{}
+}
+
+func (w *notifyWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	matched := strings.Contains(string(p), w.needle)
+	w.mu.Unlock()
+	if matched {
+		w.once.Do(func() { close(w.reached) })
+	}
+	return len(p), nil
+}
+
+func TestDaemonExclusivelyOwnsItsPersistenceDirectory(t *testing.T) {
+	dir := t.TempDir()
+	cfg := appconfig.Config{
+		API: appconfig.APIConfig{
+			ListenAddr:     "127.0.0.1:0",
+			RequestTimeout: time.Second,
+			DocsDir:        appconfig.EmbeddedDocs,
+		},
+		Runtime: appconfig.RuntimeConfig{
+			RunDir:     filepath.Join(dir, "run"),
+			SessionDir: filepath.Join(dir, "sessions"),
+			DataDir:    filepath.Join(dir, "db"),
+			CacheDir:   filepath.Join(dir, "cache"),
+			PeerDir:    filepath.Join(dir, "peers"),
+		},
+		Accounts: appconfig.AccountsConfig{
+			SessionKey: []byte("0123456789abcdef0123456789abcdef"),
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := &notifyWriter{needle: "daemon: listening on", reached: make(chan struct{})}
+	logger := log.New(ready, "", 0)
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- runDaemon(ctx, cli.RuntimeRequest{Config: cfg}, logger)
+	}()
+	select {
+	case <-ready.reached:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("first daemon did not reach its listening state")
+	}
+
+	blockedCtx, cancelBlocked := context.WithCancel(context.Background())
+	cancelBlocked()
+	err := runDaemon(blockedCtx, cli.RuntimeRequest{Config: cfg}, log.New(io.Discard, "", 0))
+	if !errors.Is(err, daemonlock.ErrAlreadyHeld) {
+		t.Fatalf("second daemon error = %v, want %v", err, daemonlock.ErrAlreadyHeld)
+	}
+
+	cancel()
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first daemon: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first daemon did not stop")
+	}
+
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
+	secondReady := &notifyWriter{needle: "daemon: listening on", reached: make(chan struct{})}
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- runDaemon(secondCtx, cli.RuntimeRequest{Config: cfg}, log.New(secondReady, "", 0))
+	}()
+	select {
+	case <-secondReady.reached:
+	case <-time.After(5 * time.Second):
+		cancelSecond()
+		t.Fatal("daemon could not reacquire the persistence directory after shutdown")
+	}
+	cancelSecond()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("restarted daemon: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("restarted daemon did not stop")
+	}
+}
+
+func TestDaemonRefusesToStartWithoutTheAccountSessionEncryptionKey(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runDaemon(ctx, cli.RuntimeRequest{Config: appconfig.Config{
+		API: appconfig.APIConfig{
+			ListenAddr:     "127.0.0.1:0",
+			RequestTimeout: time.Second,
+			DocsDir:        appconfig.EmbeddedDocs,
+		},
+		Runtime: appconfig.RuntimeConfig{
+			RunDir:  filepath.Join(dir, "run"),
+			DataDir: filepath.Join(dir, "db"),
+		},
+	}}, log.New(io.Discard, "", 0))
+	if !errors.Is(err, secrets.ErrKeyNotSet) {
+		t.Fatalf("runDaemon without a session key = %v, want %v", err, secrets.ErrKeyNotSet)
+	}
+}
+
+func TestAccountAuthorizationPersistsTheSealedSessionBeforeRunnerEligibility(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := channelstore.Open(filepath.Join(dir, "channels.db"), channelstore.Options{})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	owner, err := store.CreateUser(ctx, "Owner", "owner", "not-a-password-hash", true)
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	accountID, err := accountid.New()
+	if err != nil {
+		t.Fatalf("account id: %v", err)
+	}
+	if err := store.CreatePending(ctx, owner.ID, accountID, "official", channelstore.NetworkTelegram); err != nil {
+		t.Fatalf("create pending account: %v", err)
+	}
+	encrypter, err := secrets.NewEncrypter([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatalf("create session encrypter: %v", err)
+	}
+	sessionDir := filepath.Join(dir, "sessions")
+	box, err := sessionstore.NewAccountBox(sessionstore.AccountBoxConfig{
+		Dir: sessionDir, AccountID: accountID, Encrypter: encrypter, KeyVersion: 1,
+		NetworkKey: "official", NetworkType: sessionstore.NetworkTelegram,
+	})
+	if err != nil {
+		t.Fatalf("create account box: %v", err)
+	}
+	const session = "authorized-mtproto-session"
+	if err := box.StoreSession(ctx, []byte(session)); err != nil {
+		t.Fatalf("persist session box: %v", err)
+	}
+
+	handoff := newAccountSessionHandoff(store, sessionDir, encrypter, 1)
+	if err := handoff.CompletePending(ctx, owner.ID, accountID, accountauth.AuthorizedUser{
+		RemoteUserID: 1234,
+	}); err != nil {
+		t.Fatalf("complete pending account: %v", err)
+	}
+	record, err := store.ByID(ctx, owner.ID, accountID)
+	if err != nil {
+		t.Fatalf("read authorized account: %v", err)
+	}
+	if record.Status != channelstore.AccountStatusConnected {
+		t.Fatalf("status = %q, want connected", record.Status)
+	}
+	if record.Session.Version != secrets.Version1 || record.SessionEncKeyVersion != 1 {
+		t.Fatalf("persisted DB session metadata = version %d/key %d",
+			record.Session.Version, record.SessionEncKeyVersion)
+	}
+	opened, err := encrypter.OpenWithAAD(record.Session, sessionstore.AccountAAD(accountID, 1))
+	if err != nil {
+		t.Fatalf("open DB session box: %v", err)
+	}
+	if opened != session {
+		t.Fatalf("DB session = %q, want the AccountBox session", opened)
+	}
+	runners, err := store.ListRunnerAccounts(ctx)
+	if err != nil {
+		t.Fatalf("list runner accounts: %v", err)
+	}
+	if len(runners) != 1 || runners[0].ID != accountID {
+		t.Fatalf("eligible runners = %+v, want only %s", runners, accountID)
+	}
+}
+
+func TestAccountWorkerMaterialLoadsOnlyTheNamedPersistedAccount(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	store, err := channelstore.Open(filepath.Join(dataDir, "channels.db"), channelstore.Options{})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	owner, err := store.CreateUser(ctx, "Account Owner", "account-owner", "not-a-password-hash", true)
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	accountID, err := accountid.New()
+	if err != nil {
+		t.Fatalf("account id: %v", err)
+	}
+	key := []byte("0123456789abcdef0123456789abcdef")
+	encrypter, err := secrets.NewEncrypter(key)
+	if err != nil {
+		t.Fatalf("create session encrypter: %v", err)
+	}
+	const session = "only-this-account-session"
+	sealed, err := encrypter.SealWithAAD(session, sessionstore.AccountAAD(accountID, 1))
+	if err != nil {
+		t.Fatalf("seal account session: %v", err)
+	}
+	if _, err := store.Create(ctx, channelstore.Account{
+		ID: accountID, OwnerUserID: owner.ID, ServerKey: "official",
+		NetworkType: channelstore.NetworkTelegram, RemoteUserID: 777,
+		Status:  channelstore.AccountStatusConnected,
+		Session: sealed, SessionEncKeyVersion: 1,
+	}); err != nil {
+		t.Fatalf("create persisted account: %v", err)
+	}
+
+	// AccountPaths enforces the platform Unix-socket limit. Keep this synthetic
+	// run path short; no socket is created by the material loader test.
+	runDir := filepath.Join(string(filepath.Separator), "r")
+	sessionDir := filepath.Join(dir, "sessions")
+	peerDir := filepath.Join(dir, "peers")
+	legacySession := filepath.Join(sessionDir, "official.json")
+	legacySocket := filepath.Join(runDir, "official.sock")
+	cfg := appconfig.Config{
+		Accounts: appconfig.AccountsConfig{SessionKey: key},
+		Runtime: appconfig.RuntimeConfig{
+			DataDir: dataDir, RunDir: runDir, SessionDir: sessionDir, PeerDir: peerDir,
+		},
+		Clients: []appconfig.Client{{
+			Key: "official", Type: appconfig.Official, Enabled: true, AppID: 123,
+			APIHash: "configured-server-hash", SessionPath: legacySession,
+			RPCSocketPath: legacySocket, PeerCachePath: filepath.Join(peerDir, "official.json"),
+		}},
+	}
+
+	material, err := loadAccountWorker(ctx, cfg, accountID)
+	if err != nil {
+		t.Fatalf("load account worker material: %v", err)
+	}
+	if material.Identity.ID != accountID || material.Identity.OwnerUserID != owner.ID ||
+		material.Identity.RemoteUserID != 777 || material.Identity.ServerKey != "official" {
+		t.Fatalf("worker identity = %+v, want the persisted account identity", material.Identity)
+	}
+	if material.Client.Key != "official" || material.Client.SessionPath == legacySession ||
+		material.Client.RPCSocketPath == legacySocket {
+		t.Fatalf("account worker reused a server-key path: %+v", material.Client)
+	}
+	if filepath.Base(material.Client.SessionPath) != accountID+".box" ||
+		filepath.Base(material.Client.RPCSocketPath) != accountID+".sock" ||
+		filepath.Base(material.Client.PeerCachePath) != accountID+".json" {
+		t.Fatalf("account worker paths are not account-keyed: %+v", material.Client)
+	}
+	loaded, err := material.Spec.Session.LoadSession(ctx)
+	if err != nil {
+		t.Fatalf("load sealed account session: %v", err)
+	}
+	if string(loaded) != session {
+		t.Fatalf("loaded session = %q, want the session belonging to %s", loaded, accountID)
+	}
+
+	const refreshedSession = "newer-session-flushed-by-the-worker"
+	currentBox, err := sessionstore.NewAccountBox(sessionstore.AccountBoxConfig{
+		Dir: sessionDir, AccountID: accountID, Encrypter: encrypter, KeyVersion: 1,
+		NetworkKey: "official", NetworkType: sessionstore.NetworkTelegram,
+	})
+	if err != nil {
+		t.Fatalf("open current account session: %v", err)
+	}
+	if err := currentBox.StoreSession(ctx, []byte(refreshedSession)); err != nil {
+		t.Fatalf("flush current account session: %v", err)
+	}
+	material, err = loadAccountWorker(ctx, cfg, accountID)
+	if err != nil {
+		t.Fatalf("reload worker with its existing session: %v", err)
+	}
+	loaded, err = material.Spec.Session.LoadSession(ctx)
+	if err != nil {
+		t.Fatalf("load existing account session: %v", err)
+	}
+	if string(loaded) != refreshedSession {
+		t.Fatalf("worker startup replaced the newer account session with %q", loaded)
+	}
+	record, err := store.ByID(ctx, owner.ID, accountID)
+	if err != nil {
+		t.Fatalf("read refreshed account session: %v", err)
+	}
+	persisted, err := encrypter.OpenWithAAD(record.Session, sessionstore.AccountAAD(accountID, 1))
+	if err != nil {
+		t.Fatalf("open refreshed DB session: %v", err)
+	}
+	if persisted != refreshedSession {
+		t.Fatalf("DB session = %q, want the latest worker session", persisted)
+	}
+
+	unknownID, err := accountid.New()
+	if err != nil {
+		t.Fatalf("unknown account id: %v", err)
+	}
+	if _, err := loadAccountWorker(ctx, cfg, unknownID); err == nil {
+		t.Fatal("an unknown account id must not fall back to another persisted session")
+	}
+}
 
 // A background publication is recorded against the account it runs under: the
 // idempotency record names one, and the account's permissions are read again at
@@ -127,7 +442,24 @@ func TestTheDaemonWiresDirectSendingEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuthorizerFor: %v", err)
 	}
-	actor := publishing.Actor{UserID: user.ID, Auth: authr}
+
+	// A send is background work, and background work is refused unless it names
+	// the account it runs under. The account is created here rather than
+	// invented as a string so the binding the queue enforces is the real one.
+	accountID, err := accountid.New()
+	if err != nil {
+		t.Fatalf("accountid.New: %v", err)
+	}
+	if _, err := store.Create(ctx, channelstore.Account{
+		ID:          accountID,
+		OwnerUserID: user.ID,
+		ServerKey:   "cat",
+		NetworkType: channelstore.NetworkCustom,
+		Status:      channelstore.AccountStatusConnected,
+	}); err != nil {
+		t.Fatalf("Create account: %v", err)
+	}
+	actor := publishing.Actor{UserID: user.ID, AccountID: accountID, Auth: authr}
 
 	accepted, err := send.Accept(ctx, actor, sending.AcceptInput{
 		ClientKey:            "cat",
@@ -146,7 +478,14 @@ func TestTheDaemonWiresDirectSendingEndToEnd(t *testing.T) {
 	}
 
 	// The job the queue would hand a worker is what performs it.
-	if err := send.Execute(ctx, automation.Job{EventID: accepted.Operation.PublicID, Attempt: 1}); err != nil {
+	if err := send.Execute(ctx, automation.Job{
+		EventID: accepted.Operation.PublicID,
+		Attempt: 1,
+		Owner: automation.Owner{
+			OwnerUserID: user.ID,
+			AccountID:   accountID,
+		},
+	}); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if len(worker.sends) != 1 {

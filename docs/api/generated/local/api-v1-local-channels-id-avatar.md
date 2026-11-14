@@ -67,7 +67,3 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 ```
 
 </details>
-
-### Responses captured from the documentation examples
-
-- `GET /api/v1/local/channels/1/avatar` as operator → `200`

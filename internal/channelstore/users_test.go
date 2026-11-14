@@ -151,6 +151,14 @@ func TestUpdateUserMissesCleanly(t *testing.T) {
 func TestListUsersPaginatesSearchesAndFiltersByID(t *testing.T) {
 	ctx := context.Background()
 	store := open(t)
+	// The shared fixture owns an account of its own, so it carries a user too.
+	// The arithmetic under test is paging over whatever exists, not a hardcoded
+	// count that a fixture change would silently invalidate.
+	_, before, err := store.ListUsers(ctx, channelstore.UserFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for _, name := range []string{"alice", "bob", "carol"} {
 		u, err := store.CreateUser(ctx, "Full "+name, name, "h", true)
 		if err != nil {
@@ -158,13 +166,14 @@ func TestListUsersPaginatesSearchesAndFiltersByID(t *testing.T) {
 		}
 		_ = u
 	}
+	want := before + 3
 
 	page, total, err := store.ListUsers(ctx, channelstore.UserFilter{Page: 1, PerPage: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total != 3 || len(page) != 2 {
-		t.Fatalf("page=%d total=%d", len(page), total)
+	if total != want || len(page) != 2 {
+		t.Fatalf("page=%d total=%d, want 2 on a page and %d in total", len(page), total, want)
 	}
 
 	found, total, err := store.ListUsers(ctx, channelstore.UserFilter{Query: "CAR"})

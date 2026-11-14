@@ -17,7 +17,11 @@ import {
   type NamedOption,
   type TakenWorkflow,
 } from "@/components/automation/workflow-form"
-import type { SourceChannel } from "@/components/automation/source-selection"
+import {
+  listOwnedSourceChannels,
+  type SourceChannel,
+} from "@/components/automation/source-selection"
+import { listMyAccounts } from "@/lib/account-api"
 import {
   emptySiteTerms,
   type SiteTerms,
@@ -49,7 +53,7 @@ import { apiRequest, errorMessage } from "@/lib/api"
 import { PageError, pageMeta, section } from "@/lib/page"
 import { PageHeader } from "@/components/page-header"
 import { getToken, requireSession } from "@/lib/session"
-import type { TelegramServer, WordPressSite } from "@/lib/types"
+import type { TelegramAccount, TelegramServer, WordPressSite } from "@/lib/types"
 
 import type { Route } from "./+types/automation-workflow-form"
 
@@ -76,6 +80,9 @@ type LoaderData =
       creating: boolean
       workflow: WorkflowItem | null
       sourceChannels: SourceChannel[]
+      // accounts is the reader's own. The workflow binds to one of them, and
+      // the source list above is scoped to exactly this set.
+      accounts: TelegramAccount[]
       taken: Record<number, TakenWorkflow>
       servers: TelegramServer[]
       sites: NamedOption[]
@@ -123,13 +130,12 @@ export async function clientLoader({
   if (!creating && id === null) return { status: "missing" }
 
   try {
+    // The reader's own accounts, fetched alongside the rest. A failure here is
+    // not a page failure: the form still opens and the account field says the
+    // listing is unavailable rather than pretending there are none.
+    const { accounts } = await listMyAccounts(token)
     const [channels, workflows, servers, sites] = await Promise.all([
-      apiRequest<{
-        channels?: { id: number; title: string; client_key?: string }[]
-      }>("GET", "/local/channels", {
-        token,
-        query: { page: 1, per_page: 100 },
-      }),
+      listOwnedSourceChannels(token, accounts),
       apiRequest<unknown>("GET", automationApi.workflows, {
         token,
         query: { page: 1, per_page: 100 },
@@ -178,12 +184,11 @@ export async function clientLoader({
       status: "ok",
       creating,
       workflow,
-      sourceChannels: (channels.data?.channels ?? []).map((channel) => ({
-        id: channel.id,
-        label: channel.title,
-        clientKey: channel.client_key ?? "",
-        detail: channel.client_key,
-      })),
+      // The workflow's source comes from the reader's own inventory and nothing
+      // wider: only rows reached through one of their accounts are offered, so
+      // a channel belonging to somebody else is never on the list to be picked.
+      sourceChannels: channels,
+      accounts,
       taken,
       servers: servers.data?.servers ?? [],
       sites: (sites.data?.sites ?? []).map((site) => ({
@@ -268,6 +273,9 @@ export async function clientAction({
       Number.isInteger(managedChannelID) && managedChannelID > 0
         ? managedChannelID
         : null,
+    // The account the workflow runs as. It is chosen explicitly and is never
+    // inferred from a destination or from a server filter.
+    accountID: String(form.get("account_id") ?? "").trim() || null,
     enabled: form.get("enabled") === "true",
     aiEnabled: form.get("ai_enabled") === "true",
     aiPrompt: String(form.get("ai_prompt") ?? ""),
@@ -405,9 +413,8 @@ function termsOf(data: unknown): NamedOption[] {
   })
 }
 
-// eligibleChannels reads the channels one Telegram connection may publish to.
-// The connection decides alone: a peer id read against one account says nothing
-// about another, so this is asked per key and the answer is never shared.
+// eligibleChannels reads channels through exactly one selected Telegram account.
+// A server key identifies a backend, not a session, so it never selects a worker.
 //
 // The backend already narrows the list to channels the account may post in
 // (`capability=send`). The permission flag on each row is still read rather than
@@ -415,7 +422,7 @@ function termsOf(data: unknown): NamedOption[] {
 // post in it.
 export async function eligibleChannels(
   token: string | null,
-  clientKey: string,
+  accountID: string,
   signal?: AbortSignal
 ): Promise<NamedOption[]> {
   const res = await apiRequest<{
@@ -425,7 +432,7 @@ export async function eligibleChannels(
       username?: string
       permissions?: { new?: boolean }
     }[]
-  }>("GET", `/telegram/${encodeURIComponent(clientKey)}/channels`, {
+  }>("GET", `/telegram/accounts/${encodeURIComponent(accountID)}/channels`, {
     token,
     query: { page: 1, per_page: 100, capability: "send" },
     signal,
@@ -478,6 +485,7 @@ function readDestinations(raw: FormDataEntryValue | null): DestinationDraft[] {
         row.type === "wordpress"
           ? ("wordpress" as const)
           : ("telegram" as const),
+      accountID: typeof row.accountID === "string" ? row.accountID : "",
       clientKey: typeof row.clientKey === "string" ? row.clientKey : "",
       channelID: toPeer(row.channelID),
       siteID: toSite(row.siteID),
@@ -535,59 +543,56 @@ export default function AutomationWorkflowForm({
     setDraft(next)
   }, [recordKey, record, seedKey, seedOf])
 
-  // One conversation per Telegram connection and per WordPress site: the
-  // channels of a connection and the terms of a site belong to it alone.
-  const connectionKeys = React.useMemo(() => {
-    const keys = new Set<string>()
+  // One conversation per selected account and per WordPress site. A server key
+  // is not an account and may have several independently authenticated sessions.
+  const destinationAccountIDs = React.useMemo(() => {
+    const ids = new Set<string>()
     for (const destination of draft.destinations) {
       if (
         destination.type === "telegram" &&
-        destination.clientKey.trim() !== ""
+        destination.accountID.trim() !== ""
       ) {
-        keys.add(destination.clientKey.trim())
+        ids.add(destination.accountID.trim())
       }
     }
-    return [...keys].sort()
+    return [...ids].sort()
   }, [draft.destinations])
-  // The set of keys, as one value: the effect below runs when the set changes,
+  // The set of account ids, as one value: the effect runs when the set changes,
   // not on every edit that leaves it the same.
-  const connections = connectionKeys.join(" ")
-  const [channelsByKey, setChannelsByKey] = React.useState<
+  const accountIDs = destinationAccountIDs.join(" ")
+  const [channelsByAccount, setChannelsByAccount] = React.useState<
     Map<string, ChannelOptions>
   >(new Map())
-  const requestedConnections = React.useRef<Set<string>>(new Set())
+  const requestedAccounts = React.useRef<Set<string>>(new Set())
 
   React.useEffect(() => {
-    const missing = connectionKeys.filter(
-      (clientKey) => !requestedConnections.current.has(clientKey)
+    const missing = destinationAccountIDs.filter(
+      (accountID) => !requestedAccounts.current.has(accountID)
     )
     if (missing.length === 0) return
-    for (const clientKey of missing) {
-      requestedConnections.current.add(clientKey)
-      setChannelsByKey((previous) => {
+    for (const accountID of missing) {
+      requestedAccounts.current.add(accountID)
+      setChannelsByAccount((previous) => {
         const next = new Map(previous)
-        if (!next.has(clientKey)) {
-          next.set(clientKey, { items: [], loading: true, error: null })
+        if (!next.has(accountID)) {
+          next.set(accountID, { items: [], loading: true, error: null })
         }
         return next
       })
       void (async () => {
         try {
-          const items = await eligibleChannels(getToken(), clientKey)
-          setChannelsByKey((previous) => {
+          const items = await eligibleChannels(getToken(), accountID)
+          setChannelsByAccount((previous) => {
             const next = new Map(previous)
-            next.set(clientKey, { items, loading: false, error: null })
+            next.set(accountID, { items, loading: false, error: null })
             return next
           })
-          // A channel this connection does not offer is not a destination of
-          // it. What stays selected is what is still valid; what does not is
-          // dropped here rather than posted as a peer id the account cannot
-          // publish to.
+          // Only this account's eligible channels remain selectable.
           setDraft((previous) => ({
             ...previous,
             destinations: trimChannels(
               previous.destinations,
-              clientKey,
+              accountID,
               items.map((channel) => channel.id)
             ),
           }))
@@ -595,15 +600,15 @@ export default function AutomationWorkflowForm({
           const message = errorMessage(error, "")
           // A call this page never asked about is not an error to report.
           if (message === "") return
-          setChannelsByKey((previous) => {
+          setChannelsByAccount((previous) => {
             const next = new Map(previous)
-            next.set(clientKey, { items: [], loading: false, error: message })
+            next.set(accountID, { items: [], loading: false, error: message })
             return next
           })
         }
       })()
     }
-  }, [connections])
+  }, [accountIDs])
 
   // A WordPress destination publishes only term ids its own site already has,
   // so each selected site's categories and tags are read through the backend's
@@ -827,11 +832,12 @@ export default function AutomationWorkflowForm({
           draft={draft}
           onDraftChange={setDraft}
           sourceChannels={loaderData.sourceChannels}
+          accounts={loaderData.accounts}
           taken={taken}
           conflict={conflict}
           servers={loaderData.servers}
           sites={loaderData.sites}
-          channelsByKey={channelsByKey}
+      channelsByAccount={channelsByAccount}
           siteTerms={siteTerms}
           error={actionData?.error}
           fieldErrors={actionData?.fieldErrors}
@@ -851,6 +857,9 @@ export default function AutomationWorkflowForm({
               {
                 intent: creating ? "create" : "update",
                 managed_channel_id: String(next.managedChannelID),
+                // The account the workflow runs as, written with every save so
+                // a workflow is never left bound to an identity nobody chose.
+                account_id: next.accountID ?? "",
                 enabled: String(next.enabled),
                 ai_enabled: String(next.aiEnabled),
                 ai_prompt: next.aiPrompt,

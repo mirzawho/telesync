@@ -42,6 +42,9 @@ export interface SourceAttachment {
 
 export interface PublishSource {
   localChannelId: number
+  // The personal account whose messages/media are being read. It never follows
+  // a change to the publication destination.
+  accountID?: string
   messageId: number
   messageIds?: number[]
   text: string
@@ -102,7 +105,9 @@ export interface LinkItem {
 
 export interface TelegramPublishDraft {
   platform: "telegram"
-  // clientKey is the Telegram connection's real key, never its display label.
+  // accountID is the authoritative Telegram identity. clientKey is retained as
+  // server metadata only; it is never used to select the account.
+  accountID: string | null
   clientKey: string | null
   // channelIds are Telegram channel ids on that connection, as decimal strings.
   channelIds: string[]
@@ -162,6 +167,7 @@ export interface PublishDraftState {
 export function emptyTelegramDraft(): TelegramPublishDraft {
   return {
     platform: "telegram",
+    accountID: null,
     clientKey: null,
     channelIds: [],
     text: "",
@@ -342,7 +348,22 @@ export function setPlatform(state: PublishDraftState, platform: PublishPlatform)
  * over would address a different channel entirely.
  */
 export function setClientKey(state: PublishDraftState, clientKey: string | null): PublishDraftState {
-  state.telegram = { ...state.telegram, clientKey, channelIds: [] }
+  state.telegram = { ...state.telegram, clientKey, accountID: null, channelIds: [] }
+  touch(state, "destination")
+  return state
+}
+
+export function setAccountID(
+  state: PublishDraftState,
+  accountID: string | null,
+  serverKey?: string | null,
+): PublishDraftState {
+  state.telegram = {
+    ...state.telegram,
+    accountID,
+    clientKey: serverKey ?? null,
+    channelIds: [],
+  }
   touch(state, "destination")
   return state
 }
@@ -712,8 +733,8 @@ export function validate(state: PublishDraftState, options: ValidateOptions = {}
 
   if (state.platform === "telegram") {
     const draft = state.telegram
-    if (!draft.clientKey) {
-      all.destination = "سرور تلگرام را انتخاب کنید."
+    if (!draft.accountID) {
+      all.destination = "حساب تلگرام را انتخاب کنید."
     } else if (draft.channelIds.length === 0) {
       all.destination = "دست‌کم یک کانال مقصد را انتخاب کنید."
     }

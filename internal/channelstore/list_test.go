@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/channelstore"
 )
 
@@ -50,6 +51,114 @@ func TestListChannelsPaginatesWithATotal(t *testing.T) {
 	}
 	if len(page) != 2 {
 		t.Fatalf("page = %d rows, want 2", len(page))
+	}
+}
+
+func TestListChannelsForOwnerUnionsAccountsAndKeepsDuplicateRegistrationsDistinct(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	owner := mustUser(t, store, "channel-owner", true)
+	other := mustUser(t, store, "channel-other", true)
+	newID := func() string {
+		t.Helper()
+		id, err := accountid.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	a := mustAccount(t, store, channelstore.Account{
+		ID: newID(), OwnerUserID: owner.ID, ServerKey: "official",
+		NetworkType: channelstore.NetworkTelegram, RemoteUserID: 101, Status: channelstore.AccountStatusConnected,
+	})
+	b := mustAccount(t, store, channelstore.Account{
+		ID: newID(), OwnerUserID: owner.ID, ServerKey: "official",
+		NetworkType: channelstore.NetworkTelegram, RemoteUserID: 102, Status: channelstore.AccountStatusDisconnected,
+	})
+	foreign := mustAccount(t, store, channelstore.Account{
+		ID: newID(), OwnerUserID: other.ID, ServerKey: "official",
+		NetworkType: channelstore.NetworkTelegram, RemoteUserID: 103, Status: channelstore.AccountStatusConnected,
+	})
+
+	register := func(accountID string, telegramID int64, title string) channelstore.Channel {
+		t.Helper()
+		ch, err := store.RegisterForAccount(ctx, channelstore.Channel{
+			AccountID: accountID, ClientKey: "official", ChannelID: telegramID,
+			PeerType: channelstore.PeerChannel, Title: title,
+			MembershipStatus: channelstore.StatusMember,
+		})
+		if err != nil {
+			t.Fatalf("RegisterForAccount: %v", err)
+		}
+		return ch
+	}
+	first := register(a.ID, 700, "Shared under A")
+	second := register(b.ID, 700, "Shared under B")
+	register(foreign.ID, 800, "Not this owner")
+
+	got, total, err := store.ListChannelsForOwner(ctx, owner.ID, nil, channelstore.ChannelListQuery{})
+	if err != nil {
+		t.Fatalf("ListChannelsForOwner: %v", err)
+	}
+	if total != 2 || len(got) != 2 {
+		t.Fatalf("owner union = %d/%d, want 2/2", total, len(got))
+	}
+	seen := map[int64]bool{}
+	for _, ch := range got {
+		seen[ch.ID] = true
+		if ch.ChannelID != 700 {
+			t.Errorf("unexpected remote channel %d", ch.ChannelID)
+		}
+	}
+	if !seen[first.ID] || !seen[second.ID] {
+		t.Fatalf("duplicate registrations were collapsed: got local ids %v", channelIDs(got))
+	}
+
+	filtered, filteredTotal, err := store.ListChannelsForOwner(ctx, owner.ID, []string{b.ID}, channelstore.ChannelListQuery{})
+	if err != nil {
+		t.Fatalf("ListChannelsForOwner account filter: %v", err)
+	}
+	if filteredTotal != 1 || len(filtered) != 1 || filtered[0].ID != second.ID {
+		t.Fatalf("account filter = %v/%d, want only local row %d", channelIDs(filtered), filteredTotal, second.ID)
+	}
+	foreignFilter, foreignTotal, err := store.ListChannelsForOwner(ctx, owner.ID, []string{foreign.ID}, channelstore.ChannelListQuery{})
+	if err != nil {
+		t.Fatalf("ListChannelsForOwner foreign filter: %v", err)
+	}
+	if foreignTotal != 0 || len(foreignFilter) != 0 {
+		t.Fatalf("foreign account filter exposed rows: %v/%d", channelIDs(foreignFilter), foreignTotal)
+	}
+}
+
+func TestGetByIDForOwnerDoesNotResolveAnotherOwnersRow(t *testing.T) {
+	ctx := context.Background()
+	store := openStore(t)
+	owner := mustUser(t, store, "channel-row-owner", true)
+	other := mustUser(t, store, "channel-row-other", true)
+	id, err := accountid.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := mustAccount(t, store, channelstore.Account{
+		ID: id, OwnerUserID: owner.ID, ServerKey: "official",
+		NetworkType: channelstore.NetworkTelegram, RemoteUserID: 201, Status: channelstore.AccountStatusDisconnected,
+	})
+	row, err := store.RegisterForAccount(ctx, channelstore.Channel{
+		AccountID: account.ID, ClientKey: "official", ChannelID: 900,
+		PeerType: channelstore.PeerChannel, Title: "Cached while disconnected",
+		MembershipStatus: channelstore.StatusMember,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, found, err := store.GetByIDForOwner(ctx, owner.ID, row.ID)
+	if err != nil || !found || got.AccountID != account.ID {
+		t.Fatalf("owner read = (%+v, %v, %v)", got, found, err)
+	}
+	got, found, err = store.GetByIDForOwner(ctx, other.ID, row.ID)
+	if err != nil || found {
+		t.Fatalf("foreign owner read = (%+v, %v, %v), want not found", got, found, err)
 	}
 }
 
@@ -204,8 +313,21 @@ func TestListChannelsForUserIsScopedByTheAssignment(t *testing.T) {
 func TestListChannelsFiltersByAtLeastOneSelectedCategory(t *testing.T) {
 	ctx := context.Background()
 	store := openStore(t)
-	tech := upsert(t, store, "official", 1, "Tech Daily", "tech")
-	sports := upsert(t, store, "official", 2, "Sports Hour", "sports")
+	account := categoryTestAccount(t, store, "official", "acc_category_filter")
+	upsertAccountChannel := func(id int64, title, username string) channelstore.Channel {
+		t.Helper()
+		ch, err := store.UpsertFor(ctx, account.ID, channelstore.Channel{
+			ClientKey: "official", AccountID: account.ID, ChannelID: id,
+			PeerType: channelstore.PeerChannel, Title: title, Username: username,
+			MembershipStatus: channelstore.StatusMember,
+		})
+		if err != nil {
+			t.Fatalf("upsert account channel: %v", err)
+		}
+		return ch
+	}
+	tech := upsertAccountChannel(1, "Tech Daily", "tech")
+	sports := upsertAccountChannel(2, "Sports Hour", "sports")
 	plain := upsert(t, store, "official", 3, "Untagged", "plain")
 	newsCat, err := store.CreateCategory(ctx, "News", "")
 	if err != nil {
@@ -215,10 +337,10 @@ func TestListChannelsFiltersByAtLeastOneSelectedCategory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCategory: %v", err)
 	}
-	if err := store.ReplaceCategories(ctx, tech.ClientKey, tech.ChannelID, []int64{newsCat.ID}); err != nil {
+	if err := store.ReplaceCategories(ctx, tech.AccountID, tech.ChannelID, []int64{newsCat.ID}); err != nil {
 		t.Fatalf("ReplaceCategories: %v", err)
 	}
-	if err := store.ReplaceCategories(ctx, sports.ClientKey, sports.ChannelID, []int64{sportsCat.ID}); err != nil {
+	if err := store.ReplaceCategories(ctx, sports.AccountID, sports.ChannelID, []int64{sportsCat.ID}); err != nil {
 		t.Fatalf("ReplaceCategories: %v", err)
 	}
 

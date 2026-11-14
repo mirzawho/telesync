@@ -135,6 +135,7 @@ export function ChannelMessagesPane({
   channel,
   channelId,
   client,
+  accountId,
   onBack,
 }: {
   channel: ChannelDetail
@@ -144,13 +145,19 @@ export function ChannelMessagesPane({
   // client is the record's Telegram client key: a custom-emoji reaction is
   // fetched through it, the same client the messages were read from.
   client: string
+  // accountId is the record's owning account — the authoritative identity these
+  // messages are reached through. It comes from the channel record and never
+  // from a filter on screen. Two of one user's accounts may hold the same
+  // remote channel on the same server, so the account is what keeps their two
+  // timelines apart.
+  accountId?: string
   onBack?: () => void
 }) {
   const capabilities = channelMessageCapabilities(channel.permissions)
   const canRead = capabilities.read
   const remoteIDValid = /^[1-9]\d*$/.test(channel.id)
-  const identityValid = Boolean(client.trim()) && remoteIDValid
-  const identity = `${client}\u001f${channel.id}`
+  const identityValid = Boolean(accountId?.trim()) && Boolean(client.trim()) && remoteIDValid
+  const identity = `${accountId || ""}\u001f${channel.id}`
   const { state, requestOlder, requestNewer, retry, refreshLoaded, replaceMessage, removeMessage } =
     useMessageTimeline(canRead ? channelId : null, identity)
   const scroller = React.useRef<HTMLDivElement>(null)
@@ -461,7 +468,7 @@ export function ChannelMessagesPane({
     controllers.current.add(submitController)
     try {
       const accepted: SendAccepted = await sendChannelMessage(
-        client,
+        accountId!,
         channel.id,
         payload,
         idempotencyKey,
@@ -470,7 +477,7 @@ export function ChannelMessagesPane({
       if (identityRef.current !== startedFor) return
       if (
         !accepted?.operation_id ||
-        accepted.destination?.client_key !== client ||
+        accepted.destination?.account_id !== accountId ||
         accepted.destination?.channel_id !== channel.id
       ) {
         throw new Error("پاسخ پذیرش، مقصد پیام را تأیید نکرد؛ نتیجه نامشخص است.")
@@ -490,7 +497,7 @@ export function ChannelMessagesPane({
       const controller = new AbortController()
       controllers.current.add(controller)
       void pollOperation<SendOperation>(
-        (signal) => getSendOperation(client, channel.id, accepted.operation_id, { token, signal }),
+        (signal) => getSendOperation(accountId!, channel.id, accepted.operation_id, { token, signal }),
         controller.signal,
         (status) => !["queued", "processing", "retrying"].includes(status),
         (operation) => {
@@ -620,7 +627,7 @@ export function ChannelMessagesPane({
     let acceptedByServer = false
     try {
       const accepted: EditAccepted = await editChannelMessage(
-        client,
+        accountId!,
         channel.id,
         target.id,
         payload,
@@ -631,7 +638,7 @@ export function ChannelMessagesPane({
       acceptedByServer = true
       if (
         !accepted?.operation_id ||
-        accepted.target?.client_key !== client ||
+        accepted.target?.account_id !== accountId ||
         accepted.target?.channel_id !== channel.id ||
         accepted.target?.message_id !== target.id
       ) {
@@ -646,7 +653,7 @@ export function ChannelMessagesPane({
       let operation: EditOperation | null
       try {
         operation = await pollOperation<EditOperation>(
-          (signal) => getEditOperation(client, channel.id, target.id, accepted.operation_id, { token, signal }),
+          (signal) => getEditOperation(accountId!, channel.id, target.id, accepted.operation_id, { token, signal }),
           controller.signal,
           (status) => !["queued", "processing", "retrying"].includes(status),
           (current) => {
@@ -723,7 +730,7 @@ export function ChannelMessagesPane({
     const controller = new AbortController()
     controllers.current.add(controller)
     try {
-      const result = await deleteChannelMessage(client, channel.id, message.id, { token: getToken(), signal: controller.signal })
+      const result = await deleteChannelMessage(accountId!, channel.id, message.id, { token: getToken(), signal: controller.signal })
       if (identityRef.current !== startedFor) return
       if (
         result?.deleted !== true ||
@@ -929,6 +936,7 @@ export function ChannelMessagesPane({
           open
           onOpenChange={(next) => !next && setPublishing(null)}
           localChannelId={channelId}
+          accountID={accountId!}
           message={publishing.message}
           albumMessages={publishing.albumMessages}
           onSuccess={() => setPublishing(null)}

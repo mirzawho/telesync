@@ -55,7 +55,7 @@ func (s *Service) PublishWordPress(ctx context.Context, a Actor, siteID int64, r
 	// A WordPress post is recorded against the message it was composed from:
 	// the site's answer is the same post whichever wording was submitted.
 	destinationID := fmt.Sprintf("wp:%d", siteID)
-	operation, err := s.beginPublish(ctx, a, req.IdempotencyKey, destinationID,
+	operation, err := s.beginPublish(ctx, a, req.IdempotencyKey, "", destinationID,
 		sourceRequestHash(req.Source.LocalChannelID, req.Source.MessageID))
 	if err != nil {
 		return WordPressResult{}, err

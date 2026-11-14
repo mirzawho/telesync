@@ -22,13 +22,14 @@ import (
 
 // fakeTelegram stands in for gotdclient.Manager.
 type fakeTelegram struct {
-	mu       sync.Mutex
-	status   tgapi.Status
-	dialogs  []tgapi.Channel
-	dialErr  error
-	hist     tgapi.HistoryPage
-	histErr  error
-	readCall int
+	mu          sync.Mutex
+	status      tgapi.Status
+	dialogs     []tgapi.Channel
+	dialogCalls int
+	dialErr     error
+	hist        tgapi.HistoryPage
+	histErr     error
+	readCall    int
 	// historyCalls records the (beforeID, limit) pairs requested.
 	historyCalls      [][2]int
 	mediaBytes        []byte
@@ -86,6 +87,7 @@ func (f *fakeTelegram) Status(context.Context) tgapi.Status {
 func (f *fakeTelegram) Dialogs(context.Context) ([]tgapi.Channel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.dialogCalls++
 	return f.dialogs, f.dialErr
 }
 

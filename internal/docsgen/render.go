@@ -89,11 +89,11 @@ type Group struct {
 // Groups are the document groups, in render order.
 var Groups = []Group{
 	{Slug: "identity", Title: "Identity and health",
-		Intro: "`/healthz`, `/docs` and the caller's own session. These answer before any Telegram client is involved."},
+		Intro: "`/healthz`, `/docs`, application sign-in and the signed-in user's personal Telegram account management."},
 	{Slug: "telegram", Title: "Telegram routes",
-		Intro: "`/api/v1/telegram/{key}/...`: one configured Telegram client, selected by the client key."},
+		Intro: "`/api/v1/telegram/{key}/...` selects a configured server definition; account-scoped routes name the signed-in user's own Telegram session by account ID."},
 	{Slug: "local", Title: "Local routes",
-		Intro: "`/api/v1/local/...`: this application's own data in SQLite, plus a local channel record that reaches its own Telegram client through that client's worker."},
+		Intro: "`/api/v1/local/...`: this application's own data in SQLite, plus local channel records registered under an account."},
 }
 
 // GroupOf reports the group a path belongs to.

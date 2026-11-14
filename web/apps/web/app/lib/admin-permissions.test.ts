@@ -6,6 +6,7 @@ import {
   catalogFromForm,
   draftEquals,
   draftFromForm,
+  holdsGlobal,
   normalizeDraft,
   permissionScopeOf,
   resourceGrants,
@@ -238,7 +239,30 @@ test("the report never calls a permission granted when it is not", () => {
   assert.equal(wordpress?.lines[0]?.state, "denied")
   assert.equal(wordpress?.lines[1]?.state, "denied")
   const general = report.groups.find((group) => group.key === "general")
-  assert.equal(general?.lines[0]?.state, "denied")
+  const publish = general?.lines.find((line) => line.key === "content.publish")
+  assert.equal(publish?.state, "denied")
+})
+
+test("the report says nothing about the retired shared Telegram access", () => {
+  // It is no longer assignable, so it is no longer described: a report that
+  // still listed it would be telling an administrator about a grant they can
+  // no longer make or see the point of.
+  const draft = normalizeDraft({
+    global: ["servers.view", "content.publish"],
+    channels: [],
+    categories: [],
+    wordpress: [],
+  })
+  const general = buildReport(draft, {}).groups.find(
+    (group) => group.key === "general"
+  )
+  assert.deepEqual(
+    general?.lines.map((line) => line.key),
+    ["content.publish"]
+  )
+  // The permission is still held and still travels in a save; only its place in
+  // this dialog is gone. Removing the editor must never revoke stored data.
+  assert.ok(holdsGlobal(draft, "servers.view"))
 })
 
 test("the report marks a draft that is not saved yet", () => {

@@ -218,6 +218,126 @@ func TestFAnUnsupportedKindIsRefusedNotDowngraded(t *testing.T) {
 	}
 }
 
+// A sticker is a document on the wire, but the sticker attribute is what makes
+// Telegram render it as a sticker. Sending the same bytes as a named generic
+// document is not a valid fallback.
+func TestStickerUsesNativeStickerAttribute(t *testing.T) {
+	input, err := sendMediaInput(uploadedFile(), &tgapi.SendMedia{
+		Kind: "sticker", MimeType: "image/webp", Name: "sticker.webp",
+	})
+	if err != nil {
+		t.Fatalf("sendMediaInput: %v", err)
+	}
+	doc, ok := input.(*tg.InputMediaUploadedDocument)
+	if !ok {
+		t.Fatalf("media = %T, want uploaded document with sticker semantics", input)
+	}
+	if doc.ForceFile {
+		t.Fatal("native sticker media must not be force_file")
+	}
+	for _, attr := range doc.Attributes {
+		if _, ok := attr.(*tg.DocumentAttributeSticker); ok {
+			return
+		}
+	}
+	t.Fatalf("outgoing attributes = %#v, want documentAttributeSticker", doc.Attributes)
+}
+
+func TestStickerFormatsRetainNativeFormatAttributes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mime      string
+		animated  bool
+		video     bool
+		wantExtra string
+	}{
+		{"static webp", "image/webp", false, false, "image_size"},
+		{"animated tgs", "application/x-tgsticker", true, false, "animated"},
+		{"video webm", "video/webm", false, true, "video"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input, err := sendMediaInput(uploadedFile(), &tgapi.SendMedia{
+				Kind: tgapi.SendMediaSticker, MimeType: tc.mime,
+				StickerAnimated: tc.animated, StickerVideo: tc.video,
+				Width: 512, Height: 512, Duration: 2,
+				StickerMask: true,
+				StickerMaskCoords: &tgapi.StickerMaskCoords{
+					N: 2, X: 0.5, Y: -1.25, Zoom: 1.4,
+				},
+			})
+			if err != nil {
+				t.Fatalf("sendMediaInput: %v", err)
+			}
+			doc, ok := input.(*tg.InputMediaUploadedDocument)
+			if !ok || doc.ForceFile || doc.MimeType != tc.mime {
+				t.Fatalf("uploaded media = %#v; want native non-force-file sticker in %q", input, tc.mime)
+			}
+			seenSticker, seenExtra := false, false
+			for _, attr := range doc.Attributes {
+				switch attr := attr.(type) {
+				case *tg.DocumentAttributeSticker:
+					seenSticker = true
+					if _, ok := attr.Stickerset.(*tg.InputStickerSetEmpty); !ok {
+						t.Fatalf("sticker set = %T, want InputStickerSetEmpty", attr.Stickerset)
+					}
+					if !attr.Mask {
+						t.Fatal("mask sticker metadata was lost")
+					}
+					coords, ok := attr.GetMaskCoords()
+					if !ok || coords.N != 2 || coords.X != 0.5 || coords.Y != -1.25 || coords.Zoom != 1.4 {
+						t.Fatalf("mask coordinates = %+v, present=%v", coords, ok)
+					}
+				case *tg.DocumentAttributeAnimated:
+					seenExtra = tc.wantExtra == "animated"
+				case *tg.DocumentAttributeVideo:
+					seenExtra = tc.wantExtra == "video" && attr.W == 512 && attr.H == 512
+				case *tg.DocumentAttributeImageSize:
+					seenExtra = tc.wantExtra == "image_size" && attr.W == 512 && attr.H == 512
+				case *tg.DocumentAttributeFilename:
+					t.Fatal("sticker upload must not be downgraded by a generic filename attribute")
+				}
+			}
+			if !seenSticker || !seenExtra {
+				t.Fatalf("attributes = %#v, want sticker and %s attributes", doc.Attributes, tc.wantExtra)
+			}
+		})
+	}
+}
+
+func TestUnsupportedStickerFormatIsRefused(t *testing.T) {
+	_, err := sendMediaInput(uploadedFile(), &tgapi.SendMedia{
+		Kind: tgapi.SendMediaSticker, MimeType: "image/png",
+	})
+	if !errors.Is(err, tgapi.ErrSendUnsupported) {
+		t.Fatalf("err = %v, want ErrSendUnsupported for an unhandled sticker format", err)
+	}
+}
+
+func TestStickerSuccessRequiresNativeStickerInReturnedMessage(t *testing.T) {
+	native := &tg.Message{Media: &tg.MessageMediaDocument{Document: &tg.Document{
+		MimeType: "image/webp",
+		Attributes: []tg.DocumentAttributeClass{
+			&tg.DocumentAttributeSticker{Alt: "🙂", Stickerset: &tg.InputStickerSetEmpty{}},
+		},
+	}}}
+	if err := verifyStickerResult(native); err != nil {
+		t.Fatalf("verify native sticker: %v", err)
+	}
+
+	generic := &tg.Message{Media: &tg.MessageMediaDocument{Document: &tg.Document{
+		MimeType: "image/webp",
+		Attributes: []tg.DocumentAttributeClass{
+			&tg.DocumentAttributeFilename{FileName: "sticker.webp"},
+		},
+	}}}
+	if err := verifyStickerResult(generic); !errors.Is(err, tgapi.ErrSendOutcomeUnknown) {
+		t.Fatalf("verify generic file: %v, want outcome unknown", err)
+	}
+	if err := verifyStickerResult(nil); !errors.Is(err, tgapi.ErrSendOutcomeUnknown) {
+		t.Fatalf("verify missing result: %v, want outcome unknown", err)
+	}
+}
+
 // Test G. The content type an attachment goes out under is the caller's when
 // it gave one. A fallback only fills a silence and never replaces a decision.
 func TestGTheDeclaredContentTypeIsUsedWhenThereIsOne(t *testing.T) {

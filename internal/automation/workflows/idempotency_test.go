@@ -35,6 +35,9 @@ func TestAlbumMembersShareWorkflowPublicationIdentity(t *testing.T) {
 		{"channel", func() automation.MessageEvent { e := first; e.TelegramChannelID++; return e }(), 17, publication},
 		{"workflow", first, 18, publication},
 		{"destination", first, 17, automation.WorkflowPublication{DestinationType: "telegram", ClientKey: "destination", ChannelID: -10078}},
+		{"destination account", first, 17, automation.WorkflowPublication{
+			DestinationType: "telegram", ClientKey: "destination", ChannelID: -10077, AccountID: "acc_other",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -40,8 +40,13 @@ const (
 
 // Channel is one locally managed channel.
 type Channel struct {
-	ID          int64
-	ClientKey   string
+	ID        int64
+	ClientKey string
+	// AccountID is the user-owned authenticated account this channel belongs
+	// to. It is populated by channel reads and writes when the schema has
+	// account ownership; quarantined legacy accounts remain identifiable but
+	// are excluded from owner-scoped reads.
+	AccountID   string
 	ChannelID   int64
 	PeerType    string
 	Title       string
@@ -84,6 +89,10 @@ type Store struct {
 	db   *sql.DB
 	path string
 	now  func() time.Time
+	// channelHasAccount says whether this database's managed_channels carries
+	// an account_id. It is probed at open rather than inferred from a version
+	// number, because what the table has is what the store has to read.
+	channelHasAccount bool
 }
 
 // Options configures Open.
@@ -135,6 +144,11 @@ func Open(path string, opts Options) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// What the table actually has decides which column list the store reads.
+	// It is probed after the migrations rather than inferred from a version
+	// number: a database written on an older schema has no account_id, and
+	// reading one would fail on every channel row.
+	s.channelHasAccount = s.probeChannelSchema()
 	return s, nil
 }
 
@@ -151,9 +165,9 @@ func (s *Store) Close() error {
 
 // Get returns one managed channel.
 func (s *Store) Get(ctx context.Context, clientKey string, channelID int64) (Channel, bool, error) {
-	row := s.db.QueryRowContext(ctx, selectColumns+` WHERE client_key = ? AND channel_id = ?`,
+	row := s.db.QueryRowContext(ctx, s.channelSelect()+` WHERE client_key = ? AND channel_id = ?`,
 		clientKey, channelID)
-	ch, err := scanChannel(row)
+	ch, err := s.scanChannel(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Channel{}, false, nil
 	}
@@ -161,6 +175,51 @@ func (s *Store) Get(ctx context.Context, clientKey string, channelID int64) (Cha
 		return Channel{}, false, fmt.Errorf("channelstore: read channel %d: %w", channelID, err)
 	}
 	return ch, true, nil
+}
+
+// ManagedChannelForAccount resolves one remote channel to the local row one
+// account subscribed to.
+//
+// The account is part of the key, and that is the whole point: two users who
+// independently subscribe to the same remote channel hold two distinct local
+// registrations, and each observation must resolve to the row belonging to the
+// account that saw it. Without the account in the predicate the lookup would
+// return whichever row was inserted first, and one user's messages would arrive
+// in another user's automation.
+//
+// ownerUserID is the Telesync user behind the account, so a job scheduled from
+// this registration is bound to an owner without a second lookup. It is zero
+// for a quarantined legacy account, which owns nothing: work with no owner is
+// refused at the queue door rather than run as somebody else.
+//
+// A channel whose account has been removed does not resolve at all. Its
+// registration is not "managed" any more, and an observation for it produces no
+// event.
+func (s *Store) ManagedChannelForAccount(ctx context.Context, accountID, clientKey string, channelID int64) (id int64, ownerUserID int64, ok bool, err error) {
+	if strings.TrimSpace(accountID) == "" {
+		return 0, 0, false, errors.New("channelstore: account_id is required to resolve a channel")
+	}
+	if strings.TrimSpace(clientKey) == "" {
+		return 0, 0, false, errors.New("channelstore: client_key is required")
+	}
+	if channelID == 0 {
+		return 0, 0, false, errors.New("channelstore: channel_id must be positive")
+	}
+
+	row := s.db.QueryRowContext(ctx, `
+SELECT m.id, COALESCE(a.owner_user_id, 0)
+FROM managed_channels AS m
+JOIN telegram_accounts AS a ON a.id = m.account_id
+WHERE m.account_id = ? AND m.client_key = ? AND m.channel_id = ? AND a.deleted_at IS NULL`,
+		accountID, clientKey, channelID)
+
+	switch err := row.Scan(&id, &ownerUserID); {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, 0, false, nil
+	case err != nil:
+		return 0, 0, false, fmt.Errorf("channelstore: resolve channel %d for account: %w", channelID, err)
+	}
+	return id, ownerUserID, true, nil
 }
 
 // LocalIDsByChannelID maps each of channelIDs to its local row id on clientKey.
@@ -227,14 +286,14 @@ func (s *Store) ListChannelsExcept(ctx context.Context, q ChannelListQuery, excl
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
-	rows, err := s.db.QueryContext(ctx, selectColumns+where+` ORDER BY channel_id DESC, id DESC`, args...)
+	rows, err := s.db.QueryContext(ctx, s.channelSelect()+where+` ORDER BY channel_id DESC, id DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("channelstore: list managed channels: %w", err)
 	}
 	defer rows.Close()
 	out := []Channel{}
 	for rows.Next() {
-		ch, err := scanChannel(rows)
+		ch, err := s.scanChannel(rows)
 		if err != nil {
 			return nil, fmt.Errorf("channelstore: list managed channels: %w", err)
 		}
@@ -307,7 +366,7 @@ func (s *Store) listChannelsWhere(ctx context.Context, q ChannelListQuery, condi
 	defer rows.Close()
 	out := []Channel{}
 	for rows.Next() {
-		ch, err := scanChannel(rows)
+		ch, err := s.scanChannel(rows)
 		if err != nil {
 			return nil, fmt.Errorf("channelstore: list managed channels: %w", err)
 		}
@@ -324,8 +383,8 @@ func (s *Store) listChannelsWhere(ctx context.Context, q ChannelListQuery, condi
 // The local id, not the Telegram channel id, is what a permission assignment
 // references.
 func (s *Store) GetByID(ctx context.Context, id int64) (Channel, bool, error) {
-	row := s.db.QueryRowContext(ctx, selectColumns+` WHERE id = ?`, id)
-	ch, err := scanChannel(row)
+	row := s.db.QueryRowContext(ctx, s.channelSelect()+` WHERE id = ?`, id)
+	ch, err := s.scanChannel(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Channel{}, false, nil
 	}
@@ -333,6 +392,94 @@ func (s *Store) GetByID(ctx context.Context, id int64) (Channel, bool, error) {
 		return Channel{}, false, fmt.Errorf("channelstore: read channel row %d: %w", id, err)
 	}
 	return ch, true, nil
+}
+
+// GetByIDForOwner returns a local channel only when its stored account belongs
+// to ownerUserID. The owner check is part of the query, not a later comparison.
+func (s *Store) GetByIDForOwner(ctx context.Context, ownerUserID, id int64) (Channel, bool, error) {
+	if ownerUserID <= 0 || id <= 0 {
+		return Channel{}, false, nil
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT `+joinedChannelColumns+`
+FROM managed_channels AS m
+JOIN telegram_accounts AS a ON a.id = m.account_id
+WHERE m.id = ? AND a.owner_user_id = ? AND a.deleted_at IS NULL AND a.status != ?`,
+		id, ownerUserID, AccountStatusQuarantined)
+	ch, err := s.scanChannel(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Channel{}, false, nil
+	}
+	if err != nil {
+		return Channel{}, false, fmt.Errorf("channelstore: read owned channel row %d: %w", id, err)
+	}
+	return ch, true, nil
+}
+
+// ListChannelsForOwner returns channels from every account currently owned by
+// ownerUserID, optionally narrowed to a set of accounts. The owner relationship is
+// enforced in SQL; account IDs supplied by a caller are only an additional
+// filter and can never widen the owner's account set.
+//
+// The result is unpaged so callers can apply per-channel visibility before
+// calculating pages and totals.
+func (s *Store) ListChannelsForOwner(ctx context.Context, ownerUserID int64, accountIDs []string, q ChannelListQuery) ([]Channel, int, error) {
+	if ownerUserID <= 0 {
+		return []Channel{}, 0, nil
+	}
+	conds := []string{
+		`a.owner_user_id = ?`,
+		`a.deleted_at IS NULL`,
+		`a.status != ?`,
+	}
+	args := []any{ownerUserID, AccountStatusQuarantined}
+	selected := make([]string, 0, len(accountIDs))
+	seen := make(map[string]bool, len(accountIDs))
+	for _, id := range accountIDs {
+		if id = strings.TrimSpace(id); id != "" && !seen[id] {
+			seen[id] = true
+			selected = append(selected, id)
+		}
+	}
+	if len(selected) > 0 {
+		conds = append(conds, `m.account_id IN (`+placeholders(len(selected))+`)`)
+		for _, id := range selected {
+			args = append(args, id)
+		}
+	}
+	if q.Query != "" {
+		conds = append(conds, `(instr(lower(m.title), lower(?)) > 0
+			OR instr(lower(m.username), lower(?)) > 0
+			OR instr(lower(m.client_key), lower(?)) > 0)`)
+		args = append(args, q.Query, q.Query, q.Query)
+	}
+	if cond, condArgs := q.categoryCond("m"); cond != "" {
+		conds = append(conds, cond)
+		args = append(args, condArgs...)
+	}
+	where := " WHERE " + strings.Join(conds, " AND ")
+	from := ` FROM managed_channels AS m
+JOIN telegram_accounts AS a ON a.id = m.account_id`
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+from+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("channelstore: count owned channels: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+joinedChannelColumns+from+where+` ORDER BY m.channel_id DESC, m.id DESC`, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("channelstore: list owned channels: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Channel, 0, total)
+	for rows.Next() {
+		ch, err := s.scanChannel(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("channelstore: list owned channels: %w", err)
+		}
+		out = append(out, ch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("channelstore: list owned channels: %w", err)
+	}
+	return out, total, nil
 }
 
 // ManagedIDs returns every channel id managed for one client key.
@@ -372,7 +519,7 @@ func (s *Store) List(ctx context.Context, clientKey string) ([]Channel, error) {
 
 	var out []Channel
 	for rows.Next() {
-		ch, err := scanChannel(rows)
+		ch, err := s.scanChannel(rows)
 		if err != nil {
 			return nil, fmt.Errorf("channelstore: list managed channels: %w", err)
 		}
@@ -444,7 +591,7 @@ func (s *Store) ListChannels(ctx context.Context, q ChannelListQuery) ([]Channel
 
 	var out []Channel
 	for rows.Next() {
-		ch, err := scanChannel(rows)
+		ch, err := s.scanChannel(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("channelstore: list managed channels: %w", err)
 		}
@@ -478,7 +625,7 @@ func (s *Store) ListChannelsByIDs(ctx context.Context, ids []int64) ([]Channel, 
 	}
 	defer rows.Close()
 	for rows.Next() {
-		ch, err := scanChannel(rows)
+		ch, err := s.scanChannel(rows)
 		if err != nil {
 			return nil, fmt.Errorf("channelstore: list managed channels: %w", err)
 		}
@@ -492,9 +639,14 @@ func (s *Store) ListChannelsByIDs(ctx context.Context, ids []int64) ([]Channel, 
 
 // Upsert inserts or refreshes one managed channel.
 //
-// The pair (client_key, channel_id) is unique, so a repeated join updates the
+// The pair (account_id, channel_id) is unique, so a repeated join updates the
 // existing row instead of creating a second one. CreatedAt is preserved on
 // update: it records when the operator first selected the channel.
+//
+// This is the join the legacy keyed routes make, and it names no user: the
+// channel is recorded under the quarantined account of the server it was joined
+// through, which is what keeps it out of every user's account listing until an
+// operator adopts that session. An account-scoped join names its account.
 //
 // Notices and permissions are written only by a report that carried them
 // (NoticesKnown, PermissionsKnown): a write that did not report them keeps the
@@ -522,13 +674,18 @@ func (s *Store) Upsert(ctx context.Context, ch Channel) (Channel, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	accountID, err := s.ensureLegacyAccount(ctx, tx, ch.ClientKey)
+	if err != nil {
+		return Channel{}, fmt.Errorf("channelstore: write channel %d: %w", ch.ChannelID, err)
+	}
+
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO managed_channels (
-	client_key, channel_id, peer_type, title, username, description,
+	account_id, client_key, channel_id, peer_type, title, username, description,
 	avatar_photo_id, avatar_available, membership_status, participants_count,
 	verified, scam, fake, notices_known, created_at, updated_at, last_synced_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (client_key, channel_id) DO UPDATE SET
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (account_id, channel_id) DO UPDATE SET
 	peer_type = excluded.peer_type,
 	title = excluded.title,
 	username = excluded.username,
@@ -539,7 +696,7 @@ ON CONFLICT (client_key, channel_id) DO UPDATE SET
 	participants_count = excluded.participants_count,
 	updated_at = excluded.updated_at,
 	last_synced_at = excluded.last_synced_at`,
-		ch.ClientKey, ch.ChannelID, ch.PeerType, ch.Title, ch.Username, ch.Description,
+		accountID, ch.ClientKey, ch.ChannelID, ch.PeerType, ch.Title, ch.Username, ch.Description,
 		ch.AvatarPhotoID, boolInt(ch.AvatarAvailable), ch.MembershipStatus,
 		nullableInt(ch.ParticipantsCount),
 		boolInt(ch.Verified), boolInt(ch.Scam), boolInt(ch.Fake), boolInt(ch.NoticesKnown),
@@ -553,9 +710,9 @@ ON CONFLICT (client_key, channel_id) DO UPDATE SET
 	if ch.NoticesKnown {
 		if _, err := tx.ExecContext(ctx, `
 UPDATE managed_channels SET verified = ?, scam = ?, fake = ?, notices_known = 1
-WHERE client_key = ? AND channel_id = ?`,
+WHERE account_id = ? AND channel_id = ?`,
 			boolInt(ch.Verified), boolInt(ch.Scam), boolInt(ch.Fake),
-			ch.ClientKey, ch.ChannelID,
+			accountID, ch.ChannelID,
 		); err != nil {
 			return Channel{}, fmt.Errorf("channelstore: write channel %d: %w", ch.ChannelID, err)
 		}
@@ -566,18 +723,18 @@ WHERE client_key = ? AND channel_id = ?`,
 		if _, err := tx.ExecContext(ctx, `
 UPDATE managed_channels SET permission_new = ?, permission_edit = ?, permission_delete = ?,
 	permission_read = ?, permissions_known = 1
-WHERE client_key = ? AND channel_id = ?`,
+WHERE account_id = ? AND channel_id = ?`,
 			boolInt(ch.Permissions.New), boolInt(ch.Permissions.Edit),
 			boolInt(ch.Permissions.Delete), boolInt(ch.Permissions.Read),
-			ch.ClientKey, ch.ChannelID,
+			accountID, ch.ChannelID,
 		); err != nil {
 			return Channel{}, fmt.Errorf("channelstore: write channel %d: %w", ch.ChannelID, err)
 		}
 	}
 
-	row := tx.QueryRowContext(ctx, selectColumns+` WHERE client_key = ? AND channel_id = ?`,
-		ch.ClientKey, ch.ChannelID)
-	saved, err := scanChannel(row)
+	row := tx.QueryRowContext(ctx, s.channelSelect()+` WHERE account_id = ? AND channel_id = ?`,
+		accountID, ch.ChannelID)
+	saved, err := s.scanChannel(row)
 	if err != nil {
 		return Channel{}, fmt.Errorf("channelstore: write channel %d: %w", ch.ChannelID, err)
 	}
@@ -590,7 +747,7 @@ WHERE client_key = ? AND channel_id = ?`,
 // categoryCond returns the WHERE fragment selecting channels filed under at
 // least one of q.CategoryIDs (OR semantics), or "" when no filter applies.
 //
-// The assignment table keys on (client_key, channel_id) — the Telegram ids
+// The assignment table keys on (account_id, channel_id) — the Telegram ids
 // (rule 8: local row ids and Telegram peer ids are distinct namespaces), so
 // the condition matches those two columns of the row being listed. alias
 // qualifies them. The outer columns are always qualified: without a qualifier
@@ -606,8 +763,8 @@ func (q ChannelListQuery) categoryCond(alias ...string) (string, []any) {
 	}
 	return `EXISTS (SELECT 1 FROM channel_categories cc
 		WHERE cc.category_id IN (` + placeholders(len(q.CategoryIDs)) + `)
-		AND cc.client_key = ` + m + `.client_key
-		AND cc.channel_id = ` + m + `.channel_id)`,
+		AND cc.account_id = ` + m + `.account_id
+		AND cc.channel_id = CAST(` + m + `.channel_id AS TEXT))`,
 		toAny(q.CategoryIDs)
 }
 
@@ -620,28 +777,87 @@ func toAny(ids []int64) []any {
 	return out
 }
 
-const selectColumns = `SELECT id, client_key, channel_id, peer_type, title, username,
-	description, avatar_photo_id, avatar_available, membership_status, participants_count,
-	verified, scam, fake, notices_known,
-	permission_new, permission_edit, permission_delete, permission_read, permissions_known,
-	created_at, updated_at, last_synced_at FROM managed_channels`
+// selectColumns is the channel column list for the newest schema. A store on an
+// older one uses selectLegacyColumns instead — see channelSelect.
+const selectColumns = `SELECT ` + channelColumns + ` FROM managed_channels`
+
+const selectLegacyColumns = `SELECT ` + legacyChannelColumns + ` FROM managed_channels`
+
+// channelSelect is the column list this database can actually read.
+//
+// It is decided by looking at the table rather than by trusting a version
+// number: a database opened on an older schema has no account_id, and reading
+// it would fail on every channel. The probe is done once, at open.
+func (s *Store) channelSelect() string {
+	if s != nil && !s.channelHasAccount {
+		return selectLegacyColumns
+	}
+	return selectColumns
+}
+
+// probeChannelSchema reports whether managed_channels carries an account_id.
+func (s *Store) probeChannelSchema() bool {
+	if s.db == nil {
+		return true
+	}
+	rows, err := s.db.Query(`SELECT account_id FROM managed_channels LIMIT 0`)
+	if err != nil {
+		return false
+	}
+	_ = rows.Close()
+	return true
+}
 
 // selectJoinedColumns is selectColumns' list qualified with m, for a query that
 // filters the records with a subquery on the same table.
-const selectJoinedColumns = `SELECT m.id, m.client_key, m.channel_id, m.peer_type, m.title, m.username,
+// joinedChannelColumns is channelColumns qualified with m, for a query that
+// joins the channel table. It is spelled out rather than derived so the two
+// cannot drift apart silently — a channel query that forgot a column would
+// hand scanChannel a row one field short.
+const joinedChannelColumns = `m.id, m.client_key, m.account_id, m.channel_id, m.peer_type, m.title, m.username,
 	m.description, m.avatar_photo_id, m.avatar_available, m.membership_status, m.participants_count,
 	m.verified, m.scam, m.fake, m.notices_known,
 	m.permission_new, m.permission_edit, m.permission_delete, m.permission_read,
 	m.permissions_known,
-	m.created_at, m.updated_at, m.last_synced_at FROM managed_channels m`
+	m.created_at, m.updated_at, m.last_synced_at`
+
+// selectJoinedColumns is joinedChannelColumns over the channel table alone.
+const selectJoinedColumns = `SELECT ` + joinedChannelColumns + ` FROM managed_channels m`
 
 type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanChannel(row scanner) (Channel, error) {
+// channelColumns is every column scanChannel reads, in order.
+const channelColumns = `id, client_key, account_id, channel_id, peer_type, title, username,
+	description, avatar_photo_id, avatar_available, membership_status, participants_count,
+	verified, scam, fake, notices_known,
+	permission_new, permission_edit, permission_delete, permission_read, permissions_known,
+	created_at, updated_at, last_synced_at`
+
+// legacyChannelColumns is the same list for a database written before account
+// ownership existed. Such a row is read without an account: the channel is a
+// legacy one nobody has claimed, which is exactly what an empty AccountID says.
+const legacyChannelColumns = `id, client_key, channel_id, peer_type, title, username,
+	description, avatar_photo_id, avatar_available, membership_status, participants_count,
+	verified, scam, fake, notices_known,
+	permission_new, permission_edit, permission_delete, permission_read, permissions_known,
+	created_at, updated_at, last_synced_at`
+
+func (s *Store) scanChannel(row scanner) (Channel, error) {
+	if s != nil && !s.channelHasAccount {
+		return scanChannelAs(row, legacyChannelColumns)
+	}
+	return scanChannelAs(row, channelColumns)
+}
+
+// scanLegacyChannel reads a row from a schema with no account_id.
+
+func scanChannelAs(row scanner, columns string) (Channel, error) {
+	withAccount := strings.Contains(columns, "account_id")
 	var (
 		ch                          Channel
+		accountID                   sql.NullString
 		participants                sql.NullInt64
 		verified, scam, fake, known int
 		permNew, permEdit, permDel  int
@@ -650,15 +866,26 @@ func scanChannel(row scanner) (Channel, error) {
 		updated                     string
 		synced                      string
 	)
-	if err := row.Scan(
-		&ch.ID, &ch.ClientKey, &ch.ChannelID, &ch.PeerType, &ch.Title, &ch.Username,
+	dest := []any{
+		&ch.ID, &ch.ClientKey,
+	}
+	if withAccount {
+		dest = append(dest, &accountID)
+	}
+	dest = append(dest,
+		&ch.ChannelID, &ch.PeerType, &ch.Title, &ch.Username,
 		&ch.Description, &ch.AvatarPhotoID, &ch.AvatarAvailable, &ch.MembershipStatus, &participants,
 		&verified, &scam, &fake, &known,
 		&permNew, &permEdit, &permDel, &permRead, &permKnown,
 		&created, &updated, &synced,
-	); err != nil {
+	)
+	if err := row.Scan(dest...); err != nil {
 		return Channel{}, err
 	}
+	// The owning account travels with the row. Every worker lookup and every
+	// account-scoped read is named by it, so a channel read without one would
+	// have nothing to route through.
+	ch.AccountID = accountID.String
 	ch.Verified, ch.Scam, ch.Fake = verified != 0, scam != 0, fake != 0
 	ch.NoticesKnown = known != 0
 	ch.Permissions = tgapi.Permissions{

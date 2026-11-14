@@ -41,7 +41,7 @@ func TestLocalChannelsListFiltersBySelectedCategories(t *testing.T) {
 		{tech, newsCat},
 		{sports, sportsCat},
 	} {
-		if err := env.store.ReplaceCategories(ctx, filed.ch.ClientKey, filed.ch.ChannelID,
+		if err := env.store.ReplaceCategories(ctx, filed.ch.AccountID, filed.ch.ChannelID,
 			[]int64{filed.cat.ID}); err != nil {
 			t.Fatalf("ReplaceCategories: %v", err)
 		}

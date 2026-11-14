@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/apidocs"
 	"github.com/mirza/telesync/internal/appconfig"
 	"github.com/mirza/telesync/internal/auth"
@@ -47,6 +48,26 @@ type probe struct {
 	handler http.Handler
 	store   *channelstore.Store
 	tokens  *auth.Tokens
+	workers map[string]gateway.Worker
+}
+
+// seededAccount gives one documented user their own Telegram account on one
+// server definition, and returns its id. The remote identity is distinct per
+// account so the owner-scoped uniqueness is not accidentally exercised by a
+// documentation fixture.
+func (p *probe) seededAccount(ctx context.Context, store *channelstore.Store, owner int64, serverKey, network string) string {
+	p.t.Helper()
+	id, err := accountid.New()
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	if _, err := store.Create(ctx, channelstore.Account{
+		ID: id, OwnerUserID: owner, ServerKey: serverKey, NetworkType: network,
+		RemoteUserID: 1 + int64(owner), Status: channelstore.AccountStatusConnected,
+	}); err != nil {
+		p.t.Fatalf("create account: %v", err)
+	}
+	return id
 }
 
 // ServeHTTP lets a probe stand in wherever a plain handler is expected.
@@ -86,17 +107,30 @@ func (p *probe) build() http.Handler {
 	if _, err := store.CreateUser(ctx, "Documented Other User", "doc-other", hash, true); err != nil {
 		p.t.Fatal(err)
 	}
-	channel, err := store.Upsert(ctx, channelstore.Channel{
+
+	// Under user-owned accounts a keyed route resolves the caller's own account
+	// before anything else, so the documented caller needs one. The worker is
+	// registered under the account id: that is what the supervisor does for a
+	// real account, and what every documented response is then produced through.
+	adminAccount := p.seededAccount(ctx, store, admin.ID, "official", channelstore.NetworkTelegram)
+	limitedAccount := p.seededAccount(ctx, store, limited.ID, "doc-client", channelstore.NetworkTelegram)
+	p.workers = map[string]gateway.Worker{
+		adminAccount:   fakeWorker{},
+		limitedAccount: fakeWorker{},
+	}
+
+	channel, err := store.UpsertFor(ctx, adminAccount, channelstore.Channel{
 		ClientKey: "doc-client", ChannelID: 1, PeerType: channelstore.PeerChannel,
 		Title: "Documented channel", MembershipStatus: channelstore.StatusMember,
 	})
 	if err != nil {
 		p.t.Fatal(err)
 	}
-	if _, err := store.Upsert(ctx, channelstore.Channel{
+	officialChannel, err := store.UpsertFor(ctx, adminAccount, channelstore.Channel{
 		ClientKey: "official", ChannelID: 1671633563, PeerType: channelstore.PeerChannel,
 		Title: "Documented channel", MembershipStatus: channelstore.StatusMember,
-	}); err != nil {
+	})
+	if err != nil {
 		p.t.Fatal(err)
 	}
 	category, err := store.CreateCategory(ctx, "Documented category", "Created by the documentation probe")
@@ -105,7 +139,10 @@ func (p *probe) build() http.Handler {
 	}
 	if err := store.ReplacePermissions(ctx, admin.ID, channelstore.PermissionSet{
 		Global:     channelstore.GlobalPermissions(),
-		Channels:   []channelstore.ResourcePermissions{{ResourceID: channel.ID}},
+		Channels: []channelstore.ResourcePermissions{
+			{ResourceID: channel.ID},
+			{ResourceID: officialChannel.ID},
+		},
 		Categories: []channelstore.ResourcePermissions{{ResourceID: category.ID}},
 	}); err != nil {
 		p.t.Fatal(err)
@@ -137,7 +174,10 @@ func (p *probe) build() http.Handler {
 	}
 	p.tokens = tokens
 	return gateway.New(gateway.Config{
-		Workers: fakeRegistry{},
+		Workers:   fakeRegistry(p.workers),
+		Accounts:  store,
+		AccountChannels: store,
+		Resolver:  gateway.NewStoreAccountResolver(store),
 		Servers: fakeServers(),
 		// The real store, as the daemon wires it: the examples that record a
 		// channel (join, leave) and read one back hit the same SQLite the probe
@@ -492,15 +532,14 @@ func (fakeWorker) Avatar(context.Context, rpc.ChannelRef) (rpc.AvatarFile, error
 	return rpc.AvatarFile{MimeType: "image/jpeg", PhotoID: 9, Data: []byte("jpeg-bytes")}, nil
 }
 
-type fakeRegistry struct{}
+// fakeRegistry is keyed by account id, not by server key: one server may carry
+// many accounts and each has its own session. The documented examples act
+// through the two accounts the probe seeded.
+type fakeRegistry map[string]gateway.Worker
 
-func (fakeRegistry) Worker(key string) (gateway.Worker, bool) {
-	// "official" is the key the documentation's examples use.
-	switch key {
-	case "doc-client", "official":
-		return fakeWorker{}, true
-	}
-	return nil, false
+func (r fakeRegistry) Worker(key string) (gateway.Worker, bool) {
+	w, ok := r[key]
+	return w, ok
 }
 
 // fakeServers is what GET /api/v1/telegram lists in the probe: the client the

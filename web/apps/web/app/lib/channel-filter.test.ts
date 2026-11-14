@@ -96,6 +96,37 @@ test("multiple server filters form a union without conflating Telegram ids", () 
   assert.deepEqual(ids(rows), [1, 2, 3, 4, 5])
 })
 
+test("all accounts is the default and explicit account IDs filter by account identity", () => {
+  const first = { ...CHANNELS[0], id: 7, account_id: "acc_first" }
+  const second = { ...CHANNELS[0], id: 8, account_id: "acc_second" }
+  const legacy = { ...CHANNELS[0], id: 9, account_id: undefined }
+  const rows = [first, second, legacy]
+  assert.deepEqual(ids(filterChannels(rows, {
+    search: "", categoryIds: [], filed: FILED,
+  })), [7, 8, 9])
+  assert.deepEqual(ids(filterChannels(rows, {
+    search: "", categoryIds: [], filed: FILED, accountIds: ["acc_second"],
+  })), [8])
+  assert.deepEqual(ids(filterChannels(rows, {
+    search: "", categoryIds: [], filed: FILED, accountIds: ["acc_first", "acc_second"],
+  })), [7, 8])
+})
+
+test("account, search and category filters compose without changing category behavior", () => {
+  const rows = [
+    { ...CHANNELS[0], id: 7, account_id: "acc_first" },
+    { ...CHANNELS[2], id: 8, account_id: "acc_second" },
+  ]
+  assert.deepEqual(ids(filterChannels(rows, {
+    search: "tech", categoryIds: [10], filed: { 7: [10], 8: [10] },
+    accountIds: ["acc_second"],
+  })), [8])
+  assert.deepEqual(ids(filterChannels(rows, {
+    search: "tech", categoryIds: [], filed: {},
+    accountIds: ["acc_second"],
+  })), [8])
+})
+
 test("server, search and category filters combine with AND", () => {
   const official = { ...CHANNELS[0], id: 5, client_key: "official", title: "Tech news" }
   const rows = filterChannels([...CHANNELS, official], {

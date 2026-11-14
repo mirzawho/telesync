@@ -139,8 +139,10 @@ func TestTheUpgradePreservesEverythingAroundTheChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := old.AssignChannel(ctx, "official", "7", category.ID); err != nil {
-		t.Fatal(err)
+	if _, err := old.db.ExecContext(ctx, `INSERT INTO channel_categories
+		(client_key, channel_id, category_id, created_at)
+		VALUES ('official', '7', ?, '2026-01-01T00:00:00Z')`, category.ID); err != nil {
+		t.Fatalf("seed legacy category assignment: %v", err)
 	}
 	if err := old.ReplacePermissions(ctx, user.ID, PermissionSet{
 		Global: []GlobalPermission{PermissionChannelsView},
@@ -172,7 +174,7 @@ func TestTheUpgradePreservesEverythingAroundTheChannel(t *testing.T) {
 		perm.Channels[0].Permissions[0] != (ResourcePermission{Action: ActionView, Effect: EffectAllow}) {
 		t.Fatalf("per-channel assignment lost: %+v", perm.Channels)
 	}
-	ids, err := upgraded.AssignmentCounts(ctx, "official", "7")
+	ids, err := upgraded.AssignmentCounts(ctx, "legacy_official", "7")
 	if err != nil || len(ids) != 1 || ids[category.ID] == 0 {
 		t.Fatalf("category assignment lost: %v %v", ids, err)
 	}

@@ -48,7 +48,8 @@ import {
 } from "@/lib/publish-draft"
 import { getToken } from "@/lib/session"
 import { publishErrorText } from "@/lib/publish-errors"
-import type { Entity, MessageMedia, TelegramServer, WordPressSite } from "@/lib/types"
+import type { Entity, MessageMedia, WordPressSite } from "@/lib/types"
+import { accountApi, listAccountChannels, listMyAccounts } from "@/lib/account-api"
 
 interface MessageLike {
   id: number
@@ -61,6 +62,7 @@ export interface PublishDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   localChannelId: number
+  accountID: string
   message: MessageLike
   albumMessages?: MessageLike[]
   onSuccess: (summary: string) => void
@@ -150,6 +152,7 @@ export function PublishDialog({
   open,
   onOpenChange,
   localChannelId,
+  accountID,
   message,
   albumMessages,
   onSuccess,
@@ -163,18 +166,20 @@ export function PublishDialog({
   const source: PublishSource = React.useMemo(
     () => ({
       localChannelId,
+      accountID,
       messageId: message.id,
       ...(albumMessages && albumMessages.length > 1 ? { messageIds: albumMessages.map((item) => item.id) } : {}),
       text: message.text ?? "",
       entities: message.entities ?? [],
       attachments: sourceAttachmentsFrom(message.media),
     }),
-    [localChannelId, message, albumMessages],
+    [accountID, localChannelId, message, albumMessages],
   )
   const draft = usePublishMessageDraft(source)
 
   const [options, setOptions] = React.useState<PublishingOptions>(emptyOptions)
   const [optionsError, setOptionsError] = React.useState<string | null>(null)
+  const [channelRetry, setChannelRetry] = React.useState(0)
 
   const [status, setStatus] = React.useState<PublishStatus>("idle")
   const [results, setResults] = React.useState<DestinationResult[]>([])
@@ -204,16 +209,15 @@ export function PublishDialog({
     const token = getToken()
 
     Promise.all([
-      apiRequest<{ servers?: TelegramServer[] }>("GET", "/telegram", { token, signal: controller.signal }),
+      listMyAccounts(token ?? "", controller.signal),
       apiRequest<{ sites?: WordPressSite[] }>("GET", "/local/wordpress", { token, signal: controller.signal }),
     ])
-      .then(([serverRes, siteRes]) => {
+      .then(([accountRes, siteRes]) => {
         if (cancelled) return
-        const servers = Array.isArray(serverRes.data?.servers) ? serverRes.data.servers : []
         const sites = Array.isArray(siteRes.data?.sites) ? (siteRes.data.sites as WordPressSite[]) : []
         setOptions((prev) => ({
           ...prev,
-          servers,
+          accounts: accountRes.accounts,
           sites: sites.map((s): SiteOption => ({ id: s.id, title: s.title, domain: s.domain })),
           loading: { ...prev.loading, servers: false, sites: false },
         }))
@@ -232,21 +236,21 @@ export function PublishDialog({
   // Channels belong to one connection. Changing the connection empties the list
   // first, so a stale answer for the previous one can never be shown against
   // the new one, and a channel id from the old connection can never be sent.
-  const clientKey = draft.state.telegram.clientKey
   React.useEffect(() => {
-    setOptions((prev) => ({ ...prev, channels: [] }))
-    if (!open || !clientKey) return
+    setOptions((prev) => ({
+      ...prev,
+      channels: [],
+      errors: { ...prev.errors, channels: null },
+      loading: { ...prev.loading, channels: false },
+    }))
+    if (!open || !draft.state.telegram.accountID) return
+    const selectedAccountID = draft.state.telegram.accountID
     let cancelled = false
     const controller = new AbortController()
     setOptions((prev) => ({ ...prev, loading: { ...prev.loading, channels: true } }))
-    apiRequest<{ channels?: Array<{ id: number; title: string; username?: string; permissions?: { new?: boolean } }> }>(
-      "GET",
-      `/telegram/${encodeURIComponent(clientKey)}/channels`,
-      { token: getToken(), query: { page: 1, per_page: 100, capability: "send" }, signal: controller.signal },
-    )
-      .then((res) => {
+    listAccountChannels(getToken() ?? "", selectedAccountID, controller.signal)
+      .then((rows) => {
         if (cancelled) return
-        const rows = Array.isArray(res.data?.channels) ? res.data.channels : []
         setOptions((prev) => ({
           ...prev,
           channels: rows.map(
@@ -256,9 +260,10 @@ export function PublishDialog({
               username: c.username,
               // The backend already narrowed this list to channels the account
               // may post in. The flag is still read, never assumed.
-              canPublish: c.permissions?.new !== false,
+              canPublish: c.permissions?.new === true,
             }),
           ),
+          errors: { ...prev.errors, channels: null },
           loading: { ...prev.loading, channels: false },
         }))
       })
@@ -266,7 +271,12 @@ export function PublishDialog({
         if (cancelled || (err instanceof ApiError && err.code === "aborted")) return
         setOptions((prev) => ({
           ...prev,
-          errors: { ...prev.errors, channels: err instanceof ApiError ? err.message : "بارگذاری کانال‌ها ناموفق بود." },
+          errors: {
+            ...prev.errors,
+            channels: err instanceof ApiError
+              ? publishErrorText(err.code)
+              : "بارگذاری کانال‌های مقصد ناموفق بود. دوباره تلاش کنید.",
+          },
           loading: { ...prev.loading, channels: false },
         }))
       })
@@ -274,7 +284,7 @@ export function PublishDialog({
       cancelled = true
       controller.abort()
     }
-  }, [open, clientKey])
+  }, [open, draft.state.telegram.accountID, channelRetry])
 
   // WordPress terms are rows in one site's taxonomy. A different site has
   // different rows, so both lists are dropped and refetched when the site
@@ -427,6 +437,7 @@ export function PublishDialog({
               state={draft.state}
               options={options}
               onChange={draft.update}
+              onRetryChannels={() => setChannelRetry((value) => value + 1)}
               onCancel={requestClose}
               onPublish={submit}
               publishing={publishing}
@@ -439,6 +450,7 @@ export function PublishDialog({
               state={draft.state}
               options={options}
               onChange={draft.update}
+              onRetryChannels={() => setChannelRetry((value) => value + 1)}
               onCancel={requestClose}
               onPublish={submit}
               publishing={publishing}
@@ -506,7 +518,7 @@ async function publish(
     }
   }
 
-  const clientKey = state.telegram.clientKey!
+  const accountID = state.telegram.accountID!
   const bodies = buildTelegramPayloads(state)
   const labels = new Map(
     state.telegram.channelIds.map((id) => [id, id] as const),
@@ -521,11 +533,11 @@ async function publish(
       const body = bodies[index]
       const label = labels.get(body.destination.channel_id) ?? body.destination.channel_id
       try {
-        await apiRequest("POST", `/telegram/${encodeURIComponent(clientKey)}/messages/copy`, {
+        await apiRequest("POST", accountApi.messageCopy(accountID), {
           token,
           body,
           headers: {
-            "Idempotency-Key": `pub-${clientKey}-${source.localChannelId}-${source.messageId}-${body.destination.channel_id}-${fingerprint(body)}`,
+            "Idempotency-Key": `pub-${accountID}-${source.localChannelId}-${source.messageId}-${body.destination.channel_id}-${fingerprint(body)}`,
           },
         })
         results[index] = { label, ok: true }

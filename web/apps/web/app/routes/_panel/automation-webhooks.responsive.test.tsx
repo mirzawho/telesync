@@ -68,6 +68,7 @@ function assertTableShape(markup: string, label: string) {
 
 const webhook: WebhookItem = {
   id: 7,
+  accountID: "acc_fixture000000000000000",
   name: "گیرنده اخبار",
   description: "",
   enabled: true,
@@ -175,6 +176,7 @@ test("the delivery history is one scroller with a pinned actions column", () => 
 
 const workflow: WorkflowItem = {
   id: 12,
+  accountID: "acc_fixture000000000000000",
   managedChannelID: 5,
   channel: {
     id: 5,
@@ -191,8 +193,9 @@ const workflow: WorkflowItem = {
   configRevision: 1,
   destinations: [
     {
-      id: 1,
-      type: "telegram",
+    id: 1,
+    type: "telegram",
+    accountID: "acc_destination",
       clientKey: "official",
       channelID: -100999,
       siteID: 0,
@@ -201,8 +204,9 @@ const workflow: WorkflowItem = {
       enabled: true,
     },
     {
-      id: 2,
-      type: "wordpress",
+    id: 2,
+    type: "wordpress",
+    accountID: "",
       clientKey: "",
       channelID: 0,
       siteID: 4,
@@ -271,8 +275,9 @@ const run: RunItem = {
   completedAt: "2026-01-01T00:00:05Z",
   publications: [
     {
-      id: 1,
-      type: "telegram",
+    id: 1,
+    type: "telegram",
+    accountID: "acc_destination",
       clientKey: "official",
       channelID: -100999,
       siteID: 0,

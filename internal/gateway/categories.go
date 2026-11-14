@@ -1,16 +1,17 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/rpc"
@@ -28,15 +29,14 @@ type CategoryStore interface {
 // CategoryMembers is the store's view of which channels a category holds. The
 // gateway needs it only for the member route; the store implements both.
 type CategoryMembers interface {
-	CategoryChannels(ctx context.Context, categoryID int64) ([]channelstore.Channel, error)
+	CategoryChannelsForOwner(ctx context.Context, ownerUserID, categoryID int64) ([]channelstore.Channel, error)
 }
 
 // ChannelCategories is the store's view of which categories a channel is filed
 // under; the channel's own route uses it.
 type ChannelCategories interface {
-	CategoryChannels(ctx context.Context, categoryID int64) ([]channelstore.Channel, error)
-	AssignmentCounts(ctx context.Context, clientKey, channelID string) (map[int64]int, error)
-	ReplaceCategories(ctx context.Context, clientKey string, channelID int64, categoryIDs []int64) error
+	AssignmentCounts(ctx context.Context, accountID, channelID string) (map[int64]int, error)
+	ReplaceCategories(ctx context.Context, accountID string, channelID int64, categoryIDs []int64) error
 }
 
 // CodeConflict is returned when a write collides with existing local state.
@@ -256,10 +256,21 @@ func (s *Server) deleteCategory(w http.ResponseWriter, id int64, requestID strin
 // errUnsupportedMedia means the body is not application/json.
 var errUnsupportedMedia = errors.New("the body must be application/json.")
 
+var (
+	errEmptyBody       = errors.New("the body is required.")
+	errMalformedJSON   = errors.New("the body contains malformed JSON.")
+	errExpectedObject  = errors.New("the body must be a JSON object.")
+	errInvalidJSONData = errors.New("the JSON object contains an unknown field or an invalid field type.")
+	errBodyTooLarge    = errors.New("the body exceeds the maximum allowed size.")
+)
+
 // statusOfBodyError maps a body error onto its status.
 func statusOfBodyError(err error) int {
 	if errors.Is(err, errUnsupportedMedia) {
 		return http.StatusUnsupportedMediaType
+	}
+	if errors.Is(err, errBodyTooLarge) {
+		return http.StatusRequestEntityTooLarge
 	}
 	return http.StatusBadRequest
 }
@@ -280,7 +291,7 @@ func parsePageQuery(q map[string][]string, maxQuery int) (int, int, string, erro
 func decodeCategoryRequest(w http.ResponseWriter, r *http.Request) (categoryRequest, error) {
 	var req categoryRequest
 	if err := decodeJSONBodyLimited(w, r, &req, maxCategoryBody); err != nil {
-		if errors.Is(err, errUnsupportedMedia) || errors.Is(err, errInvalidBody) {
+		if isJSONBodyError(err) {
 			return categoryRequest{}, err
 		}
 		return categoryRequest{}, errors.New("the body must be one JSON object with a name and an optional description.")
@@ -296,7 +307,36 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) error {
 // errInvalidBody means the body is not exactly one JSON object.
 var errInvalidBody = errors.New("the body must contain exactly one JSON object.")
 
-// decodeJSONBodyLimited reads one JSON object.
+// isJSONBodyError reports whether err came from the shared request-body
+// contract, rather than validation specific to the resource being written.
+func isJSONBodyError(err error) bool {
+	for _, target := range []error{
+		errUnsupportedMedia, errEmptyBody, errMalformedJSON, errExpectedObject,
+		errInvalidBody, errInvalidJSONData, errBodyTooLarge,
+	} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// bodyReadError classifies failures raised while reading the bounded JSON
+// stream without returning decoder details that may disclose request data.
+func bodyReadError(err error) error {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		return errBodyTooLarge
+	}
+	if errors.Is(err, io.EOF) {
+		return errEmptyBody
+	}
+	return errMalformedJSON
+}
+
+// decodeJSONBodyLimited reads exactly one top-level JSON object, bounded to
+// limit bytes. It consumes r.Body once; the in-memory RawMessage is then
+// decoded into the resource-specific request type with unknown fields refused.
 //
 // Unknown fields are refused, so a misspelled field is reported instead of
 // silently dropped, and an extra value after the object is refused, so a
@@ -307,14 +347,30 @@ func decodeJSONBodyLimited(w http.ResponseWriter, r *http.Request, v any, limit 
 		return errUnsupportedMedia
 	}
 	if r.Body == nil {
-		return errInvalidBody
+		return errEmptyBody
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return fmt.Errorf("the body is not a valid JSON object for this request: %w", errInvalidBody)
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return bodyReadError(err)
 	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
+	if !utf8.Valid(raw) {
+		return errMalformedJSON
+	}
+	if len(raw) == 0 || raw[0] != '{' {
+		return errExpectedObject
+	}
+	payload := json.NewDecoder(bytes.NewReader(raw))
+	payload.DisallowUnknownFields()
+	if err := payload.Decode(v); err != nil {
+		return errInvalidJSONData
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return errBodyTooLarge
+		}
 		return errInvalidBody
 	}
 	return nil
@@ -547,10 +603,15 @@ func (s *Server) listCategoryChannels(w http.ResponseWriter, r *http.Request, id
 	if !ok {
 		return
 	}
-	channels, err := members.CategoryChannels(r.Context(), id)
-	if err != nil {
-		s.categoryWriteError(w, "list_category_channels", err, requestID)
-		return
+	var channels []channelstore.Channel
+	ownerUserID := actorOf(r).user.ID
+	if ownerUserID > 0 {
+		var err error
+		channels, err = members.CategoryChannelsForOwner(r.Context(), ownerUserID, id)
+		if err != nil {
+			s.categoryWriteError(w, "list_category_channels", err, requestID)
+			return
+		}
 	}
 	// Reaching a category does not admit the channels filed under it: each one
 	// is shown only if the caller may see that channel too.

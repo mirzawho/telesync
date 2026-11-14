@@ -1,6 +1,7 @@
 package gateway_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -43,11 +44,24 @@ func TestDeleteTelegramMessageReturnsRemoteDeletionConfirmation(t *testing.T) {
 			GeneratedAt string `json:"generated_at"`
 		} `json:"meta"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if err := json.Unmarshal(raw, &answer); err != nil {
 		t.Fatalf("decode response: %v", err)
+	}
+	var shape struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &shape); err != nil {
+		t.Fatalf("decode response shape: %v", err)
 	}
 	if !answer.Data.Deleted || answer.Data.ChannelID != "98" || answer.Data.MessageID != 11 || answer.Data.Connection.ClientKey != "cat" {
 		t.Fatalf("data = %+v, want confirmed deletion of cat/98/11", answer.Data)
+	}
+	if _, ok := shape.Data["account_id"]; ok {
+		t.Fatalf("legacy keyed delete response gained account_id: %s", raw)
 	}
 	if answer.Meta.RequestID == "" || answer.Meta.GeneratedAt == "" {
 		t.Fatalf("meta = %+v, want request id and generated_at", answer.Meta)
@@ -57,6 +71,46 @@ func TestDeleteTelegramMessageReturnsRemoteDeletionConfirmation(t *testing.T) {
 	}
 	if official.deleteCalls != 0 {
 		t.Fatalf("unselected worker delete calls = %d, want 0", official.deleteCalls)
+	}
+}
+
+func TestAccountScopedDeleteResponseNamesTheAccountAndKeepsTheServerKeyInformational(t *testing.T) {
+	worker := readyWorker()
+	worker.deleteResult = rpc.DeleteMessageResult{Deleted: true}
+	worker.channel = rpc.ChannelResult{Channel: rpc.ChannelInfo{
+		ID: "98", Type: "channel", Title: "Destination", IsMember: true,
+		Permissions: rpc.Permissions{Delete: true, Read: true},
+	}}
+	env := newAccountEnv(t, registry{"cat": worker})
+	env.channelRow(t, "cat", 98)
+	env.signedIn = true
+	accountID := env.testEnv.account["cat"].ID
+
+	resp := env.send(t, defaultCaller, http.MethodDelete,
+		"/api/v1/telegram/accounts/"+accountID+"/channels/98/messages/11", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
+	}
+	var answer struct {
+		Data struct {
+			Deleted    bool   `json:"deleted"`
+			ChannelID  string `json:"channel_id"`
+			MessageID  int    `json:"message_id"`
+			AccountID  string `json:"account_id"`
+			Connection struct {
+				ClientKey string `json:"client_key"`
+			} `json:"connection"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Data.Deleted || answer.Data.ChannelID != "98" || answer.Data.MessageID != 11 ||
+		answer.Data.AccountID != accountID || answer.Data.Connection.ClientKey != "cat" {
+		t.Fatalf("data = %+v, want account %s and informational server key cat",
+			answer.Data, accountID)
 	}
 }
 
@@ -116,7 +170,15 @@ func TestDeleteTelegramMessageRequiresApplicationChannelDeletePermission(t *test
 	worker := readyWorker()
 	env := newAccountEnv(t, registry{"cat": worker})
 	channel := env.channelRow(t, "cat", 98)
-	reader := env.account(t, "reader", channelstore.PermissionChannelsView)
+	// Exercise the permission gate through the account that owns the selected
+	// Telegram session. A different user with no account on this server is
+	// rejected earlier by account ownership and cannot isolate channel rights.
+	reader := env.defaults
+	if err := env.store.ReplacePermissions(context.Background(), reader.user.ID, channelstore.PermissionSet{
+		Global: []channelstore.GlobalPermission{channelstore.PermissionChannelsView},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	env.grantChannels(t, reader, channelstore.ResourcePermissions{ResourceID: channel.ID, Permissions: []channelstore.ResourcePermission{
 		{Action: channelstore.ActionView, Effect: channelstore.EffectAllow},
 	}})

@@ -15,7 +15,7 @@ func serverEnv(t *testing.T) *accountEnv {
 	t.Helper()
 	worker := readyWorker()
 	return newAccountEnv(t, registry{"official": worker}, func(c *gateway.Config) {
-		c.Servers = []gateway.ServerInfo{{Key: "official", Type: "official", Enabled: true, Registered: true}}
+		c.Servers = []gateway.ServerInfo{{Key: "official", Type: "official", Enabled: true}}
 	})
 }
 
@@ -50,7 +50,7 @@ func TestServerListIsBehindTheServersViewPermission(t *testing.T) {
 func TestServerListByPermissionNeverNamesConfiguredSecrets(t *testing.T) {
 	worker := readyWorker()
 	env := newAccountEnv(t, registry{"official": worker}, func(c *gateway.Config) {
-		c.Servers = []gateway.ServerInfo{{Key: "official", Type: "official", Enabled: true, Registered: true}}
+		c.Servers = []gateway.ServerInfo{{Key: "official", Type: "official", Enabled: true}}
 	})
 
 	resp := env.send(t, defaultCaller, http.MethodGet, "/api/v1/telegram", "")
@@ -68,7 +68,7 @@ func TestServerListByPermissionNeverNamesConfiguredSecrets(t *testing.T) {
 	// against the route's own type, not this text.
 }
 
-func TestServerListReportsTheAccountsIdentity(t *testing.T) {
+func TestServerListDoesNotExposePersonalAccountIdentity(t *testing.T) {
 	worker := readyWorker()
 	worker.profile.User = &rpc.Account{ID: 42, FirstName: "Ada", LastName: "Lovelace", Username: "ada"}
 	worker.profile.ThisDC = 2
@@ -80,8 +80,8 @@ func TestServerListReportsTheAccountsIdentity(t *testing.T) {
 
 	env := newAccountEnv(t, registry{"official": worker, "pending": pending}, func(c *gateway.Config) {
 		c.Servers = []gateway.ServerInfo{
-			{Key: "official", Type: "official", Enabled: true, Registered: true},
-			{Key: "pending", Type: "custom", Enabled: true, Registered: true},
+			{Key: "official", Type: "official", Enabled: true},
+			{Key: "pending", Type: "custom", Enabled: true},
 		}
 	})
 
@@ -99,12 +99,8 @@ func TestServerListReportsTheAccountsIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	off := rows.Data.Servers[0]
-	user, _ := off["user"].(map[string]any)
-	if user == nil || user["id"] != float64(42) || user["username"] != "ada" || user["first_name"] != "Ada" {
-		t.Fatalf("official user = %v", off["user"])
-	}
-	if off["state"] != "connected" || off["authorized"] != true {
-		t.Fatalf("official row = %v", off)
+	if off["user"] != nil || off["state"] != "unknown" || off["authorized"] != nil {
+		t.Fatalf("global server row exposed a personal account identity: %v", off)
 	}
 	// The selector row's facts are all still there, under their own names.
 	for _, name := range []string{"key", "type", "enabled", "health_checkable", "state", "authorized", "transport", "last_success_at", "last_error"} {
@@ -112,11 +108,16 @@ func TestServerListReportsTheAccountsIdentity(t *testing.T) {
 			t.Errorf("the status row is missing %q", name)
 		}
 	}
-	if pending := rows.Data.Servers[1]; pending["user"] != nil || pending["authorized"] != false {
-		t.Fatalf("an unauthorized account must report no identity: %v", pending)
+	if pending := rows.Data.Servers[1]; pending["user"] != nil || pending["authorized"] != nil ||
+		pending["state"] != "unknown" {
+		t.Fatalf("global server row exposed another account's state: %v", pending)
 	}
 
-	// It never fails the page when the account is unreachable.
+	if worker.callCount() != 0 || pending.callCount() != 0 {
+		t.Fatal("the global server list must not call an account-keyed worker")
+	}
+
+	// A worker's identity error is irrelevant to the global configuration list.
 	worker.profileE = rpc.ErrUnavailable
 	resp = env.send(t, defaultCaller, http.MethodGet, "/api/v1/telegram", "")
 	if resp.StatusCode != http.StatusOK {

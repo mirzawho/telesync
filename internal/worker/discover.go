@@ -209,7 +209,7 @@ func (s *Service) mapDiscoveryError(err error) error {
 	if coded, ok := out.(*rpc.Error); ok {
 		code = coded.Code
 	}
-	s.log("worker: client=%s mapped error %v -> %s", s.client.Key, err, code)
+	s.log("worker: account=%s mapped error %v -> %s", s.logName(), err, code)
 	return out
 }
 

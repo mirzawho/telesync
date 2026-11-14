@@ -120,6 +120,18 @@ func (h *Handler) HandleJob(ctx context.Context, job automation.Job) error {
 		return &automation.JobError{Code: "event_not_found",
 			Message: "The source message this run was queued for is no longer recorded.", Retryable: false}
 	}
+	if !job.Owner.Bound() ||
+		job.Owner.OwnerUserID != workflow.OwnerUserID ||
+		job.Owner.AccountID != workflow.AccountID ||
+		event.AccountID != workflow.AccountID ||
+		event.AccountOwnerUserID() != workflow.OwnerUserID {
+		// The queue's binding is the execution identity, not a hint. A stale or
+		// ambiguous job must not be rescued by looking up the workflow author or
+		// the source server key; both the workflow and event must still agree
+		// with the exact owner/account that was durably queued.
+		return &automation.JobError{Code: "automation_owner_mismatch",
+			Message: "The queued workflow does not match its persisted owner and account.", Retryable: false}
+	}
 
 	run, created, err := h.Runs.BeginWorkflowRun(ctx, channelstore.BeginWorkflowRunRequest{
 		WorkflowID:      workflow.ID,

@@ -508,11 +508,13 @@ export function buildReport(
     key: "general",
     title: "عمومی",
     lines: [
-      {
-        key: "servers.view",
-        label: globalPermissionLabels["servers.view"],
-        state: holdsGlobal(draft, "servers.view") ? "allowed" : "denied",
-      },
+      // `servers.view` is deliberately absent. It was the one global permission
+      // that granted a user anything about the centrally managed Telegram
+      // connections, and v0.0.5 retires that assignment. It is still carried in
+      // the draft and posted back unchanged (`normalizeDraft` and
+      // `postedGlobals` keep it because `globalPermissionLabels` still names
+      // it), so a save never silently revokes a stored grant — it simply is no
+      // longer a thing this dialog offers or reports.
       // Kept in the draft and reported, though this dialog has no editor for it:
       // a save must never drop a permission it was not asked about.
       {

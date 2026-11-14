@@ -50,6 +50,7 @@ import {
   type DestinationDraft,
   type WorkflowDraft,
 } from "@/lib/automation"
+import type { TelegramAccount } from "@/lib/types"
 
 // --- harness ----------------------------------------------------------------
 
@@ -97,8 +98,8 @@ const channelOptions = (
   ...entries: [string, Partial<ChannelOptions>][]
 ): Map<string, ChannelOptions> =>
   new Map<string, ChannelOptions>(
-    entries.map(([clientKey, over]) => [
-      clientKey,
+    entries.map(([accountID, over]) => [
+      accountID,
       {
         items: [
           { id: 77, label: "کانال مقصد", detail: "@dest" },
@@ -132,7 +133,11 @@ const render = (
       taken={new Map<number, TakenWorkflow>()}
       servers={servers}
       sites={sites}
-      channelsByKey={channelOptions(["official", {}], ["custom", {}])}
+      accounts={[WORKFLOW_ACCOUNT, DESTINATION_ACCOUNT, OTHER_DESTINATION_ACCOUNT]}
+      channelsByAccount={channelOptions(
+        [DESTINATION_ACCOUNT.id, {}],
+        [OTHER_DESTINATION_ACCOUNT.id, {}]
+      )}
       siteTerms={new Map<number, SiteTerms>([[4, emptyTerms()]])}
       pending={false}
       onSubmit={() => {}}
@@ -146,6 +151,10 @@ const telegramRow = (
   clientKey = "official"
 ): DestinationDraft => ({
   type: "telegram",
+  accountID:
+    clientKey === "custom"
+      ? OTHER_DESTINATION_ACCOUNT.id
+      : DESTINATION_ACCOUNT.id,
   clientKey,
   channelID,
   siteID: null,
@@ -251,7 +260,13 @@ test("the source picker offers the managed channels the loader read", async () =
   assert.equal(data.status, "ok")
   assert.equal(data.creating, true)
   assert.deepEqual(data.sourceChannels, [
-    { id: 5, label: "کانال خبری", clientKey: "official", detail: "official" },
+    {
+      id: 5,
+      label: "کانال خبری",
+      clientKey: "official",
+      accountId: WORKFLOW_ACCOUNT.id,
+      detail: "official",
+    },
   ])
 })
 
@@ -289,7 +304,7 @@ test("a destination block names its platform and can be removed", () => {
   assert.ok(out.includes("افزودن مقصد"), "the platform picker to add one")
 })
 
-test("one connection and its channels are one block, with a row each", () => {
+test("one account and its channels are one block, with a row each", () => {
   const draft = withDestinations(telegramRow(77), telegramRow(78))
   assert.equal(destinationBlocks(draft.destinations).length, 1)
   assert.deepEqual(
@@ -317,26 +332,32 @@ test("several destinations are several blocks, each with its own address", () =>
   assert.ok(out.includes("کانال‌های مقصد"))
 })
 
-test("a Telegram block shows the channels chosen on its own connection", () => {
+test("a Telegram block names its account and shows only its channels", () => {
   const out = render(withDestinations(telegramRow(77)))
   // The picker's own input holds a search, so what is actually a destination is
   // read from the chip it draws for the chosen channel.
   assert.ok(out.includes("کانال مقصد"))
   assert.ok(out.includes("کانال‌های مقصد"))
-  assert.ok(out.includes("official"), "the connection it belongs to is named")
+  assert.ok(out.includes(DESTINATION_ACCOUNT.id), "the selected account is named")
   assert.ok(!out.includes("برای افزودن مقصد تلگرامی"))
 })
 
-test("a block with no connection yet says so instead of offering channels", () => {
+test("a block with no account yet says so instead of offering channels", () => {
   const out = render(
-    withDestinations({ ...telegramRow(0), channelID: null, clientKey: "" })
+    withDestinations({
+      ...telegramRow(0),
+      accountID: "",
+      channelID: null,
+      clientKey: "",
+    })
   )
-  assert.match(out, /برای افزودن مقصد تلگرامی، اول یک اتصال را انتخاب کنید/)
+  assert.match(out, /برای افزودن مقصد تلگرامی، اول حساب مقصد را انتخاب کنید/)
 })
 
 test("an unchosen destination is named as incomplete and is never saved", () => {
   const draft = withDestinations({
     ...telegramRow(0),
+    accountID: "",
     channelID: null,
     clientKey: "",
   })
@@ -409,28 +430,30 @@ test("a WordPress destination writes the publisher's own vocabulary", () => {
   assert.equal(DEFAULT_POST_STATUS, "publish")
 })
 
-test("changing the connection keeps only the channels it offers", () => {
+test("changing the destination account clears old channels and scopes eligibility", () => {
   const draft = withDestinations(telegramRow(77), telegramRow(78))
-  const moved = updateBlock(draft.destinations, "tg:official", {
+  const moved = updateBlock(draft.destinations, `tg:${DESTINATION_ACCOUNT.id}`, {
+    accountID: OTHER_DESTINATION_ACCOUNT.id,
     clientKey: "custom",
-    channelIDs: [77, 78],
+    channelIDs: [],
   })
-  // Both rows travel to the new connection, and the trim drops the one that
-  // connection does not have.
-  assert.equal(moved.length, 2)
-  assert.ok(moved.every((row) => row.clientKey === "custom"))
-  const kept = trimChannels(moved, "custom", [78])
+  assert.equal(moved.length, 1)
+  assert.equal(moved[0].accountID, OTHER_DESTINATION_ACCOUNT.id)
+  const selected = updateBlock(moved, `tg:${OTHER_DESTINATION_ACCOUNT.id}`, {
+    channelIDs: [78],
+  })
+  const kept = trimChannels(selected, OTHER_DESTINATION_ACCOUNT.id, [78])
   assert.equal(kept.length, 1)
   assert.equal(kept[0].channelID, 78)
   // The block survives with an empty picker rather than vanishing.
-  const none = trimChannels(moved, "custom", [])
+  const none = trimChannels(selected, OTHER_DESTINATION_ACCOUNT.id, [])
   assert.equal(destinationBlocks(none).length, 1)
   assert.equal(destinationBlocks(none)[0].complete, false)
 })
 
-test("changing the connection loads that connection's own channels", async () => {
+test("destination channels are fetched through the exact account route", async () => {
   const calls = stubApi((call) => {
-    if (call.path === "/api/v1/telegram/custom/channels") {
+    if (call.path === `/api/v1/telegram/accounts/${OTHER_DESTINATION_ACCOUNT.id}/channels`) {
       return ok({
         channels: [
           { id: "78", title: "کانال دوم", username: "two" },
@@ -440,9 +463,12 @@ test("changing the connection loads that connection's own channels", async () =>
     }
     return refuse(404, "not_found", "no such route " + call.path)
   })
-  const items = await eligibleChannels("tok", "custom")
+  const items = await eligibleChannels("tok", OTHER_DESTINATION_ACCOUNT.id)
   assert.equal(calls.length, 1)
-  assert.equal(calls[0].path, "/api/v1/telegram/custom/channels")
+  assert.equal(
+    calls[0].path,
+    `/api/v1/telegram/accounts/${OTHER_DESTINATION_ACCOUNT.id}/channels`
+  )
   assert.match(calls[0].query, /capability=send/)
   // Authorization is read, never assumed: a channel the account may not post
   // in is not offered as a destination. The id arrives as a decimal string and
@@ -744,6 +770,7 @@ function viewOf(body: Record<string, unknown>, id = 12) {
   return {
     id,
     managed_channel_id: body.managed_channel_id,
+    account_id: body.account_id ?? "",
     channel: {
       id: body.managed_channel_id,
       title: "کانال خبری",
@@ -763,6 +790,7 @@ function viewOf(body: Record<string, unknown>, id = 12) {
       client_key: row.client_key,
       channel_id: row.channel_id,
       site_id: row.site_id,
+      account_id: row.account_id ?? "",
       options: row.options ?? {},
       position: row.position,
       enabled: row.enabled,
@@ -770,6 +798,32 @@ function viewOf(body: Record<string, unknown>, id = 12) {
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-02T00:00:00Z",
   }
+}
+
+// The one account of the caller's own that this fake gateway knows. A workflow
+// binds to it, and the source channel above is scoped to exactly this set.
+const WORKFLOW_ACCOUNT: TelegramAccount = {
+  id: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  server_key: "official",
+  network_type: "telegram",
+  remote_display_name: "حساب نخست",
+  status: "connected",
+}
+
+const DESTINATION_ACCOUNT: TelegramAccount = {
+  id: "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+  server_key: "official",
+  network_type: "telegram",
+  remote_display_name: "حساب مقصد",
+  status: "connected",
+}
+
+const OTHER_DESTINATION_ACCOUNT: TelegramAccount = {
+  id: "acc_cccccccccccccccccccccccccc",
+  server_key: "custom",
+  network_type: "custom",
+  remote_display_name: "حساب مقصد دوم",
+  status: "connected",
 }
 
 // A stand-in of the gateway that keeps what it was given and reads it back, so
@@ -780,9 +834,19 @@ function fakeGateway() {
   stubApi((call) => {
     calls.push(call)
     if (call.path === "/api/v1/auth/me") return ok(me)
+    if (call.path === "/api/v1/me/telegram-accounts") {
+      return ok({ accounts: [WORKFLOW_ACCOUNT] })
+    }
     if (call.path === "/api/v1/local/channels") {
       return ok({
-        channels: [{ id: 5, title: "کانال خبری", client_key: "official" }],
+        channels: [
+          {
+            id: 5,
+            title: "کانال خبری",
+            client_key: "official",
+            account_id: WORKFLOW_ACCOUNT.id,
+          },
+        ],
       })
     }
     if (call.path === "/api/v1/telegram") return ok({ servers: [] })
@@ -835,6 +899,7 @@ const newWorkflowFields = {
   destinations: JSON.stringify([
     {
       type: "telegram",
+      accountID: DESTINATION_ACCOUNT.id,
       clientKey: "official",
       channelID: 999,
       siteID: null,
@@ -843,6 +908,7 @@ const newWorkflowFields = {
     },
     {
       type: "wordpress",
+      accountID: "",
       clientKey: "",
       channelID: null,
       siteID: 4,

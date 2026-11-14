@@ -13,6 +13,7 @@ These JSON Schema documents are rendered from the request types in `internal/gat
 | `createUserRequest` | [createuserrequest.json](createuserrequest.json) |
 | `leaveRequest` | [leaverequest.json](leaverequest.json) |
 | `loginRequest` | [loginrequest.json](loginrequest.json) |
+| `loginStartRequest` | [loginstartrequest.json](loginstartrequest.json) |
 | `permissionsRequest` | [permissionsrequest.json](permissionsrequest.json) |
 | `updateUserRequest` | [updateuserrequest.json](updateuserrequest.json) |
 | `webhookRequest` | [webhookrequest.json](webhookrequest.json) |

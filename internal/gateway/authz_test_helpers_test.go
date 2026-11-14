@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/auth"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/gateway"
@@ -93,13 +94,26 @@ func newAccountEnv(t *testing.T, workers registry, mutate ...func(*gateway.Confi
 	// global permission. Resource rights are granted per test.
 
 	env.defaults = env.account(t, "default-admin", channelstore.GlobalPermissions()...)
-	env.testEnv = newEnv(t, workers, append([]func(*gateway.Config){func(c *gateway.Config) {
+	// The environment is built on this suite's own store and signer. Handing
+	// them in rather than letting the builder open a second pair is what keeps
+	// the accounts, the channels and the gateway reading one database — an
+	// account created in another file makes every channel registration under it
+	// fail a foreign key that is right to complain.
+	env.testEnv = newEnvOwned(t, store, tokens, env.defaults.user, workers, append([]func(*gateway.Config){func(c *gateway.Config) {
 		c.Users = store
 		c.Tokens = tokens
 		c.Operator = operatorToken
 		c.Channels = store
 		c.Categories = store
 		c.Publishes = store
+		// Account ownership is the thing this suite exercises, so the gateway
+		// gets the real repository and the real resolver rather than a stub:
+		// a refusal here has to come from the ownership check, not from a
+		// missing dependency. The channel store is the account-scoped one too,
+		// so a request for one account's channel never reaches another's.
+		c.Accounts = store
+		c.AccountChannels = store
+		c.Resolver = gateway.NewStoreAccountResolver(store)
 	}}, mutate...)...)
 	env.session = operatorToken
 	return env
@@ -133,8 +147,72 @@ func (e *accountEnv) tokenFor(t *testing.T, id int64) string {
 }
 
 // channelRow records a Telegram channel locally so it can carry an assignment.
+// sessionAccount gives one user their own Telegram account on one server and
+// registers the worker that serves it, keyed by the account id.
+//
+// Under user-owned accounts a keyed route resolves the caller's own account
+// before anything else, so a test that grants permissions without an account
+// never reaches the permission check it is trying to exercise.
+func (e *accountEnv) sessionAccount(t *testing.T, who identity, serverKey string, network string, worker *fakeWorker) string {
+	t.Helper()
+	ctx := context.Background()
+	id, err := accountid.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.Create(ctx, channelstore.Account{
+		ID:               id,
+		OwnerUserID:      who.user.ID,
+		ServerKey:        serverKey,
+		NetworkType:      network,
+		// A distinct remote identity per account: two accounts on one server
+		// are two records, not two registrations of one remote identity.
+		RemoteUserID:     1 + int64(len(e.workers)),
+		Status:           channelstore.AccountStatusConnected,
+	}); err != nil {
+		t.Fatalf("Create account: %v", err)
+	}
+	if worker != nil {
+		// The registry is keyed by account id now: a keyed route resolves the
+		// caller's own account first, and it is that account's worker that runs.
+		e.workers[id] = worker
+	}
+	// The server-keyed account map lives on the embedded testEnv; the field is
+	// reached through it because accountEnv.account is the helper method that
+	// creates a user, and it shadows the field.
+	if e.testEnv.account != nil {
+		e.testEnv.account[serverKey] = channelstore.Account{ID: id, OwnerUserID: who.user.ID, ServerKey: serverKey}
+	}
+	return id
+}
+
+// ownedChannelRow registers one managed channel under one account's own
+// subscription, which is what every account-scoped read resolves against.
+func (e *accountEnv) ownedChannelRow(t *testing.T, accountID, key string, telegramID int64) channelstore.Channel {
+	t.Helper()
+	ch, err := e.store.UpsertFor(context.Background(), accountID, channelstore.Channel{
+		ClientKey:        key,
+		ChannelID:        telegramID,
+		PeerType:         channelstore.PeerChannel,
+		Title:            fmt.Sprintf("Channel %d", telegramID),
+		MembershipStatus: channelstore.StatusMember,
+	})
+	if err != nil {
+		t.Fatalf("UpsertFor: %v", err)
+	}
+	return ch
+}
+
 func (e *accountEnv) channelRow(t *testing.T, key string, telegramID int64) channelstore.Channel {
 	t.Helper()
+	// A channel the caller can act through is registered under their account on
+	// that server, which is what a real user's join produces. The legacy Upsert
+	// is left for the keys this environment deliberately has no account for —
+	// those tests are about a quarantined registration, and reaching for a
+	// worker by its account then finds none, exactly as it should.
+	if acc, ok := e.testEnv.account[key]; ok && acc.ID != "" {
+		return e.ownedChannelRow(t, acc.ID, key, telegramID)
+	}
 	ch, err := e.store.Upsert(context.Background(), channelstore.Channel{
 		ClientKey:        key,
 		ChannelID:        telegramID,

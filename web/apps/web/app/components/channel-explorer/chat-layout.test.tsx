@@ -42,6 +42,7 @@ test("message actions are anchored at the physical bottom-right inside their bub
 
 const channel: ChannelDetail = {
   id: "141",
+  account_id: "acc_test",
   type: "channel",
   title: "کانال آزمایشی",
   avatar_available: false,
@@ -56,7 +57,7 @@ const channel: ChannelDetail = {
 }
 
 test("chat footer overlays the local timeline with translucent blur and measured scroll clearance", () => {
-  const markup = html(<ChannelMessagesPane channel={channel} channelId={7} client="cat" />)
+  const markup = html(<ChannelMessagesPane channel={channel} channelId={7} client="cat" accountId="acc_test" />)
   assert.match(markup, /data-slot="message-pane-scroll-region"/)
   assert.match(markup, /data-slot="message-timeline-content"/)
   assert.match(markup, /data-slot="floating-chat-footer"[^>]*class="[^"]*absolute[^\"]*bottom-0[^\"]*inset-x-0[^\"]*bg-background\/80[^\"]*backdrop-blur-xl/)

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/automation/events"
 	"github.com/mirza/telesync/internal/automation/queue"
@@ -47,6 +48,10 @@ type harness struct {
 	clock         *clock
 	path          string
 	managedChanID int64
+	// owner is the account every job this harness queues is bound to. The
+	// queue refuses work that names none, so a harness that skipped this would
+	// be testing nothing: every enqueue would fail at the door.
+	owner automation.Owner
 }
 
 func newHarness(t *testing.T) *harness {
@@ -72,7 +77,37 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatalf("seed managed channel: %v", err)
 	}
-	return &harness{t: t, store: store, clock: clk, path: path, managedChanID: row.ID}
+
+	// Every job is bound to an owner, and the queue refuses one that is not.
+	// The account is created here so the binding exercised throughout is real.
+	user, err := store.CreateUser(context.Background(), "Queuer", "queuer",
+		"$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA", true)
+	if err != nil {
+		t.Fatalf("create job owner: %v", err)
+	}
+	owner := automation.Owner{OwnerUserID: user.ID, AccountID: mustAccount(t, store, user.ID).ID}
+
+	return &harness{t: t, store: store, clock: clk, path: path, managedChanID: row.ID, owner: owner}
+}
+
+// mustAccount creates one user-owned account and returns it.
+func mustAccount(t *testing.T, store *channelstore.Store, ownerUserID int64) channelstore.Account {
+	t.Helper()
+	id, err := accountid.New()
+	if err != nil {
+		t.Fatalf("accountid.New: %v", err)
+	}
+	acc, err := store.Create(context.Background(), channelstore.Account{
+		ID:          id,
+		OwnerUserID: ownerUserID,
+		ServerKey:   "official",
+		NetworkType: channelstore.NetworkTelegram,
+		Status:      channelstore.AccountStatusConnected,
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	return acc
 }
 
 // addEvent stores one event a job can point at. Jobs carry a foreign key, so
@@ -80,7 +115,12 @@ func newHarness(t *testing.T) *harness {
 func (h *harness) addEvent(messageID int) string {
 	h.t.Helper()
 	ev := events.Source{
-		ClientKey:         "official",
+		ClientKey: "official",
+		// The owner is carried into the event: ingestion binds scheduled work to
+		// the account that observed the message, and an event that names no
+		// owner is quarantined rather than run as somebody else.
+		AccountID:         h.owner.AccountID,
+		OwnerUserID:       h.owner.OwnerUserID,
 		NetworkKey:        "official",
 		ManagedChannelID:  h.managedChanID,
 		TelegramChannelID: 1000,
@@ -96,7 +136,7 @@ func (h *harness) addEvent(messageID int) string {
 func (h *harness) enqueue(eventID string, kind automation.JobKind, target int64, maxAttempts int) automation.Job {
 	h.t.Helper()
 	job, _, err := h.store.EnqueueAutomationJob(context.Background(), channelstore.EnqueueJobRequest{
-		EventID: eventID, Kind: kind, TargetID: target, MaxAttempts: maxAttempts,
+		EventID: eventID, Kind: kind, TargetID: target, Owner: h.owner, MaxAttempts: maxAttempts,
 	})
 	if err != nil {
 		h.t.Fatalf("enqueue: %v", err)
@@ -192,7 +232,8 @@ func TestTwoWorkersNeverClaimTheSameJob(t *testing.T) {
 			worker := "w" + string(rune('a'+w))
 			for {
 				job, ok, err := h.store.ClaimAutomationJob(context.Background(),
-					channelstore.ClaimJobRequest{Worker: worker, Lease: time.Minute})
+					channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+						Worker: worker, Lease: time.Minute})
 				if err != nil || !ok {
 					return
 				}
@@ -222,7 +263,8 @@ func TestAnExpiredLeaseIsReclaimedByAnotherWorker(t *testing.T) {
 	job := h.enqueue(eventID, automation.JobWorkflowRun, 1, 5)
 
 	claimed, ok, err := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "crashed", Lease: 2 * time.Minute})
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "crashed", Lease: 2 * time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("first claim: ok=%v err=%v", ok, err)
 	}
@@ -232,13 +274,15 @@ func TestAnExpiredLeaseIsReclaimedByAnotherWorker(t *testing.T) {
 
 	// While the lease is live the job is nobody else's.
 	if _, ok, _ := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "other", Lease: time.Minute}); ok {
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "other", Lease: time.Minute}); ok {
 		t.Fatal("a live lease did not hold the job")
 	}
 
 	h.clock.Advance(3 * time.Minute)
 	taken, ok, err := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "other", Lease: time.Minute})
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "other", Lease: time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("reclaim after expiry: ok=%v err=%v", ok, err)
 	}
@@ -292,6 +336,130 @@ func TestASuccessfulJobIsCompleted(t *testing.T) {
 	_ = runner
 }
 
+func TestSharedRunnerDispatchesThroughTheAccountOnEachClaimedJob(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	eventA := h.addEvent(1)
+	jobA := h.enqueue(eventA, automation.JobWebhookDelivery, 1, 3)
+
+	userB, err := h.store.CreateUser(ctx, "Second owner", "second-owner",
+		"$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA", true)
+	if err != nil {
+		t.Fatalf("create second owner: %v", err)
+	}
+	accountB := mustAccount(t, h.store, userB.ID)
+	channelB, err := h.store.UpsertFor(ctx, accountB.ID, channelstore.Channel{
+		ClientKey: "official", ChannelID: 2000, PeerType: channelstore.PeerChannel,
+		MembershipStatus: "member", Title: "Second source",
+	})
+	if err != nil {
+		t.Fatalf("register second channel: %v", err)
+	}
+	eventB := events.Source{
+		ClientKey: "official", AccountID: accountB.ID, OwnerUserID: userB.ID,
+		NetworkKey: "official", ManagedChannelID: channelB.ID, TelegramChannelID: 2000,
+		Message:    rpc.Message{ID: 2, Date: h.clock.Now(), Text: "second"},
+		ReceivedAt: h.clock.Now(),
+	}.Event()
+	if _, err := h.store.InsertMessageEvent(ctx, eventB); err != nil {
+		t.Fatalf("insert second event: %v", err)
+	}
+	jobBRecord, _, err := h.store.EnqueueAutomationJob(ctx, channelstore.EnqueueJobRequest{
+		EventID: eventB.ID, Kind: automation.JobWebhookDelivery, TargetID: 1, MaxAttempts: 3,
+		Owner: automation.Owner{OwnerUserID: userB.ID, AccountID: accountB.ID},
+	})
+	if err != nil {
+		t.Fatalf("enqueue second owner's job: %v", err)
+	}
+
+	// The shared queue chooses an account runner only from the durable job
+	// binding. There is deliberately no "first available" fallback.
+	accountRunners := map[string]string{
+		h.owner.AccountID: "runner-a",
+		accountB.ID:       "runner-b",
+	}
+	dispatched := make(chan string, 2)
+	var logMu sync.Mutex
+	var logs []string
+	handler := func(_ context.Context, job automation.Job) error {
+		runner, ok := accountRunners[job.Owner.AccountID]
+		if !ok || job.Owner.OwnerUserID == 0 {
+			return errors.New("no runner for the job's durable owner")
+		}
+		dispatched <- job.Owner.AccountID + ":" + runner
+		return nil
+	}
+	runner := queue.New(h.store,
+		automation.JobHandlers{automation.JobWebhookDelivery: handler},
+		queue.Config{Workers: 1, PollInterval: time.Millisecond, Lease: time.Minute},
+		queue.WithClock(h.clock.Now), queue.WithWorkerName("host/123"),
+		queue.WithLogf(func(format string, args ...any) {
+			logMu.Lock()
+			logs = append(logs, format)
+			logMu.Unlock()
+		}))
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(runCtx) }()
+
+	got := map[string]bool{}
+	for len(got) < 2 {
+		select {
+		case dispatch := <-dispatched:
+			got[dispatch] = true
+		case <-time.After(2 * time.Second):
+			cancel()
+			<-done
+			t.Fatalf("shared runner dispatched %v, want both account runners", got)
+		}
+	}
+
+	// Handler notification occurs before the queue commits completion. Wait for
+	// both durable outcomes before stopping the claimant pool.
+	deadline := time.After(2 * time.Second)
+	for {
+		a, foundA, errA := h.store.AutomationJob(ctx, jobA.ID)
+		b, foundB, errB := h.store.AutomationJob(ctx, jobBRecord.ID)
+		if errA != nil || errB != nil || !foundA || !foundB {
+			cancel()
+			<-done
+			t.Fatalf("read completed jobs: A found=%v err=%v, B found=%v err=%v", foundA, errA, foundB, errB)
+		}
+		if a.Status == automation.JobSucceeded && b.Status == automation.JobSucceeded {
+			break
+		}
+		select {
+		case <-deadline:
+			cancel()
+			<-done
+			t.Fatalf("jobs were not completed: A=%s B=%s", a.Status, b.Status)
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	want := map[string]bool{
+		h.owner.AccountID + ":runner-a": true,
+		accountB.ID + ":runner-b":       true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("dispatches = %v, want %v", got, want)
+	}
+	for dispatch := range want {
+		if !got[dispatch] {
+			t.Fatalf("dispatches = %v, want %v", got, want)
+		}
+	}
+	logMu.Lock()
+	defer logMu.Unlock()
+	if len(logs) != 0 {
+		t.Fatalf("shared claimant logged claim failures despite runnable jobs: %v", logs)
+	}
+}
+
 // A retryable failure is not the end: the job comes back after a bounded delay.
 func TestARetryableFailureSchedulesAnotherAttempt(t *testing.T) {
 	h := newHarness(t)
@@ -299,7 +467,7 @@ func TestARetryableFailureSchedulesAnotherAttempt(t *testing.T) {
 	job := h.enqueue(eventID, automation.JobWebhookDelivery, 1, 3)
 
 	claimed, ok, err := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w1", Lease: time.Minute})
+		channelstore.ClaimJobRequest{Worker: "host/123/0", Lease: time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
@@ -308,7 +476,7 @@ func TestARetryableFailureSchedulesAnotherAttempt(t *testing.T) {
 	}
 
 	jobErr := automation.JobError{Code: "http_502", Message: "bad gateway", Retryable: true}
-	status, err := h.store.RecordAutomationJobFailure(context.Background(), claimed.ID, "w1",
+	status, err := h.store.RecordAutomationJobFailure(context.Background(), claimed.ID, "host/123/0",
 		jobErr, true, h.clock.Now().Add(10*time.Second))
 	if err != nil {
 		t.Fatalf("record failure: %v", err)
@@ -329,15 +497,19 @@ func TestARetryableFailureSchedulesAnotherAttempt(t *testing.T) {
 	}
 
 	// Not available before its time...
-	if _, ok, _ := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w2", Lease: time.Minute}); ok {
+	if _, ok, err := h.store.ClaimAutomationJob(context.Background(),
+		channelstore.ClaimJobRequest{Worker: "host/123/1", Lease: time.Minute}); err != nil || ok {
 		t.Fatal("a job waiting for its backoff was claimed early")
 	}
 	// ...and available after it.
 	h.clock.Advance(11 * time.Second)
-	if _, ok, err := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w2", Lease: time.Minute}); err != nil || !ok {
+	again, ok, err := h.store.ClaimAutomationJob(context.Background(),
+		channelstore.ClaimJobRequest{Worker: "host/123/1", Lease: time.Minute})
+	if err != nil || !ok {
 		t.Fatalf("claim after the backoff: ok=%v err=%v", ok, err)
+	}
+	if again.ID != job.ID || again.OwnerUserID != h.owner.OwnerUserID || again.AccountID != h.owner.AccountID {
+		t.Fatalf("retry changed job identity or owner: %+v; want job %d owner %+v", again, job.ID, h.owner)
 	}
 }
 
@@ -349,7 +521,8 @@ func TestAPermanentFailureIsTerminal(t *testing.T) {
 	job := h.enqueue(eventID, automation.JobWebhookDelivery, 1, 3)
 
 	claimed, _, _ := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w1", Lease: time.Minute})
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w1", Lease: time.Minute})
 	jobErr := automation.JobError{Code: "http_404", Message: "gone", Retryable: false}
 	status, err := h.store.RecordAutomationJobFailure(context.Background(), claimed.ID, "w1",
 		jobErr, false, h.clock.Now())
@@ -362,7 +535,8 @@ func TestAPermanentFailureIsTerminal(t *testing.T) {
 
 	h.clock.Advance(time.Hour)
 	if _, ok, _ := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w2", Lease: time.Minute}); ok {
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w2", Lease: time.Minute}); ok {
 		t.Fatal("a terminally failed job was handed out again")
 	}
 	got := h.job(job.ID)
@@ -379,7 +553,8 @@ func TestTheAttemptBudgetStopsARetryableFailure(t *testing.T) {
 
 	for attempt := 1; attempt <= 3; attempt++ {
 		claimed, ok, err := h.store.ClaimAutomationJob(context.Background(),
-			channelstore.ClaimJobRequest{Worker: "w1", Lease: time.Minute})
+			channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+				Worker: "w1", Lease: time.Minute})
 		if err != nil || !ok {
 			t.Fatalf("claim attempt %d: ok=%v err=%v", attempt, ok, err)
 		}
@@ -407,7 +582,8 @@ func TestTheAttemptBudgetStopsARetryableFailure(t *testing.T) {
 	}
 	h.clock.Advance(time.Hour)
 	if _, ok, _ := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w2", Lease: time.Minute}); ok {
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w2", Lease: time.Minute}); ok {
 		t.Fatal("the job was handed out again after its budget ran out")
 	}
 }
@@ -422,7 +598,8 @@ func TestAWorkflowsMessagesAreProcessedInOrder(t *testing.T) {
 	third := h.enqueue(h.addEvent(3), automation.JobWorkflowRun, 1, 5)
 
 	claimed, ok, err := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w1", Lease: time.Minute})
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w1", Lease: time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
@@ -432,7 +609,8 @@ func TestAWorkflowsMessagesAreProcessedInOrder(t *testing.T) {
 
 	// The second must not jump the queue while the first is unfinished.
 	if jumped, ok, _ := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w2", Lease: time.Minute}); ok {
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w2", Lease: time.Minute}); ok {
 		t.Fatalf("job %d ran while %d was still outstanding", jumped.ID, first.ID)
 	}
 
@@ -440,7 +618,8 @@ func TestAWorkflowsMessagesAreProcessedInOrder(t *testing.T) {
 		t.Fatalf("complete: %v", err)
 	}
 	next, ok, err := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w2", Lease: time.Minute})
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w2", Lease: time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("claim after completion: ok=%v err=%v", ok, err)
 	}
@@ -458,11 +637,13 @@ func TestIndependentTargetsRunInParallel(t *testing.T) {
 	free := h.enqueue(h.addEvent(2), automation.JobWorkflowRun, 2, 5)
 
 	if _, ok, _ := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w1", Lease: time.Minute}); !ok {
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w1", Lease: time.Minute}); !ok {
 		t.Fatal("nothing was claimable")
 	}
 	got, ok, err := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w2", Lease: time.Minute})
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w2", Lease: time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("claim for the second channel: ok=%v err=%v", ok, err)
 	}
@@ -475,15 +656,18 @@ func TestIndependentTargetsRunInParallel(t *testing.T) {
 func TestMessageEditsSerializeOneTargetButLeaveOtherTargetsRunnable(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
+	// The account is the harness's own: the jobs are claimed by the harness's
+	// workers, and a job is only claimable by the account that owns it.
 	user, err := h.store.CreateUser(ctx, "Editor", "editor", "$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA", true)
 	if err != nil {
 		t.Fatalf("create operation owner: %v", err)
 	}
+	owner := h.owner
 	enqueuer := queue.NewEnqueuer(h.store, 5)
 	edit := func(targetMessageID int64, fingerprint string) channelstore.MessageEditOperation {
 		h.t.Helper()
 		op, _, err := h.store.BeginMessageEditOperation(ctx, channelstore.MessageEditOperation{
-			UserID: user.ID, ClientKey: "cat", DestinationChannelID: "98", TargetMessageID: targetMessageID,
+			UserID: user.ID, AccountID: owner.AccountID, ClientKey: "cat", DestinationChannelID: "98", TargetMessageID: targetMessageID,
 			RequestPayload: `{"text":"replacement"}`, RequestFingerprint: fingerprint,
 		})
 		if err != nil {
@@ -495,21 +679,23 @@ func TestMessageEditsSerializeOneTargetButLeaveOtherTargetsRunnable(t *testing.T
 	first := edit(11, "first")
 	second := edit(11, "second")
 	other := edit(12, "other")
-	if err := enqueuer.EnqueueMessageEdit(ctx, first.PublicID, 9001); err != nil {
+	if err := enqueuer.EnqueueMessageEdit(ctx, first.PublicID, 9001, owner); err != nil {
 		t.Fatalf("enqueue first edit: %v", err)
 	}
-	if err := enqueuer.EnqueueMessageEdit(ctx, second.PublicID, 9001); err != nil {
+	if err := enqueuer.EnqueueMessageEdit(ctx, second.PublicID, 9001, owner); err != nil {
 		t.Fatalf("enqueue second edit: %v", err)
 	}
-	if err := enqueuer.EnqueueMessageEdit(ctx, other.PublicID, 9002); err != nil {
+	if err := enqueuer.EnqueueMessageEdit(ctx, other.PublicID, 9002, owner); err != nil {
 		t.Fatalf("enqueue unrelated edit: %v", err)
 	}
 
-	claimed, ok, err := h.store.ClaimAutomationJob(ctx, channelstore.ClaimJobRequest{Worker: "w1", Lease: time.Minute})
+	claimed, ok, err := h.store.ClaimAutomationJob(ctx, channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+		Worker: "w1", Lease: time.Minute})
 	if err != nil || !ok || claimed.EventID != first.PublicID {
 		t.Fatalf("first claim = %+v, ok=%v err=%v; want first target edit", claimed, ok, err)
 	}
-	next, ok, err := h.store.ClaimAutomationJob(ctx, channelstore.ClaimJobRequest{Worker: "w2", Lease: time.Minute})
+	next, ok, err := h.store.ClaimAutomationJob(ctx, channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+		Worker: "w2", Lease: time.Minute})
 	if err != nil || !ok || next.EventID != other.PublicID {
 		t.Fatalf("while first target is held, claim = %+v ok=%v err=%v; want unrelated target", next, ok, err)
 	}
@@ -519,7 +705,8 @@ func TestMessageEditsSerializeOneTargetButLeaveOtherTargetsRunnable(t *testing.T
 	if err := h.store.CompleteAutomationJob(ctx, next.ID, "w2"); err != nil {
 		t.Fatalf("complete unrelated edit: %v", err)
 	}
-	last, ok, err := h.store.ClaimAutomationJob(ctx, channelstore.ClaimJobRequest{Worker: "w3", Lease: time.Minute})
+	last, ok, err := h.store.ClaimAutomationJob(ctx, channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+		Worker: "w3", Lease: time.Minute})
 	if err != nil || !ok || last.EventID != second.PublicID {
 		t.Fatalf("last claim = %+v ok=%v err=%v; want next edit of same target", last, ok, err)
 	}
@@ -533,7 +720,8 @@ func TestAnUnhandledJobKindIsReleasedUntouched(t *testing.T) {
 	job := h.enqueue(h.addEvent(1), automation.JobWorkflowRun, 1, 5)
 
 	claimed, ok, err := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "webhooks-only", Lease: time.Minute})
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "webhooks-only", Lease: time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
@@ -563,7 +751,8 @@ func TestACancelledJobIsNeverHandedOut(t *testing.T) {
 		t.Fatalf("status = %q, want cancelled", status)
 	}
 	if _, ok, _ := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w1", Lease: time.Minute}); ok {
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w1", Lease: time.Minute}); ok {
 		t.Fatal("a cancelled job was handed out")
 	}
 }
@@ -614,7 +803,8 @@ func TestAnUntypedErrorIsRetriedNotSwallowed(t *testing.T) {
 		cfg, queue.WithClock(h.clock.Now), queue.WithWorkerName("w1"))
 
 	claimed, ok, err := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w1", Lease: time.Minute})
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w1", Lease: time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
@@ -641,7 +831,8 @@ func TestASuccessRecordsNoError(t *testing.T) {
 		testConfig(), queue.WithClock(h.clock.Now), queue.WithWorkerName("w1"))
 
 	claimed, _, _ := h.store.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "w1", Lease: time.Minute})
+		channelstore.ClaimJobRequest{AccountID: h.owner.AccountID,
+			Worker: "w1", Lease: time.Minute})
 	runner.Execute(context.Background(), "w1", claimed)
 
 	got := h.job(job.ID)
@@ -660,10 +851,10 @@ func TestTheEnqueuerCarriesItsOwnAttemptBudget(t *testing.T) {
 	eventID := h.addEvent(1)
 	enqueuer := queue.NewEnqueuer(h.store, 7)
 
-	if err := enqueuer.EnqueueWebhookDelivery(context.Background(), eventID, 3); err != nil {
+	if err := enqueuer.EnqueueWebhookDelivery(context.Background(), eventID, 3, h.owner); err != nil {
 		t.Fatalf("EnqueueWebhookDelivery: %v", err)
 	}
-	if err := enqueuer.EnqueueWorkflowRun(context.Background(), eventID, 9); err != nil {
+	if err := enqueuer.EnqueueWorkflowRun(context.Background(), eventID, 9, h.owner); err != nil {
 		t.Fatalf("EnqueueWorkflowRun: %v", err)
 	}
 
@@ -697,11 +888,15 @@ func TestAQueueReloadsItsWorkFromTheDatabase(t *testing.T) {
 	defer func() { _ = reopened.Close() }()
 
 	claimed, ok, err := reopened.ClaimAutomationJob(context.Background(),
-		channelstore.ClaimJobRequest{Worker: "after-restart", Lease: time.Minute})
+		channelstore.ClaimJobRequest{Worker: "host/124/0", Lease: time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("claim after restart: ok=%v err=%v", ok, err)
 	}
 	if claimed.TargetID != 1 {
 		t.Fatalf("claimed target %d, want the queued work", claimed.TargetID)
+	}
+	if claimed.OwnerUserID != h.owner.OwnerUserID || claimed.AccountID != h.owner.AccountID {
+		t.Fatalf("recovered job owner = (%d, %q), want (%d, %q)",
+			claimed.OwnerUserID, claimed.AccountID, h.owner.OwnerUserID, h.owner.AccountID)
 	}
 }

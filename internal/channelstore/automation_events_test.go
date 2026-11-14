@@ -18,10 +18,18 @@ import (
 // connection happened to deliver the update first.
 
 // automationStore opens a store holding one managed channel to attach events to.
+// defaultOwner is the ownership binding automationStore sets up. An event with
+// no owner is not stored as schedulable work at all, so every fixture has to
+// carry one; tests that need two owners build their own.
+var defaultOwner automation.Owner
+
 func automationStore(t *testing.T) (*channelstore.Store, int64) {
 	t.Helper()
 	store := open(t)
-	ch, err := store.Upsert(context.Background(), channelstore.Channel{
+	user := createUser(t, store, "observer")
+	acc := ownerAccount(t, store, user.ID, "official", channelstore.NetworkTelegram, 1)
+	defaultOwner = automation.Owner{OwnerUserID: user.ID, AccountID: acc}
+	ch, err := store.UpsertFor(context.Background(), acc, channelstore.Channel{
 		ClientKey:        "official",
 		ChannelID:        1000,
 		PeerType:         channelstore.PeerChannel,
@@ -50,7 +58,8 @@ func eventFor(managedID int64) automation.MessageEvent {
 		Payload: automation.MessagePayload{
 			Message: rpc.Message{ID: 7, Text: "hello", Reactions: []rpc.Reaction{}, Entities: []rpc.Entity{}},
 		},
-	}
+		AccountID: defaultOwner.AccountID,
+	}.WithOwner(defaultOwner.OwnerUserID)
 }
 
 func TestAnEventIsStoredWithItsIdentityAndPayload(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -60,15 +61,24 @@ const copyBuffer = 32 << 10
 // OriginalName is the file name the client supplied. It is a label: it is
 // recorded so the message can show the name the sender chose, and it is never
 // used to build a path.
+//
+// OwnerUserID and AccountID are who the upload belongs to. They are required:
+// the staging area is one shared directory, so the only thing standing between
+// one tenant's upload and another's is this binding being checked on every
+// read. A file staged with no owner is refused rather than stored as bytes
+// anyone who guesses the name could later retrieve.
 type Meta struct {
 	OriginalName string
 	MIMEType     string
+	OwnerUserID  int64
+	AccountID    string
 }
 
 // File is one staged attachment as this server records it.
 type File struct {
 	// Name is the storage name. It is not a path and it is never derived from
-	// anything a caller sent.
+	// anything a caller sent. Knowing it is not a capability: every read is
+	// asked whose it is first.
 	Name string
 	// Size is the number of bytes staged.
 	Size int64
@@ -79,7 +89,34 @@ type File struct {
 	Original string
 	// MIMEType is the content type the caller declared for the bytes.
 	MIMEType string
+	// OwnerUserID and AccountID are the owner this upload is bound to.
+	OwnerUserID int64
+	AccountID   string
 }
+
+// OwnerFilter names one owner's files. A sweep given one touches only what
+// matches it, so a keep-set built from one account's operations can never be
+// enough to delete another account's still-queued upload.
+type OwnerFilter struct {
+	OwnerUserID int64
+	AccountID   string
+}
+
+// matches reports whether a staged file belongs to this filter's owner.
+func (f OwnerFilter) matches(o ownerRecord) bool {
+	return o.OwnerUserID == f.OwnerUserID && o.AccountID == f.AccountID
+}
+
+// ownerRecord is the binding stored beside one staged file.
+type ownerRecord struct {
+	OwnerUserID int64  `json:"owner_user_id"`
+	AccountID   string `json:"account_id"`
+}
+
+// ownerSuffix is the sidecar holding a staged file's ownership. A valid
+// storage name is exactly nameLength hex characters, so a sidecar is never
+// mistaken for an attachment by anything that lists the directory.
+const ownerSuffix = ".own"
 
 // Staging is a durable holding area for staged attachments.
 type Staging struct {
@@ -145,6 +182,11 @@ func (s *Staging) Write(ctx context.Context, r io.Reader, meta Meta) (File, erro
 	if err := ctx.Err(); err != nil {
 		return File{}, err
 	}
+	// A valid owner is required before staging starts. If writing its sidecar
+	// later fails, the bytes are removed rather than left without a binding.
+	if meta.OwnerUserID <= 0 || strings.TrimSpace(meta.AccountID) == "" {
+		return File{}, errors.New("staging: an attachment must name the owner and account it belongs to")
+	}
 
 	name, err := newName()
 	if err != nil {
@@ -193,13 +235,80 @@ func (s *Staging) Write(ctx context.Context, r io.Reader, meta Meta) (File, erro
 	syncDir(s.dir)
 	keep = true
 
+	rec := ownerRecord{OwnerUserID: meta.OwnerUserID, AccountID: strings.TrimSpace(meta.AccountID)}
+	if err := s.writeOwner(name, rec); err != nil {
+		// The bytes are staged but their binding is not. Without it nothing may
+		// read them back, so the whole upload is removed rather than left as an
+		// unreadable orphan.
+		_ = os.Remove(final)
+		return File{}, err
+	}
+
 	return File{
-		Name:     name,
-		Size:     written,
-		SHA256:   hex.EncodeToString(hash.Sum(nil)),
-		Original: sanitiseFileName(meta.OriginalName),
-		MIMEType: strings.TrimSpace(meta.MIMEType),
+		Name:        name,
+		Size:        written,
+		SHA256:      hex.EncodeToString(hash.Sum(nil)),
+		Original:    sanitiseFileName(meta.OriginalName),
+		MIMEType:    strings.TrimSpace(meta.MIMEType),
+		OwnerUserID: rec.OwnerUserID,
+		AccountID:   rec.AccountID,
 	}, nil
+}
+
+// writeOwner records who a staged file belongs to.
+//
+// It is a sidecar rather than a database row because the staging area is
+// deliberately self-contained — it survives a restart and its sweep has to work
+// even when no operation claims a file — and because a file whose binding is
+// written in the same directory is one whose binding cannot drift away from it.
+func (s *Staging) writeOwner(name string, rec ownerRecord) error {
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("staging: record the owner of %s: %w", name, err)
+	}
+	path := filepath.Join(s.dir, name+ownerSuffix)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("staging: record the owner of %s: %w", name, err)
+	}
+	return nil
+}
+
+// ownerOf reads a staged file's binding. A file with no binding has no
+// readable owner, and is refused to everyone — including its uploader, because
+// "no record" and "belonging to nobody" must not be told apart by trying.
+func (s *Staging) ownerOf(name string) (ownerRecord, error) {
+	data, err := os.ReadFile(filepath.Join(s.dir, name+ownerSuffix))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ownerRecord{}, ErrNotFound
+		}
+		return ownerRecord{}, fmt.Errorf("staging: read the owner of %s: %w", name, err)
+	}
+	var rec ownerRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return ownerRecord{}, fmt.Errorf("staging: the owner record of %s is unreadable: %w", name, err)
+	}
+	return rec, nil
+}
+
+// permitted reports whether this owner may reach a staged file.
+//
+// The account is compared too, not just the user: one Telesync user may hold
+// several accounts, and an upload staged for one is not the payload of another.
+func (s *Staging) permitted(name string, ownerUserID int64, accountID string) error {
+	if ownerUserID <= 0 || strings.TrimSpace(accountID) == "" {
+		return ErrNotFound
+	}
+	rec, err := s.ownerOf(name)
+	if err != nil {
+		return err
+	}
+	if rec.OwnerUserID != ownerUserID || rec.AccountID != strings.TrimSpace(accountID) {
+		// The same answer as "no such file": a name is not proof of ownership,
+		// and telling a caller that a file exists but is not theirs confirms it.
+		return ErrNotFound
+	}
+	return nil
 }
 
 // limit is the number of bytes Write will read before refusing. One byte more
@@ -271,7 +380,89 @@ func (s *Staging) Remove(name string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	// The binding goes with the bytes. A sidecar left behind would outlive its
+	// file and, worse, could be paired with a later upload that reused the name
+	// if names were ever not random.
+	_ = os.Remove(filepath.Join(s.dir, name+ownerSuffix))
 	return nil
+}
+
+// OpenFor reads one staged attachment back as a stream, for one owner.
+//
+// Ownership is checked before the file is opened. A name is not a capability:
+// an operator who guesses or leaks a storage name still gets nothing unless the
+// file is bound to the account asking.
+func (s *Staging) OpenFor(_ context.Context, ownerUserID int64, accountID, name string) (io.ReadCloser, error) {
+	if err := s.permitted(name, ownerUserID, accountID); err != nil {
+		return nil, err
+	}
+	return s.Open(name)
+}
+
+// ReadFor reads one staged attachment back whole, for one owner.
+func (s *Staging) ReadFor(_ context.Context, ownerUserID int64, accountID, name string) ([]byte, error) {
+	if err := s.permitted(name, ownerUserID, accountID); err != nil {
+		return nil, err
+	}
+	return s.ReadAll(name)
+}
+
+// ReconcileKeeping removes staged attachments one owner no longer has any use
+// for, and reports how many it removed.
+//
+// Unlike Reconcile, the keep set is a list of names and the sweep is bounded to
+// one owner. That bound is the point: a keep set assembled from a single
+// account's operations says nothing about what another account still needs, and
+// an unbounded sweep would delete the other tenant's in-flight upload. Files
+// belonging to a different owner are not touched at all.
+func (s *Staging) ReconcileKeeping(ctx context.Context, keep []string, filter OwnerFilter) (int, error) {
+	return s.ReconcileOwnedKeeping(ctx, keep, []OwnerFilter{filter})
+}
+
+// ReconcileOwnedKeeping sweeps only files whose ownership is known to be in
+// filters. Unknown or malformed sidecars are retained: without a readable
+// binding this process cannot prove that the file is safe to remove.
+func (s *Staging) ReconcileOwnedKeeping(_ context.Context, keep []string, filters []OwnerFilter) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	names, err := s.names()
+	if err != nil {
+		return 0, err
+	}
+	held := make(map[string]bool, len(keep))
+	for _, n := range keep {
+		held[n] = true
+	}
+
+	removed := 0
+	for _, name := range names {
+		rec, err := s.ownerOf(name)
+		if err != nil {
+			// A file with no readable binding is not this owner's to decide
+			// about, and it is certainly not safe to delete on their word.
+			continue
+		}
+		owned := false
+		for _, filter := range filters {
+			if filter.OwnerUserID > 0 && strings.TrimSpace(filter.AccountID) != "" && filter.matches(rec) {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			continue
+		}
+		if held[name] {
+			continue
+		}
+		if err := os.Remove(filepath.Join(s.dir, name)); err != nil && !os.IsNotExist(err) {
+			return removed, err
+		}
+		_ = os.Remove(filepath.Join(s.dir, name+ownerSuffix))
+		removed++
+	}
+	return removed, nil
 }
 
 // Names lists the staged attachments currently held.
@@ -327,6 +518,7 @@ func (s *Staging) Reconcile(keep func(name string) bool) (int, error) {
 		if err := os.Remove(filepath.Join(s.dir, name)); err != nil && !os.IsNotExist(err) {
 			return removed, err
 		}
+		_ = os.Remove(filepath.Join(s.dir, name+ownerSuffix))
 		removed++
 	}
 	return removed, nil

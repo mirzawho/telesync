@@ -23,6 +23,7 @@ import {
 } from "@/lib/admin-users"
 import {
   normalizeDraft,
+  serializeDraft,
   type PermissionsPayload,
 } from "@/lib/admin-permissions"
 import type { Category, Channel, User, WordPressSite } from "@/lib/types"
@@ -354,7 +355,7 @@ test("the password dialog keeps its own loading wording", () => {
 
 // --- permissions ---
 
-test("permissions open on exactly seven tabs, in the order the product asks for", () => {
+test("permissions open on exactly six tabs, in the order the product asks for", () => {
   assert.deepEqual(
     permissionsTabs.map((tab) => tab.label),
     [
@@ -364,10 +365,12 @@ test("permissions open on exactly seven tabs, in the order the product asks for"
       "سایت‌های وردپرسی",
       "مدیرها",
       "اتوماسیون",
-      "عمومی",
     ]
   )
   assert.equal(permissionsTabs[0]?.value, "report")
+  // The tab that assigned access to the centrally managed Telegram connections
+  // is retired together with that mechanism — not merely hidden behind a role.
+  assert.ok(!permissionsTabs.some((tab) => String(tab.value) === "general"))
 })
 
 test("the report is what opens first", () => {
@@ -415,22 +418,6 @@ test("each tab keeps its own controls and no second picker", () => {
   assert.match(categories, /مدیریت دسته‌بندی‌ها/)
   assert.equal((categories.match(/role="combobox"/g) ?? []).length, 1)
 
-  const general = html(
-    <AdministratorPermissionsContent
-      user={USER}
-      draft={draft}
-      loaded={LOADED}
-      catalog={catalog}
-      tab="general"
-      pending={false}
-      onClose={noop}
-      onDraftChange={noop}
-      onSave={noop}
-    />
-  )
-  assert.match(general, /مشاهده وضعیت سرورهای تلگرامی/)
-  assert.equal((general.match(/type="checkbox"/g) ?? []).length, 1)
-
   const users = html(
     <AdministratorPermissionsContent
       user={USER}
@@ -446,6 +433,89 @@ test("each tab keeps its own controls and no second picker", () => {
   )
   assert.match(users, /مشاهده مدیرها/)
   assert.match(users, /مدیریت مدیرها/)
+})
+
+test("no control anywhere assigns a user access to the shared Telegram connections", () => {
+  // v0.0.5 retires that mechanism in the backend and in the UI together. This
+  // walks the whole dialog tab by tab and finds no way to grant it — and
+  // confirms the capabilities that are real MTProto rights stayed exactly where
+  // they were.
+  const draft = normalizeDraft(LOADED)
+  const catalog = {
+    channels: [channel(1)],
+    categories: [category(3)],
+    sites: [site(2)],
+  }
+  for (const tab of permissionsTabs.map((entry) => entry.value)) {
+    const out = html(
+      <AdministratorPermissionsContent
+        user={USER}
+        draft={draft}
+        loaded={LOADED}
+        catalog={catalog}
+        tab={tab}
+        pending={false}
+        onClose={noop}
+        onDraftChange={noop}
+        onSave={noop}
+      />
+    )
+    assert.doesNotMatch(
+      out,
+      /مشاهده وضعیت سرورهای تلگرامی/,
+      `${tab} still offers shared Telegram connection access`
+    )
+  }
+
+  // The report is a summary of what is assignable; a retired capability is not
+  // reported either, or the dialog would still be describing it as a grant.
+  const report = html(
+    <AdministratorPermissionsContent
+      user={USER}
+      draft={draft}
+      loaded={LOADED}
+      catalog={catalog}
+      tab="report"
+      pending={false}
+      onClose={noop}
+      onDraftChange={noop}
+      onSave={noop}
+    />
+  )
+  assert.doesNotMatch(report, /سرورهای تلگرامی/)
+
+  // What must stay: the channel Telegram capabilities are real MTProto rights.
+  const channels = html(
+    <AdministratorPermissionsContent
+      user={USER}
+      draft={draft}
+      loaded={LOADED}
+      catalog={catalog}
+      tab="channels"
+      pending={false}
+      onClose={noop}
+      onDraftChange={noop}
+      onSave={noop}
+    />
+  )
+  assert.match(channels, /مشاهده کانال‌ها/)
+  assert.match(channels, /مدیریت کانال‌ها/)
+})
+
+test("a stored shared-connection grant is carried through a save, never revoked by it", () => {
+  // Removing the editor must not rewrite stored data. `normalizeDraft` keeps
+  // the permission because `globalPermissionLabels` still names it, so the next
+  // save posts back exactly what was there.
+  const held: PermissionsPayload = { ...LOADED, global: [...LOADED.global, "servers.view"] }
+  const draft = normalizeDraft(held)
+  const form = new FormData()
+  for (const [key, value] of Object.entries(serializeDraft(draft, {}))) {
+    form.set(key, value as string)
+  }
+  assert.ok(
+    JSON.parse(String(form.get("global_permissions"))).includes("servers.view"),
+    "a save silently revoked a stored grant"
+  )
 })
 
 test("the resource picker stays hidden until its viewing permission is granted", () => {

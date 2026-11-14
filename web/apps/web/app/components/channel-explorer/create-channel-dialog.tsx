@@ -2,7 +2,7 @@ import * as React from "react"
 import { useNavigate } from "react-router"
 
 import { CreateChannelForm, type CreateChannelDraft, type UsernameAvailability } from "@/components/channel-explorer/create-channel-form"
-import type { TelegramServer } from "@/lib/types"
+import type { TelegramAccount } from "@/lib/types"
 import { ApiError, apiRequest } from "@/lib/api"
 import { Button } from "@workspace/ui/components/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@workspace/ui/components/dialog"
@@ -22,15 +22,15 @@ export interface ChannelCreationResponse {
 }
 
 export function CreateChannelDialog({
-  open, onOpenChange, token, servers, initialClientKey, canCreate = true, onCreated,
+  open, onOpenChange, token, accounts, initialAccountID, canCreate = true, onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   token: string
-  servers: TelegramServer[]
-  initialClientKey?: string
+  accounts: TelegramAccount[]
+  initialAccountID?: string
   canCreate?: boolean
-  onCreated: (result: ChannelCreationResponse, clientKey: string) => void
+  onCreated: (result: ChannelCreationResponse, accountID: string) => void
 }) {
   const navigate = useNavigate()
   const { toast } = useToast()
@@ -42,8 +42,8 @@ export function CreateChannelDialog({
   const [formSession, setFormSession] = React.useState(0)
   const [idempotencyKey, setIdempotencyKey] = React.useState(() => crypto.randomUUID())
 
-  const checkUsername = React.useCallback(async (clientKey: string, username: string, signal: AbortSignal): Promise<UsernameAvailability> => {
-    const { data } = await apiRequest<{ username: string; status: string }>("GET", `/telegram/${encodeURIComponent(clientKey)}/channels/username-availability`, { token, query: { username }, signal })
+  const checkUsername = React.useCallback(async (accountID: string, username: string, signal: AbortSignal): Promise<UsernameAvailability> => {
+    const { data } = await apiRequest<{ username: string; status: string }>("GET", `/telegram/accounts/${encodeURIComponent(accountID)}/channels/username-availability`, { token, query: { username }, signal })
     return { state: data.status === "occupied" ? "claimed" : data.status === "unclaimed" ? "unclaimed" : "unknown" }
   }, [token])
 
@@ -70,20 +70,20 @@ export function CreateChannelDialog({
     }))
     if (draft.image) body.append("media", draft.image, draft.image.name)
     try {
-      const { data } = await apiRequest<ChannelCreationResponse>("POST", `/telegram/${encodeURIComponent(draft.clientKey)}/channels`, {
+       const { data } = await apiRequest<ChannelCreationResponse>("POST", `/telegram/accounts/${encodeURIComponent(draft.accountID)}/channels`, {
         token, headers: { "Idempotency-Key": idempotencyKey }, body,
       })
       setResult(data)
-      setResultKey(draft.clientKey)
+       setResultKey(accounts.find((account) => account.id === draft.accountID)?.server_key ?? "")
       if (data.status.toLowerCase().includes("partial") || !data.locally_registered) {
         toast({ variant: "warning", title: "کانال ساخته شد؛ بخشی از کار کامل نشد.", description: data.error_message })
-        onCreated(data, draft.clientKey)
+         onCreated(data, draft.accountID)
       } else {
         toast({ variant: "success", title: "کانال ساخته و ثبت شد." })
         onOpenChange(false)
         setDirty(false)
         setFormSession((session) => session + 1)
-        onCreated(data, draft.clientKey)
+         onCreated(data, draft.accountID)
       }
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "ساخت کانال کامل نشد. برای جلوگیری از ایجاد تکراری، وضعیت درخواست را بررسی کنید.")
@@ -111,8 +111,8 @@ export function CreateChannelDialog({
         </div>
       </div> : <CreateChannelForm
         key={formSession}
-        servers={servers}
-        initialClientKey={initialClientKey}
+         accounts={accounts}
+         initialAccountID={initialAccountID}
         pending={pending}
         error={error}
         onSubmit={submit}

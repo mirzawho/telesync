@@ -93,11 +93,25 @@ type MessagePayload struct {
 // row id and the only value that may be used for permission checks, while
 // TelegramChannelID and MessageID are Telegram's own numbers and are only safe
 // to compare within one NetworkKey.
+//
+// AccountID and SourceAccountID are the ownership dimension. AccountID names
+// the user-owned Telegram account this event belongs to and scopes the event
+// identity; SourceAccountID names the account whose connection observed it.
+// Ingestion produces them as the same account, and they are kept apart because
+// a cross-account relay would make them differ without changing who owns the
+// event.
 type MessageEvent struct {
-	ID                string
-	Type              EventType
-	NetworkKey        string
-	SourceClientKey   string
+	ID              string
+	Type            EventType
+	NetworkKey      string
+	SourceClientKey string
+	// AccountID is the owning account. It is empty only on a legacy row that
+	// predates account ownership, and such a row is quarantined: it is never
+	// fanned out and never runs under whichever account happens to be connected.
+	AccountID string
+	// SourceAccountID is the account that observed the message. It is the
+	// connection a payload's media links are authorised against.
+	SourceAccountID   string
 	ManagedChannelID  int64
 	TelegramChannelID int64
 	MessageID         int64
@@ -105,7 +119,24 @@ type MessageEvent struct {
 	OccurredAt        time.Time
 	ReceivedAt        time.Time
 	Payload           MessagePayload
+	// ownerUserID is the Telesync user the account belongs to. It is not part
+	// of the event identity and is filled in by the store on read; an event
+	// built from an observation carries it directly.
+	ownerUserID int64
 }
+
+// WithOwner records the user the owning account belongs to, so work scheduled
+// from this event can be bound to an owner without a second lookup. It is set
+// by the store when an event is read back and by ingestion when the observation
+// already knows it.
+func (e MessageEvent) WithOwner(ownerUserID int64) MessageEvent {
+	e.ownerUserID = ownerUserID
+	return e
+}
+
+// AccountOwnerUserID is the user behind AccountID, or zero for a legacy row
+// that names no account.
+func (e MessageEvent) AccountOwnerUserID() int64 { return e.ownerUserID }
 
 // JobKind is the kind of background work one queue row represents.
 type JobKind string
@@ -141,6 +172,28 @@ const (
 	JobCancelled  JobStatus = "cancelled"
 )
 
+// Owner is the ownership binding every background record carries.
+//
+// It is stated once, here, so "who does this work belong to" has one shape in
+// the queue, in the webhook and workflow records and in the operations the
+// publishing pipeline keeps. OwnerUserID is the Telesync user; AccountID is the
+// user-owned Telegram account the work runs through.
+//
+// A zero OwnerUserID and an empty AccountID describe a legacy row from before
+// accounts existed. Such a row is paused and never claimed: no account is ever
+// assigned to it by inference.
+type Owner struct {
+	OwnerUserID int64
+	AccountID   string
+}
+
+// Bound reports whether this binding names a real owner. It is the one test for
+// "this work may run", and it is a positive one: nothing is claimable unless it
+// is bound to an account somebody owns.
+func (o Owner) Bound() bool {
+	return o.OwnerUserID > 0 && o.AccountID != ""
+}
+
 // Job is one claimed unit of background work.
 type Job struct {
 	ID          int64
@@ -151,6 +204,9 @@ type Job struct {
 	MaxAttempts int
 	AvailableAt time.Time
 	CreatedAt   time.Time
+	// Owner is who this job runs for. A handler acts through Owner.AccountID and
+	// through no other account, whatever else it happens to be able to reach.
+	Owner Owner
 }
 
 // JobError is what a handler returns when a job did not complete. It carries
@@ -198,9 +254,14 @@ type EventStore interface {
 }
 
 // JobEnqueuer turns a stored event into durable background work.
+//
+// Every enqueue names the owner the work belongs to. That binding is what a
+// worker is claimed against, so work scheduled for one user's account is never
+// executed by another's, and there is no path that schedules work with no
+// owner at all.
 type JobEnqueuer interface {
-	EnqueueWebhookDelivery(ctx context.Context, eventID string, webhookID int64) error
-	EnqueueWorkflowRun(ctx context.Context, eventID string, workflowID int64) error
+	EnqueueWebhookDelivery(ctx context.Context, eventID string, webhookID int64, owner Owner) error
+	EnqueueWorkflowRun(ctx context.Context, eventID string, workflowID int64, owner Owner) error
 }
 
 // WebhookSubscriptions resolves which webhooks react to one source channel.
@@ -301,6 +362,9 @@ type Destination struct {
 	ClientKey string
 	ChannelID int64
 	SiteID    int64
+	// AccountID is the exact user-owned Telegram identity selected for this
+	// destination. It is separate from the workflow/source account.
+	AccountID string
 	// Options carries the destination's existing publishing options as a JSON
 	// object: silent, disable web page preview, WordPress category and tag ids,
 	// thumbnail policy. The publisher interprets them; this package does not.

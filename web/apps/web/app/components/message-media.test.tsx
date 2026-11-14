@@ -91,6 +91,32 @@ test("a document with no filename is not given an invented one", () => {
   assert.doesNotMatch(out, /فایل\./)
 })
 
+test("a static sticker renders as image content while a TGS sticker has an accessible fallback", () => {
+  const staticSticker: MessageMedia = {
+    type: "sticker",
+    mime_type: "image/webp",
+    sticker_emoji: "🙂",
+    url: "/sticker.webp",
+  }
+  const image = html(
+    <MediaAttachmentCard media={staticSticker} status="ready" url="blob:sticker" />
+  )
+  assert.match(image, /<img/)
+  assert.match(image, /src="blob:sticker"/)
+  assert.doesNotMatch(image, /download=/)
+
+  const animatedSticker: MessageMedia = {
+    type: "sticker",
+    mime_type: "application/x-tgsticker",
+    sticker_emoji: "✨",
+    url: "/sticker.tgs",
+  }
+  const fallback = html(<MediaAttachmentCard media={animatedSticker} />)
+  assert.match(fallback, /role="img"/)
+  assert.match(fallback, /استیکر ✨/)
+  assert.doesNotMatch(fallback, /download=/)
+})
+
 test("a long filename cannot break the card's layout", () => {
   const long = `${"very-long-file-name-".repeat(6)}final.apk`
   const out = html(<MediaAttachmentCard media={{ ...APK, filename: long }} />)

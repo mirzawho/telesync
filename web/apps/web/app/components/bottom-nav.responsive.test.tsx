@@ -39,6 +39,11 @@ const barAnchors = (markup: string) =>
   )
 const overflowPanel = (markup: string) =>
   markup.slice(markup.indexOf('id="bottom-nav-overflow"'))
+// The disclosure carries more than one destination now, so a test names the
+// link it means instead of taking whichever comes first.
+const panelLinkTo = (markup: string, href: string) =>
+  overflowPanel(markup).match(new RegExp(`<a\\b[^>]*href="${href}"[^>]*>`))?.[0] ??
+  ""
 const triggerTag = (markup: string) =>
   markup.match(/<button[^>]*data-testid="bottom-nav-more"[^>]*>/)?.[0] ?? ""
 
@@ -59,7 +64,7 @@ const RESTRICTED = {
 
 // --- what the bar carries ---------------------------------------------------
 
-test("full access: five destinations in the bar, automation behind the overflow", () => {
+test("full access: five destinations in the bar, the rest behind the overflow", () => {
   assert.deepEqual(
     primaryNavItems(ALL).map((item) => item.to),
     [
@@ -72,7 +77,7 @@ test("full access: five destinations in the bar, automation behind the overflow"
   )
   assert.deepEqual(
     overflowNavItems(ALL).map((item) => item.to),
-    ["/automation"]
+    ["/accounts", "/automation"]
   )
   const markup = routed(<BottomNav access={ALL} />)
   assert.equal(barAnchors(markup).length, 5, "the bar is the five destinations")
@@ -82,32 +87,39 @@ test("full access: five destinations in the bar, automation behind the overflow"
   )
 })
 
-test("restricted access: only authorized destinations, and no disclosure left over", () => {
+test("restricted access: only authorized destinations in the bar", () => {
   assert.deepEqual(
     primaryNavItems(RESTRICTED).map((item) => item.to),
     ["/dashboard", "/categories", "/wordpress"]
   )
+  // Personal accounts belong to whoever is signed in, so they survive a
+  // restricted summary; automation does not.
   assert.deepEqual(
-    overflowNavItems(RESTRICTED),
-    [],
-    "nothing behind the disclosure means no disclosure at all"
+    overflowNavItems(RESTRICTED).map((item) => item.to),
+    ["/accounts"]
   )
   const markup = routed(<BottomNav access={RESTRICTED} />)
   assert.deepEqual(
     barAnchors(markup).map((tag) => tag.match(/href="([^"]*)"/)![1]),
     ["/dashboard", "/categories", "/wordpress"]
   )
-  assert.equal(triggerTag(markup), "", "no more affordance to press")
   assert.ok(
     !/href="\/automation"/.test(markup),
     "hiding automation leaves the rest of the bar alone"
   )
+  // The disclosure is rendered only when something is behind it, so a summary
+  // with nothing to offer still leaves the bar at its destinations alone.
+  assert.ok(
+    /data-testid="bottom-nav-more"/.test(markup),
+    "accounts is always there to reach"
+  )
+  assert.equal(panelLinkTo(markup, "/automation"), "")
 })
 
 test("automation is reachable from the bar without knowing a URL", () => {
   const markup = routed(<BottomNav access={ALL} />)
   const panel = overflowPanel(markup)
-  const link = panel.match(/<a [^>]*>/)?.[0] ?? ""
+  const link = panelLinkTo(markup, "/automation")
   assert.match(link, /href="\/automation"/)
   assert.match(link, /aria-label="اتوماسیون"/)
   assert.match(link, /title="اتوماسیون"/)
@@ -126,6 +138,8 @@ test("the disclosure carries its destinations as 44px rows", () => {
   assert.match(panel, /min-h-11/, "the row that navigates is a 44px target")
   assert.match(panel, /<svg/, "and it is not a bare text link")
   assert.match(panel, /اتوماسیون/)
+  // Personal accounts are behind the same disclosure and are named there.
+  assert.match(panelLinkTo(markup, "/accounts"), /aria-label="حساب‌های من"/)
 })
 
 // --- shape of the pill ------------------------------------------------------
@@ -242,7 +256,7 @@ test("active and inactive class sets", () => {
 
 test("a nested automation screen keeps the automation destination current", () => {
   const markup = routed(<BottomNav access={ALL} />, "/automation/webhooks/7")
-  const link = overflowPanel(markup).match(/<a [^>]*>/)?.[0] ?? ""
+  const link = panelLinkTo(markup, "/automation")
   assert.match(link, /aria-current="page"/)
   assert.match(link, /bg-muted/)
   // The disclosure that carries it marks where the user is as well, from the
@@ -264,7 +278,7 @@ test("active state is the URL's, not a tab that can drift", () => {
     "/automation/workflows/12/runs/300",
   ]) {
     const markup = at(path)
-    const automationLink = overflowPanel(markup).match(/<a [^>]*>/)?.[0] ?? ""
+    const automationLink = panelLinkTo(markup, "/automation")
     assert.match(
       automationLink,
       /aria-current="page"/,
@@ -386,6 +400,7 @@ test("the sidebar shows اتوماسیون to an administrator who has the right
     "کانال‌ها",
     "سایت‌های وردپرسی",
     "مدیرها",
+    "حساب‌های من",
     "اتوماسیون",
   ])
   assert.match(linkTo(markup, "/automation"), /href="\/automation"/)
@@ -395,12 +410,15 @@ test("a restricted account keeps the rest of the sidebar and loses only اتوم
   const markup = sidebar(RESTRICTED)
   assert.ok(!markup.includes("اتوماسیون"), "the entry is not drawn at all")
   assert.equal(linkTo(markup, "/automation"), "", "and there is no link to it")
+  // Personal accounts are nobody's to grant or withhold: the API scopes the
+  // list to whoever is signed in, so the entry survives a restricted summary.
   assert.deepEqual(sidebarLabels(markup), [
     "پیشخان",
     "دسته‌بندی‌ها",
     "سایت‌های وردپرسی",
+    "حساب‌های من",
   ])
-  for (const href of ["/dashboard", "/categories", "/wordpress"]) {
+  for (const href of ["/dashboard", "/categories", "/wordpress", "/accounts"]) {
     assert.ok(markup.includes(`href="${href}"`), `${href} is untouched`)
   }
 })

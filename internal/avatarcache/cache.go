@@ -239,8 +239,8 @@ func (c *Cache) entryBase(clientKey string, channelID int64) string {
 	return filepath.Join(c.dir, clientKey, fmt.Sprintf("%d", channelID), "avatar")
 }
 
-// validateKey accepts only the same shape the configuration allows for a client
-// key, so a key can never contain a separator or a dot segment.
+// validateKey accepts account IDs and infrastructure keys without allowing
+// separators or dot segments.
 func validateKey(key string) error {
 	if key == "" || len(key) > 64 {
 		return errors.New("avatarcache: client key is empty or too long")
@@ -248,7 +248,7 @@ func validateKey(key string) error {
 	for i, r := range key {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-		case r == '-':
+		case r == '-', r == '_':
 			if i == 0 || i == len(key)-1 {
 				return fmt.Errorf("avatarcache: unsafe client key %q", key)
 			}

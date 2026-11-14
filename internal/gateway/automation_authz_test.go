@@ -307,11 +307,16 @@ func TestAutomationRefusesAnUnreachableSourceOrDestination(t *testing.T) {
 	}))
 	autoFail(t, rec, http.StatusForbidden, gateway.CodeAutomationSourceDenied)
 
-	// A Telegram destination the caller cannot see.
-	rec = e.call(t, a.manager.token, http.MethodPost, autoAPI+"/workflows", autoJSON(t, map[string]any{
+	// A Telegram destination the account owner is explicitly denied from
+	// seeing. The destination account itself is owned by this principal.
+	ownerToken := e.workflowOwnerToken(t)
+	owner := identity{user: channelstore.User{ID: e.ownerUser}, token: ownerToken}
+	e.denyChannelView(t, owner, theirs)
+	rec = e.call(t, ownerToken, http.MethodPost, autoAPI+"/workflows", autoJSON(t, map[string]any{
 		"managed_channel_id": mine, "enabled": false,
 		"destinations": []any{map[string]any{
-			"destination_type": "telegram", "client_key": "official", "channel_id": 1002,
+			"destination_type": "telegram", "account_id": e.accountID,
+			"client_key": "official", "channel_id": 1002,
 		}},
 	}))
 	autoFail(t, rec, http.StatusForbidden, gateway.CodeAutomationDestDenied)
@@ -335,11 +340,13 @@ func TestAutomationRefusesAnUnreachableSourceOrDestination(t *testing.T) {
 		t.Errorf("a refused create left %d workflows behind", len(flows.Workflows))
 	}
 
-	// An administrator naming the same targets is not refused.
-	rec = e.call(t, a.admin.token, http.MethodPost, autoAPI+"/workflows", autoJSON(t, map[string]any{
+	// The owning principal naming the same targets is not refused.
+	ownerToken = e.workflowOwnerToken(t) // restore global channel visibility
+	rec = e.call(t, ownerToken, http.MethodPost, autoAPI+"/workflows", autoJSON(t, map[string]any{
 		"managed_channel_id": theirs, "enabled": false,
 		"destinations": []any{map[string]any{
-			"destination_type": "telegram", "client_key": "official", "channel_id": 1002,
+			"destination_type": "telegram", "account_id": e.accountID,
+			"client_key": "official", "channel_id": 1002,
 		}},
 	}))
 	autoCreated(t, rec)
@@ -424,10 +431,11 @@ func TestOperatorTokenHoldsTheAutomationRights(t *testing.T) {
 	rec = e.call(t, operatorToken, http.MethodPost, autoAPI+"/workflows", autoJSON(t, map[string]any{
 		"managed_channel_id": source, "enabled": true,
 		"destinations": []any{map[string]any{
-			"destination_type": "telegram", "client_key": "official", "channel_id": 1001,
+			"destination_type": "telegram", "account_id": e.accountID,
+			"client_key": "official", "channel_id": 1001,
 		}},
 	}))
-	autoFail(t, rec, http.StatusBadRequest, gateway.CodeInvalidInput)
+	autoFail(t, rec, http.StatusNotFound, gateway.CodeNotFound)
 }
 
 // site registers one WordPress site and returns its local id, so a WordPress

@@ -96,7 +96,10 @@ func (s *Server) createChannel(ctx context.Context, w http.ResponseWriter, r *ht
 	fingerprintHash := sha256.Sum256(fingerprintBytes)
 	fingerprint := hex.EncodeToString(fingerprintHash[:])
 	payloadBytes, _ := json.Marshal(fingerprintInput)
-	op, created, err := s.cfg.ChannelCreations.BeginChannelCreation(ctx, userID, key, idempotencyKey, fingerprint, string(payloadBytes))
+	// The creation is recorded against the account it will run through, so
+	// its result is registered under that owner and no other user's session is
+	// ever spent on it.
+	op, created, err := s.cfg.ChannelCreations.BeginChannelCreation(ctx, userID, accountIDOf(actorOf(r)), key, idempotencyKey, fingerprint, string(payloadBytes))
 	if err != nil {
 		if errors.Is(err, channelstore.ErrChannelCreationIdempotencyConflict) {
 			s.fail(w, http.StatusConflict, "idempotency_conflict", "This Idempotency-Key was already used for a different request.", requestID)
@@ -110,12 +113,12 @@ func (s *Server) createChannel(ctx context.Context, w http.ResponseWriter, r *ht
 			s.fail(w, http.StatusConflict, "channel_creation_outcome_unknown", "A prior create attempt has no confirmed Telegram result; it was not retried to avoid creating a duplicate.", requestID)
 			return
 		}
-		channel, exists, getErr := s.cfg.Channels.Get(ctx, key, op.RemoteChannelID)
+		channel, exists, getErr := s.channelsOf(r).Get(ctx, key, op.RemoteChannelID)
 		if getErr != nil || !exists {
 			s.fail(w, http.StatusConflict, "channel_creation_recovery_required", "The channel was created, but its local record is unavailable; the create was not repeated.", requestID)
 			return
 		}
-		s.writeCreatedChannel(w, requestID, key, channel, op, true)
+		s.writeCreatedChannel(w, requestID, key, routeSelectorOf(r, key), channel, op, true)
 		return
 	}
 
@@ -151,7 +154,7 @@ func (s *Server) createChannel(ctx context.Context, w http.ResponseWriter, r *ht
 		op.ErrorMessage = result.ErrorMessage
 	}
 	info := result.Channel.Channel
-	saved, saveErr := s.cfg.Channels.Upsert(ctx, channelstore.Channel{
+	saved, saveErr := s.channelsOf(r).Upsert(ctx, channelstore.Channel{
 		ClientKey: key, ChannelID: remoteID, PeerType: peerTypeOf(info.Type), Title: info.Title,
 		Username: info.Username, Description: info.Description, AvatarPhotoID: info.AvatarVersion,
 		AvatarAvailable: info.AvatarAvailable, MembershipStatus: statusOf(info, false),
@@ -165,7 +168,7 @@ func (s *Server) createChannel(ctx context.Context, w http.ResponseWriter, r *ht
 		op.ErrorMessage = strings.TrimSpace(op.ErrorMessage + " Telegram created the channel, but local registration failed.")
 		_ = s.cfg.ChannelCreations.UpdateChannelCreation(ctx, op)
 		writeJSON(w, http.StatusOK, envelope{Data: map[string]any{
-			"channel": s.channelViewOf(key, info, false), "remote_channel_id": strconv.FormatInt(remoteID, 10),
+			"channel": s.channelViewOf(routeSelectorOf(r, key), info, false), "remote_channel_id": strconv.FormatInt(remoteID, 10),
 			"local_channel_id": nil, "channel_created": op.ChannelCreated,
 			"username_assigned": op.UsernameAssigned, "avatar_updated": op.AvatarUpdated,
 			"locally_registered": false, "status": channelstore.ChannelCreationPartial,
@@ -178,10 +181,10 @@ func (s *Server) createChannel(ctx context.Context, w http.ResponseWriter, r *ht
 		op.Status = channelstore.ChannelCreationPartial
 		op.ErrorCode = combineChannelCreationErrors(op.ErrorCode, "operation_finalize_failed")
 		op.ErrorMessage = strings.TrimSpace(op.ErrorMessage + " Telegram created the channel and it was locally registered, but the operation result could not be finalized.")
-		s.writeCreatedChannel(w, requestID, key, saved, op, false)
+		s.writeCreatedChannel(w, requestID, key, routeSelectorOf(r, key), saved, op, false)
 		return
 	}
-	s.writeCreatedChannel(w, requestID, key, saved, op, false)
+	s.writeCreatedChannel(w, requestID, key, routeSelectorOf(r, key), saved, op, false)
 }
 
 func combineChannelCreationErrors(existing, next string) string {
@@ -194,7 +197,7 @@ func combineChannelCreationErrors(existing, next string) string {
 	return existing + "+" + next
 }
 
-func (s *Server) writeCreatedChannel(w http.ResponseWriter, requestID, key string, saved channelstore.Channel, op channelstore.ChannelCreationOperation, replay bool) {
+func (s *Server) writeCreatedChannel(w http.ResponseWriter, requestID, key, routeSelector string, saved channelstore.Channel, op channelstore.ChannelCreationOperation, replay bool) {
 	info := rpc.ChannelInfo{ID: strconv.FormatInt(saved.ChannelID, 10), Type: saved.PeerType, Title: saved.Title, Username: saved.Username,
 		Description: saved.Description, AvatarAvailable: saved.AvatarAvailable, AvatarVersion: saved.AvatarPhotoID,
 		IsMember: saved.MembershipStatus == channelstore.StatusMember, MembershipStatus: saved.MembershipStatus,
@@ -205,7 +208,7 @@ func (s *Server) writeCreatedChannel(w http.ResponseWriter, requestID, key strin
 			Delete: saved.Permissions.Delete, Read: saved.Permissions.Read,
 		}
 	}
-	view := s.channelViewOf(key, info, true)
+	view := s.channelViewOf(routeSelector, info, true)
 	status := op.Status
 	writeJSON(w, http.StatusOK, envelope{Data: map[string]any{
 		"channel": view, "remote_channel_id": strconv.FormatInt(saved.ChannelID, 10),

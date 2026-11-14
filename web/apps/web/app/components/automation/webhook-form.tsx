@@ -10,11 +10,17 @@ import {
   SERVER_REQUIRED,
   SOURCES_REQUIRED,
   SourceServerField,
+  channelsForAccount,
   serverKeyFor,
   sourceItems,
+  sourceItemsForAccount,
   reachableIds,
   type SourceChannel,
 } from "@/components/automation/source-selection"
+import {
+  AccountCombobox,
+  AccountPausedNotice,
+} from "@/components/accounts/account-combobox"
 import {
   Accordion,
   AccordionContent,
@@ -40,7 +46,7 @@ import { Separator } from "@workspace/ui/components/separator"
 import { Switch } from "@workspace/ui/components/switch"
 import { Textarea } from "@workspace/ui/components/textarea"
 
-import type { TelegramServer } from "@/lib/types"
+import type { TelegramAccount, TelegramServer } from "@/lib/types"
 import { PageShell } from "@/lib/page"
 import {
   authModeLabels,
@@ -260,6 +266,7 @@ export function WebhookForm({
   record,
   seed,
   channels,
+  accounts = [],
   servers = [],
   localhostAllowed = false,
   channelsLoading = false,
@@ -283,6 +290,9 @@ export function WebhookForm({
   // re-render never writes empty defaults over loaded values.
   seed: WebhookDraft
   channels: SourceChannelOption[]
+  // accounts is the reader's own, and nothing else: a webhook is bound to one
+  // of them and cannot be offered any it does not own.
+  accounts?: TelegramAccount[]
   // The Telegram connections a source channel belongs to. The connection is
   // chosen first and the channel list follows from it: it is a view over the
   // managed channel's own `client_key`, never a new field on the record.
@@ -334,6 +344,34 @@ export function WebhookForm({
       sourceChannelIds: reachableIds(channels, draft.sourceChannelIds, key),
     })
   }
+
+  // Which account this webhook observes under. Until the operator chooses one
+  // it is the account the saved channels belong to, so an edit opens on its own
+  // record and a create opens on none.
+  const [chosenAccount, setChosenAccount] = React.useState<string | undefined>()
+  const accountID =
+    chosenAccount ?? (draft.accountID ? draft.accountID : undefined)
+  const account = accounts.find((candidate) => candidate.id === accountID)
+  const changeAccount = (id: string | undefined) => {
+    setChosenAccount(id)
+    // A channel the new account does not hold cannot deliver to this webhook,
+    // so those sources leave with the account. The webhook is never handed to a
+    // different account instead — the reader chose one and the reader changes
+    // it, nothing here does it for them.
+    const reachable = channelsForAccount(channels, id)
+    patch({
+      accountID: id ?? null,
+      sourceChannelIds: draft.sourceChannelIds.filter((source) =>
+        reachable.some((channel) => channel.id === source)
+      ),
+    })
+  }
+  // The source list is the chosen account's own inventory. With no account
+  // chosen it falls back to the connection filter, so a legacy record still
+  // opens on something rather than on nothing.
+  const sourceOptions = accountID
+    ? sourceItemsForAccount(channels, accountID, draft.sourceChannelIds)
+    : sourceItems(channels, sourceServer, draft.sourceChannelIds)
 
   // Dirty is "differs from the seed", not "has been touched": an edit that
   // changes nothing must not stand in the way of leaving.
@@ -481,6 +519,25 @@ export function WebhookForm({
           <p className="text-muted-foreground text-sm">
             پیام‌های جدید این کانال‌ها به وب‌هوک ارسال می‌شوند.
           </p>
+          {/* The account is the identity the webhook observes under, and it is
+              chosen first: the source channels below are that account's. It is
+              never inferred from a server filter and never swapped for another
+              account because this one lost its session. */}
+          <Field>
+            <FieldLabel htmlFor="webhook-account">حساب تلگرام</FieldLabel>
+            <AccountCombobox
+              id="webhook-account"
+              accounts={accounts}
+              value={accountID}
+              onChange={changeAccount}
+              disabled={pending}
+              emptyText="حسابی متصل نیست؛ نخست از «حساب‌های من» یک حساب متصل کنید."
+            />
+            <FieldDescription>
+              رویدادهای این حساب به وب‌هوک ارسال می‌شود.
+            </FieldDescription>
+          </Field>
+          <AccountPausedNotice account={account} />
           {/* The connection is chosen first and the channels follow from it:
               only channels this connection can reach are offered, so a source
               id belonging to another one is never on the list to be picked. */}
@@ -510,9 +567,9 @@ export function WebhookForm({
                 }
                 emptyText="کانالی در دسترس نیست."
                 // A saved channel from another connection is listed beside the
-                // chosen connection's own, so an existing source is preserved
-                // and still posted rather than silently trimmed to the filter.
-                items={sourceItems(channels, sourceServer, draft.sourceChannelIds)}
+                // chosen account's own, so an existing source is preserved and
+                // still posted rather than silently trimmed to the filter.
+                items={sourceOptions}
                 value={draft.sourceChannelIds}
                 onValueChange={(sourceChannelIds) => patch({ sourceChannelIds })}
                 labelOf={(channel) => channel.label}

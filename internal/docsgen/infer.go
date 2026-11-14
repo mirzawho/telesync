@@ -1127,7 +1127,9 @@ func ObserveExamples(ctx context.Context, p apidocs.Prober, examples []apidocs.E
 		}
 		credential := operator
 		caller := "operator"
-		if strings.Contains(path, "/edit/") || (ex.Method == http.MethodPut && strings.Contains(path, "/messages/")) {
+		if strings.Contains(path, "/edit/") ||
+			strings.HasPrefix(path, "/api/v1/me/telegram-accounts") ||
+			(ex.Method == http.MethodPut && strings.Contains(path, "/messages/")) {
 			credential = p.Administrator()
 			caller = "administrator"
 		}

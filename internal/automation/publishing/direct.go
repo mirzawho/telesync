@@ -236,7 +236,7 @@ func (s *Service) SendDirect(ctx context.Context, a Actor, clientKey string, des
 	if err := s.requirePublishPermission(a); err != nil {
 		return DirectResult{Outcome: channelstore.PublishFailed}, err
 	}
-	worker, err := s.resolvePublishDestination(ctx, a, clientKey, destID)
+	worker, err := s.resolvePublishDestination(ctx, a, clientKey, a.AccountID, destID)
 	if err != nil {
 		// Nothing was sent: the destination could not be resolved or would not
 		// accept a post from this account. It is a failure and a clear one.

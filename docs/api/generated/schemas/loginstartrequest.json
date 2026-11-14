@@ -1,0 +1,30 @@
+{
+  "go_type": "loginStartRequest",
+  "properties": {
+    "server_key": {
+      "$ref": "#/components/schemas/string",
+      "go_type": "string",
+      "type": "string"
+    },
+    "network_type": {
+      "$ref": "#/components/schemas/string",
+      "go_type": "string",
+      "type": "string"
+    },
+    "method": {
+      "$ref": "#/components/schemas/string",
+      "go_type": "string",
+      "type": "string"
+    },
+    "phone_number": {
+      "$ref": "#/components/schemas/string",
+      "go_type": "string",
+      "type": "string"
+    }
+  },
+  "required": [
+    "method",
+    "phone_number",
+    "server_key"
+  ]
+}

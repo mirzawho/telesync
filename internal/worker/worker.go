@@ -146,11 +146,18 @@ func (s *Service) mapDeleteError(err error) error {
 }
 
 // Service implements rpc.Backend on top of one Telegram client.
+//
+// On the account path a Service is bound to exactly one user-owned account and
+// carries its identity; on the legacy configured-client path it is bound to a
+// configured client key instead. Everything the service caches is its own:
+// no snapshot, cursor or peer lookup is shared with another account.
 type Service struct {
 	client appconfig.Client
 	tg     Telegram
 	opt    Options
 	logf   func(format string, args ...any)
+	// identity is the account this worker serves. Nil on the legacy path.
+	identity *AccountIdentity
 
 	mu sync.Mutex
 	// snapshot is the last dialog list, reused for a short window so paging
@@ -165,8 +172,18 @@ type Service struct {
 	order []int64
 }
 
-// NewService builds a worker service.
+// NewService builds a worker service for one configured client key.
+//
+// The account path is NewServiceForAccount; this is the compatibility
+// constructor the configured-client daemon still uses.
 func NewService(cfg appconfig.Client, tg Telegram, opt Options, adjust ...Option) *Service {
+	s := newService(opt, tg, adjust...)
+	s.client = cfg
+	return s
+}
+
+// newService builds the service shell every constructor shares.
+func newService(opt Options, tg Telegram, adjust ...Option) *Service {
 	if opt.Now == nil {
 		opt.Now = time.Now
 	}
@@ -177,7 +194,6 @@ func NewService(cfg appconfig.Client, tg Telegram, opt Options, adjust ...Option
 		opt.CacheTTL = time.Minute
 	}
 	s := &Service{
-		client:  cfg,
 		tg:      tg,
 		opt:     opt,
 		cursors: map[int64]int{},
@@ -193,20 +209,30 @@ func NewService(cfg appconfig.Client, tg Telegram, opt Options, adjust ...Option
 // The three questions are answered separately: does the process answer, is the
 // transport up, and is the account authorized.
 func (s *Service) Health(ctx context.Context) rpc.Health {
-	st := s.tg.Status(ctx)
+	st, identityMismatch := s.checkedStatus(ctx)
 	now := s.opt.Now()
+	state := workerState(st.State)
+	lastError := st.Err
+	if identityMismatch {
+		// Keep transport evidence separate: the socket and MTProto transport
+		// may be ready while the persisted account record does not match Self.
+		state = rpc.StateError
+		lastError = "authenticated identity does not match the account record"
+	}
 
 	h := rpc.Health{
-		Key:        s.client.Key,
-		Type:       string(s.client.Type),
-		PID:        s.opt.PID,
-		StartedAt:  s.opt.StartedAt.UTC(),
-		ThisDC:     st.ThisDC,
-		RPCReady:   true,
-		Transport:  transportState(st.State),
-		State:      workerState(st.State),
-		Authorized: st.State == tgapi.StateReady && st.User != nil,
-		LastError:  st.Err,
+		Key:         s.client.Key,
+		Type:        string(s.client.Type),
+		AccountID:   s.Account().ID,
+		OwnerUserID: s.Account().OwnerUserID,
+		PID:         s.opt.PID,
+		StartedAt:   s.opt.StartedAt.UTC(),
+		ThisDC:      st.ThisDC,
+		RPCReady:    true,
+		Transport:   transportState(st.State),
+		State:       state,
+		Authorized:  st.State == tgapi.StateReady && st.User != nil && !identityMismatch,
+		LastError:   lastError,
 	}
 	if uptime := now.Sub(s.opt.StartedAt); uptime > 0 {
 		h.UptimeSeconds = int64(uptime.Seconds())
@@ -257,10 +283,12 @@ func transportState(state tgapi.State) string {
 
 // Profile implements rpc.Backend.
 func (s *Service) Profile(ctx context.Context) (rpc.Profile, error) {
-	st := s.tg.Status(ctx)
+	st, identityMismatch := s.checkedStatus(ctx)
 	p := rpc.Profile{
 		Key:                s.client.Key,
 		Type:               string(s.client.Type),
+		AccountID:          s.Account().ID,
+		OwnerUserID:        s.Account().OwnerUserID,
 		AuthorizationState: rpc.AuthUnknown,
 		ThisDC:             st.ThisDC,
 	}
@@ -268,7 +296,9 @@ func (s *Service) Profile(ctx context.Context) (rpc.Profile, error) {
 		p.Endpoint = s.client.Server.Endpoint()
 	}
 	switch {
-	case st.State == tgapi.StateReady && st.User != nil:
+	case identityMismatch:
+		p.AuthorizationState = rpc.AuthNeedsAuth
+	case st.State == tgapi.StateReady && st.User != nil && !identityMismatch:
 		p.Authorized = true
 		p.AuthorizationState = rpc.AuthAuthorized
 		p.User = &rpc.Account{
@@ -504,9 +534,21 @@ func (s *Service) messageDTO(channelID int64, m tgapi.Message) rpc.Message {
 			Height:            m.Media.Height,
 			SupportsStreaming: m.Media.SupportsStreaming,
 			RoundMessage:      m.Media.RoundMessage,
+			StickerEmoji:      m.Media.StickerEmoji,
+			StickerAnimated:   m.Media.StickerAnimated,
+			StickerVideo:      m.Media.StickerVideo,
+			StickerMask:       m.Media.StickerMask,
+			StickerMaskCoords: stickerMaskCoordsFromTG(m.Media.StickerMaskCoords),
 		}
 	}
 	return out
+}
+
+func stickerMaskCoordsFromTG(in *tgapi.StickerMaskCoords) *rpc.StickerMaskCoords {
+	if in == nil {
+		return nil
+	}
+	return &rpc.StickerMaskCoords{N: in.N, X: in.X, Y: in.Y, Zoom: in.Zoom}
 }
 
 // Media implements rpc.Backend.
@@ -615,7 +657,11 @@ func (s *Service) channelByID(ctx context.Context, channelID int64) (tgapi.Chann
 
 // requireAuthorized rejects work that cannot succeed before touching Telegram.
 func (s *Service) requireAuthorized(ctx context.Context) error {
-	switch st := s.tg.Status(ctx); st.State {
+	st, identityMismatch := s.checkedStatus(ctx)
+	if identityMismatch {
+		return rpc.ErrNeedsAuth
+	}
+	switch st.State {
 	case tgapi.StateReady:
 		return nil
 	case tgapi.StateUnauthorized:
@@ -623,6 +669,22 @@ func (s *Service) requireAuthorized(ctx context.Context) error {
 	default:
 		return rpc.ErrNotConnected
 	}
+}
+
+// checkedStatus verifies that a ready account worker is still using the
+// persisted remote identity. A changed or missing Self must never cause this
+// account's worker to expose a different user's data or emit their updates as
+// this account.
+func (s *Service) checkedStatus(ctx context.Context) (tgapi.Status, bool) {
+	st := s.tg.Status(ctx)
+	if s.identity == nil || st.State != tgapi.StateReady {
+		return st, false
+	}
+	if st.User != nil && st.User.ID == s.identity.RemoteUserID {
+		return st, false
+	}
+	st.User = nil
+	return st, true
 }
 
 // CachedChannels reports how many channels currently hold a pagination cursor.

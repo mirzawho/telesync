@@ -27,6 +27,7 @@ type runtimeHarness struct {
 	daemonConfigPath string
 	workerConfigPath string
 	workerKey        string
+	workerAccount    string
 	daemonErr        error
 	workerErr        error
 	loginKey         string
@@ -50,6 +51,7 @@ func (h *runtimeHarness) deps() cli.Deps {
 			},
 			Worker: func(ctx context.Context, req cli.RuntimeRequest) error {
 				h.workerKey = req.Client.Key
+				h.workerAccount = req.AccountID
 				h.workerConfigPath = req.ConfigPath
 				return h.workerErr
 			},
@@ -204,6 +206,54 @@ func TestWorkerStartsTheRequestedClient(t *testing.T) {
 	}
 	if h.workerKey != "official" {
 		t.Fatalf("worker key = %q", h.workerKey)
+	}
+}
+
+func TestWorkerStartsTheRequestedAccountWithoutTreatingItAsAServerKey(t *testing.T) {
+	_, env := writeRuntimeConfig(t, officialClient)
+	h := &runtimeHarness{env: env}
+	accountID := "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	code := cli.New(h.deps()).Run(context.Background(), []string{"worker", "--account", accountID})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, h.stderr.String())
+	}
+	if h.workerAccount != accountID {
+		t.Fatalf("worker account = %q, want %q", h.workerAccount, accountID)
+	}
+	if h.workerKey != "" {
+		t.Fatalf("account id was resolved as a server key: %q", h.workerKey)
+	}
+}
+
+func TestWorkerAccountArgumentMustBeCanonicalAndExclusive(t *testing.T) {
+	_, env := writeRuntimeConfig(t, officialClient)
+	for _, args := range [][]string{
+		{"worker", "--account", "official"},
+		{"worker", "--account", "acc_" + strings.Repeat("a", 25)},
+		{"worker", "--account", "acc_" + strings.Repeat("a", 25) + "i"},
+		{"worker", "--account", "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "--key", "official"},
+		{"worker", "--account", "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "--key", ""},
+		{"worker", "--account", "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "--account", "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb"},
+	} {
+		h := &runtimeHarness{env: env}
+		if code := cli.New(h.deps()).Run(context.Background(), args); code != 2 {
+			t.Errorf("%v exit = %d, want usage error; stderr=%s", args, code, h.stderr.String())
+		}
+		if h.workerAccount != "" || h.workerKey != "" {
+			t.Errorf("%v invoked a worker with account=%q key=%q", args, h.workerAccount, h.workerKey)
+		}
+	}
+}
+
+func TestNonWorkerCommandsRejectAccountArguments(t *testing.T) {
+	_, env := writeRuntimeConfig(t, officialClient)
+	h := &runtimeHarness{env: env}
+	code := cli.New(h.deps()).Run(context.Background(), []string{"auth", "--account", "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa"})
+	if code != 2 {
+		t.Fatalf("exit = %d, want usage error", code)
+	}
+	if h.loginKey != "" {
+		t.Fatal("auth must not accept an account worker selector")
 	}
 }
 

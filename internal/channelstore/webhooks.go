@@ -34,6 +34,32 @@ const (
 	maxWebhookAttempts = 100
 )
 
+// requireOwnedWebhookSource refuses a source channel the webhook's account does
+// not hold.
+//
+// managed_channels.account_id is the registration and the authority: a channel
+// belongs to exactly one account, and only that account's automations may react
+// to it.
+func (s *Store) requireOwnedWebhookSource(ctx context.Context, accountID string, channelID int64) error {
+	if accountID == "" {
+		return nil
+	}
+	var registered string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(account_id, '') FROM managed_channels WHERE id = ?`, channelID).
+		Scan(&registered)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: no managed channel has id %d", ErrInvalidWebhook, channelID)
+	}
+	if err != nil {
+		return fmt.Errorf("channelstore: check webhook source: %w", err)
+	}
+	if registered != accountID {
+		return fmt.Errorf("%w: that channel is not registered under this account", ErrInvalidWebhook)
+	}
+	return nil
+}
+
 // webhookRow is the stored shape of one webhook. It is unexported on purpose:
 // it is the only place the sealed secret is held, and it never leaves this file
 // except through WebhookSecretBox.
@@ -59,6 +85,38 @@ func (s *Store) CreateWebhook(ctx context.Context, createdBy int64, rec automati
 	// and no account's deletion takes it with it.
 	row.createdBy = createdBy
 
+	// The webhook is registered against one user-owned account, and that account
+	// has to be the creator's own. A webhook subscribed to a channel it has no
+	// business watching is how one tenant receives another's message payloads,
+	// so the binding is checked here and never taken on trust.
+	if rec.AccountID != "" {
+		var owner int64
+		err := s.db.QueryRowContext(ctx,
+			`SELECT COALESCE(owner_user_id, 0) FROM telegram_accounts WHERE id = ?`,
+			rec.AccountID).Scan(&owner)
+		if errors.Is(err, sql.ErrNoRows) {
+			return automation.Webhook{}, fmt.Errorf("%w: no account has that id", ErrInvalidWebhook)
+		}
+		if err != nil {
+			return automation.Webhook{}, fmt.Errorf("channelstore: create webhook: %w", err)
+		}
+		if createdBy > 0 && owner != 0 && owner != createdBy {
+			return automation.Webhook{}, fmt.Errorf("%w: that account belongs to another user", ErrInvalidWebhook)
+		}
+		row.rec.OwnerUserID = owner
+		row.rec.AccountID = rec.AccountID
+	} else {
+		row.rec.OwnerUserID = createdBy
+	}
+	// Every source channel must be one that account holds. A subscription to a
+	// channel registered under a different account would deliver that account's
+	// messages here.
+	for _, channelID := range rec.SourceChannelIDs {
+		if err := s.requireOwnedWebhookSource(ctx, row.rec.AccountID, channelID); err != nil {
+			return automation.Webhook{}, err
+		}
+	}
+
 	now := s.now().UTC()
 	row.rec.CreatedAt = now
 	row.rec.UpdatedAt = now
@@ -72,15 +130,17 @@ func (s *Store) CreateWebhook(ctx context.Context, createdBy int64, rec automati
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO webhooks (name, description, enabled, url, method, auth_mode, auth_header,
 	secret_version, secret_nonce, secret_ciphertext, secret_sealed_at,
-	timeout_ms, max_attempts, allow_localhost, created_by, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	timeout_ms, max_attempts, allow_localhost, created_by, created_at, updated_at,
+	owner_user_id, account_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.rec.Name, row.rec.Description, boolInt(row.rec.Enabled), row.rec.URL,
 		row.rec.Method, row.rec.AuthMode, row.rec.AuthHeader,
 		row.secret.Version, row.secret.Nonce, row.secret.Ciphertext,
 		nullableTime(row.secret.SealedAt),
 		row.rec.Timeout.Milliseconds(), row.rec.MaxAttempts, boolInt(row.rec.AllowLocalhost),
 		nullableUserID(row.createdBy),
-		formatTime(row.rec.CreatedAt), formatTime(row.rec.UpdatedAt))
+		formatTime(row.rec.CreatedAt), formatTime(row.rec.UpdatedAt),
+		nullableOwnerID(row.rec.OwnerUserID), nullableText(row.rec.AccountID))
 	if err != nil {
 		return automation.Webhook{}, fmt.Errorf("channelstore: create webhook: %w", err)
 	}
@@ -88,7 +148,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	if err != nil {
 		return automation.Webhook{}, fmt.Errorf("channelstore: create webhook: %w", err)
 	}
-	if err := replaceWebhookSources(ctx, tx, id, row.rec.SourceChannelIDs, now); err != nil {
+	if err := replaceWebhookSources(ctx, tx, id, row.rec.AccountID, row.rec.SourceChannelIDs, now); err != nil {
 		return automation.Webhook{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -103,6 +163,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 // The returned record carries HasSecret and nothing else about the secret: the
 // sealed box stays behind WebhookSecretBox, which only the delivery engine
 // calls.
+//
+// It is unscoped and is for the engine, which reaches a webhook through a job
+// that is already bound to one account. Anything that answers a request uses
+// GetWebhookFor instead.
 func (s *Store) GetWebhook(ctx context.Context, id int64) (automation.Webhook, bool, error) {
 	row, err := scanWebhookRow(s.db.QueryRowContext(ctx, selectWebhookColumns+` WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -119,6 +183,26 @@ func (s *Store) GetWebhook(ctx context.Context, id int64) (automation.Webhook, b
 	return row.rec, true, nil
 }
 
+// GetWebhookFor returns one webhook only when it belongs to owner.
+//
+// A webhook belonging to another owner is reported as not there rather than as
+// forbidden: knowing an id must not confirm that it exists. It is the same rule
+// the send operations already follow, and it is what stops an id from being an
+// oracle across tenants.
+func (s *Store) GetWebhookFor(ctx context.Context, ownerUserID, id int64) (automation.Webhook, bool, error) {
+	if ownerUserID <= 0 {
+		return automation.Webhook{}, false, nil
+	}
+	rec, found, err := s.GetWebhook(ctx, id)
+	if err != nil || !found {
+		return automation.Webhook{}, false, err
+	}
+	if rec.OwnerUserID != ownerUserID {
+		return automation.Webhook{}, false, nil
+	}
+	return rec, true, nil
+}
+
 // ListWebhooks returns one page of webhooks and the total matching the filter,
 // newest first. List rows also carry their source channels, the last delivery
 // and the delivery tally.
@@ -132,6 +216,13 @@ func (s *Store) GetWebhook(ctx context.Context, id int64) (automation.Webhook, b
 func (s *Store) ListWebhooks(ctx context.Context, opts automation.WebhookListOptions) (automation.WebhookPage, error) {
 	conds := []string{"1 = 1"}
 	args := []any{}
+	// A webhook collection is one tenant's. Scoping here rather than after the
+	// page is cut is what keeps the reported total honest and keeps one page
+	// from being a page of everybody's.
+	if opts.OwnerUserID > 0 {
+		conds = append(conds, "owner_user_id = ?")
+		args = append(args, opts.OwnerUserID)
+	}
 	if q := strings.TrimSpace(opts.Query); q != "" {
 		conds = append(conds, "(name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')")
 		like := "%" + escapeLike(q) + "%"
@@ -293,6 +384,15 @@ func (s *Store) UpdateWebhook(ctx context.Context, rec automation.Webhook, secre
 		return automation.Webhook{}, false, err
 	}
 	row.createdBy = author
+	// The binding is carried over from the stored row and never from the
+	// request: an update changes what a webhook does, never whose it is.
+	row.rec.OwnerUserID = existing.OwnerUserID
+	row.rec.AccountID = existing.AccountID
+	for _, channelID := range rec.SourceChannelIDs {
+		if err := s.requireOwnedWebhookSource(ctx, existing.AccountID, channelID); err != nil {
+			return automation.Webhook{}, false, err
+		}
+	}
 
 	now := row.rec.UpdatedAt
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -325,7 +425,7 @@ UPDATE webhooks SET name = ?, description = ?, enabled = ?, url = ?, method = ?,
 	} else if changed == 0 {
 		return automation.Webhook{}, false, ErrWebhookNotFound
 	}
-	if err := replaceWebhookSources(ctx, tx, rec.ID, row.rec.SourceChannelIDs, now); err != nil {
+	if err := replaceWebhookSources(ctx, tx, rec.ID, row.rec.AccountID, row.rec.SourceChannelIDs, now); err != nil {
 		return automation.Webhook{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -355,6 +455,29 @@ func (s *Store) DeleteWebhook(ctx context.Context, id int64) (bool, error) {
 // carries only HasSecret, and no HTTP route can reach this method. The one
 // caller is the delivery engine, which opens the box to sign or authenticate a
 // single request and never persists what it opened.
+// WebhookSecretBoxFor returns one webhook's sealed secret only when it belongs
+// to owner.
+//
+// The secret is the one field that must never cross a tenant boundary: it is
+// what signs the deliveries and a leak of it lets one user forge another's
+// traffic. "Not found" is the answer for another owner's webhook, exactly as it
+// is for the record itself.
+func (s *Store) WebhookSecretBoxFor(ctx context.Context, ownerUserID, id int64) (secrets.Box, bool, error) {
+	if ownerUserID <= 0 {
+		return secrets.Box{}, false, nil
+	}
+	rec, found, err := s.GetWebhookFor(ctx, ownerUserID, id)
+	if err != nil || !found {
+		return secrets.Box{}, false, err
+	}
+	if rec.AccountID == "" && rec.OwnerUserID == 0 {
+		// An unowned webhook belongs to the operator token and has no tenant.
+		// It is not handed to any user on request.
+		return secrets.Box{}, false, nil
+	}
+	return s.WebhookSecretBox(ctx, id)
+}
+
 func (s *Store) WebhookSecretBox(ctx context.Context, id int64) (secrets.Box, bool, error) {
 	var (
 		box               secrets.Box
@@ -392,11 +515,22 @@ func (s *Store) webhookAuthor(ctx context.Context, id int64) (int64, error) {
 
 // WebhookIDsForChannel reports which enabled webhooks subscribe to one managed
 // source channel. It is the automation.WebhookSubscriptions implementation.
+//
+// The subscription is also required to match the channel's account. A managed
+// channel belongs to exactly one account, so only that account's automations may
+// react to it; the match is stated in the query rather than left to the write
+// that created the subscription, so a row that somehow disagrees cannot put one
+// tenant's messages into another's endpoint.
 func (s *Store) WebhookIDsForChannel(ctx context.Context, managedChannelID int64) ([]int64, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT w.id FROM webhooks w
 JOIN webhook_sources s ON s.webhook_id = w.id
+JOIN managed_channels c ON c.id = s.managed_channel_id
 WHERE s.managed_channel_id = ? AND w.enabled = 1
+  AND w.account_id IS NOT NULL
+  AND c.account_id IS NOT NULL
+  AND s.account_id = w.account_id
+  AND w.account_id = c.account_id
 ORDER BY w.id`, managedChannelID)
 	if err != nil {
 		return nil, fmt.Errorf("channelstore: read webhook subscriptions: %w", err)
@@ -439,7 +573,7 @@ SELECT managed_channel_id FROM webhook_sources WHERE webhook_id = ? ORDER BY cre
 
 // replaceWebhookSources rewrites one webhook's source set inside an open
 // transaction, so a failed write cannot leave a half-subscribed webhook.
-func replaceWebhookSources(ctx context.Context, tx *sql.Tx, webhookID int64, channelIDs []int64, now time.Time) error {
+func replaceWebhookSources(ctx context.Context, tx *sql.Tx, webhookID int64, accountID string, channelIDs []int64, now time.Time) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM webhook_sources WHERE webhook_id = ?`, webhookID); err != nil {
 		return fmt.Errorf("channelstore: replace webhook sources: %w", err)
 	}
@@ -448,8 +582,8 @@ func replaceWebhookSources(ctx context.Context, tx *sql.Tx, webhookID int64, cha
 			return fmt.Errorf("%w: source channel ids must be positive", ErrInvalidWebhook)
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO webhook_sources (webhook_id, managed_channel_id, created_at) VALUES (?, ?, ?)`,
-			webhookID, id, formatTime(now)); err != nil {
+INSERT INTO webhook_sources (webhook_id, managed_channel_id, account_id, created_at) VALUES (?, ?, ?, ?)`,
+			webhookID, id, nullableText(accountID), formatTime(now)); err != nil {
 			if isUniqueViolation(err) {
 				return ErrDuplicateWebhookSource
 			}
@@ -464,7 +598,8 @@ INSERT INTO webhook_sources (webhook_id, managed_channel_id, created_at) VALUES 
 
 const selectWebhookColumns = `SELECT id, name, description, enabled, url, method, auth_mode, auth_header,
 	secret_version, secret_nonce, secret_ciphertext, secret_sealed_at,
-	timeout_ms, max_attempts, allow_localhost, created_by, created_at, updated_at FROM webhooks`
+	timeout_ms, max_attempts, allow_localhost, created_by, created_at, updated_at,
+	COALESCE(owner_user_id, 0), COALESCE(account_id, '') FROM webhooks`
 
 func scanWebhookRow(row scanner) (webhookRow, error) {
 	var (
@@ -479,7 +614,8 @@ func scanWebhookRow(row scanner) (webhookRow, error) {
 	if err := row.Scan(&out.rec.ID, &out.rec.Name, &out.rec.Description, &enabled,
 		&out.rec.URL, &out.rec.Method, &out.rec.AuthMode, &out.rec.AuthHeader,
 		&out.secret.Version, &nonce, &ciphertext, &sealedAt,
-		&timeoutMS, &out.rec.MaxAttempts, &allowLocalhost, &createdBy, &created, &updated); err != nil {
+		&timeoutMS, &out.rec.MaxAttempts, &allowLocalhost, &createdBy, &created, &updated,
+		&out.rec.OwnerUserID, &out.rec.AccountID); err != nil {
 		return webhookRow{}, err
 	}
 	out.createdBy = createdBy.Int64

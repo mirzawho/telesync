@@ -436,6 +436,18 @@ export function MediaAttachmentCard({
     )
   }
 
+  if (kind === "sticker") {
+    return (
+      <span
+        role="img"
+        aria-label={media.sticker_emoji ? `استیکر ${media.sticker_emoji}` : "استیکر"}
+        className="flex size-24 items-center justify-center rounded-xl bg-muted/40 text-muted-foreground"
+      >
+        <StickerIcon className="size-10" aria-hidden="true" />
+      </span>
+    )
+  }
+
   if (!inlineKind(kind)) {
     return (
       <div className="flex items-center gap-3 rounded-lg border border-dashed bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground">
@@ -448,7 +460,9 @@ export function MediaAttachmentCard({
 
   return (
     <div className="max-w-xl overflow-hidden rounded-lg border">
-      {status === "ready" && media.type === "video" && url ? (
+      {status === "ready" &&
+      (media.type === "video" || (media.type === "sticker" && media.mime_type === "video/webm")) &&
+      url ? (
         <video
           src={url}
           controls

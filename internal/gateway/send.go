@@ -45,6 +45,7 @@ const (
 
 // sendDestination is where a send is going, as the API reports it.
 type sendDestination struct {
+	AccountID string `json:"account_id,omitempty"`
 	ClientKey string `json:"client_key"`
 	ChannelID string `json:"channel_id"`
 }
@@ -145,7 +146,7 @@ func (s *Server) sendTelegramMessage(ctx context.Context, w http.ResponseWriter,
 		return
 	}
 
-	statusURL := s.sendStatusPath(key, channelID, accepted.Operation.PublicID)
+	statusURL := s.sendStatusPath(routeSelectorOf(r, key), channelID, accepted.Operation.PublicID)
 	w.Header().Set("Location", statusURL)
 	if !accepted.Created {
 		// The same request under the same key is the same send. Nothing was
@@ -158,8 +159,11 @@ func (s *Server) sendTelegramMessage(ctx context.Context, w http.ResponseWriter,
 		OperationID: accepted.Operation.PublicID,
 		Status:      string(accepted.Operation.Status),
 		AcceptedAt:  RFC3339String(accepted.Operation.CreatedAt),
-		Destination: sendDestination{ClientKey: key, ChannelID: channelID},
-		StatusURL:   statusURL,
+		Destination: sendDestination{
+			AccountID: accountRouteIDForResponse(r),
+			ClientKey: key, ChannelID: channelID,
+		},
+		StatusURL: statusURL,
 	}, Meta: metaFor(requestID, s.cfg.Now())}
 	writeJSON(w, http.StatusAccepted, answer)
 }
@@ -199,10 +203,13 @@ func (s *Server) telegramSendStatus(ctx context.Context, w http.ResponseWriter, 
 	}
 
 	view := sendStatusView{
-		OperationID:   op.PublicID,
-		Status:        string(op.Status),
-		AttemptCount:  op.AttemptCount,
-		Destination:   sendDestination{ClientKey: key, ChannelID: channelID},
+		OperationID:  op.PublicID,
+		Status:       string(op.Status),
+		AttemptCount: op.AttemptCount,
+		Destination: sendDestination{
+			AccountID: accountRouteIDForResponse(r),
+			ClientKey: key, ChannelID: channelID,
+		},
 		AcceptedAt:    RFC3339String(op.CreatedAt),
 		CompletedAt:   formatOptionalTime(op.CompletedAt),
 		NextAttemptAt: formatOptionalTime(op.NextAttemptAt),
@@ -234,7 +241,7 @@ func (s *Server) telegramSendStatus(ctx context.Context, w http.ResponseWriter, 
 func (s *Server) sendDestinationVisible(ctx context.Context, a *actor, key string, destID int64) bool {
 	localID := int64(0)
 	if s.cfg.Channels != nil {
-		if row, ok, err := s.cfg.Channels.Get(ctx, key, destID); err == nil && ok {
+		if row, ok, err := s.storeFor(ctx).Get(ctx, key, destID); err == nil && ok {
 			localID = row.ID
 		}
 	}
@@ -243,8 +250,8 @@ func (s *Server) sendDestinationVisible(ctx context.Context, a *actor, key strin
 
 // sendStatusPath is the address of one operation's status, as the caller sees
 // it: under the base path, beside the route that accepted it.
-func (s *Server) sendStatusPath(key, channelID, operationID string) string {
-	return s.fullPath("/api/v1/telegram/" + key + "/channels/" + channelID + "/messages/send/" + operationID)
+func (s *Server) sendStatusPath(routeSelector, channelID, operationID string) string {
+	return s.fullPath("/api/v1/telegram/" + routeSelector + "/channels/" + channelID + "/messages/send/" + operationID)
 }
 
 // sendFailure answers a failed send request with the status and code the
@@ -360,7 +367,7 @@ func (s *Server) readSendMultipart(w http.ResponseWriter, r *http.Request, in se
 			// body has been read: its reader is spent by the next call to
 			// NextPart, and holding a file in memory until then is exactly what
 			// this endpoint must not do.
-			kept, err := s.cfg.Send.StageAttachment(r.Context(), &sending.Attachment{
+			kept, err := s.cfg.Send.StageAttachment(r.Context(), actorOfPublish(actorOf(r)), &sending.Attachment{
 				Reader:   part,
 				Name:     part.FileName(),
 				MimeType: part.Header.Get("Content-Type"),

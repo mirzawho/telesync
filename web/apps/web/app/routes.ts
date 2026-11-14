@@ -19,6 +19,11 @@ export default [
     route("channels/new", "routes/_panel/channel-create-legacy.tsx"),
     route("wordpress", "routes/_panel/wordpress.tsx"),
     route("administrators", "routes/_panel/administrators.tsx"),
+    // The signed-in user's own Telegram accounts: the listing, the add-account
+    // wizard and the account lifecycle actions. It carries no id in its path —
+    // the API answers with the caller's own accounts and nothing else, so there
+    // is no address here that could name another user's account.
+    route("accounts", "routes/_panel/my-accounts.tsx"),
     // The automation area: a status front page and the two collections it
     // manages, each with its own history beside it. A create screen is the same
     // screen as its editor: `new` is the "no record yet" value of the id

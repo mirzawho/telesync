@@ -19,11 +19,13 @@ const (
 	CodeWorkerUnavail                = "worker_unavailable"
 	CodePublishForbidden             = "publish_forbidden"
 	CodePublishSourceMissing         = "publish_source_unavailable"
+	CodePublishSourceMessageMissing  = "publish_source_message_not_found"
 	CodePublishSourceDenied          = "publish_source_forbidden"
 	CodePublishDestMissing           = "publish_destination_unavailable"
 	CodePublishDestDenied            = "publish_destination_forbidden"
 	CodePublishDenied                = "publish_permission_denied"
 	CodePublishUnsupported           = "publish_unsupported"
+	CodePublishStickerUnsupported    = "publish_sticker_unsupported"
 	CodePublishMediaTooLarge         = "publish_media_too_large"
 	CodePublishConflict              = "publish_idempotency_conflict"
 	CodePublishUnknown               = "publish_outcome_unknown"
@@ -80,6 +82,8 @@ func sendFailureOf(err error) string {
 		return rpc.CodeSendForbidden
 	case errors.Is(err, rpc.ErrSendUnsupported):
 		return rpc.CodeSendUnsupported
+	case errors.Is(err, rpc.ErrSendOutcomeUnknown):
+		return rpc.CodeSendOutcomeUnknown
 	case errors.Is(err, rpc.ErrMediaTooLarge):
 		return rpc.CodeMediaTooLarge
 	case errors.Is(err, rpc.ErrMessageTooLong):
@@ -97,6 +101,8 @@ func statusForRPCCode(code string) int {
 	switch code {
 	case rpc.CodeInvalidInput, rpc.CodeMessageTooLong, rpc.CodeSendUnsupported:
 		return http.StatusBadRequest
+	case rpc.CodeSendOutcomeUnknown:
+		return http.StatusConflict
 	case rpc.CodeSendForbidden:
 		return http.StatusForbidden
 	case rpc.CodeMediaTooLarge:
@@ -118,9 +124,9 @@ func statusOf(err error, code string) int {
 	switch code {
 	case CodePublishDenied, CodePublishForbidden:
 		return http.StatusForbidden
-	case CodePublishUnsupported:
-		return http.StatusBadRequest
-	case CodePublishSourceMissing, CodePublishDestMissing:
+	case CodePublishUnsupported, CodePublishStickerUnsupported:
+		return http.StatusUnprocessableEntity
+	case CodePublishSourceMissing, CodePublishSourceMessageMissing, CodePublishDestMissing:
 		return http.StatusNotFound
 	case CodePublishSourceMedia, CodePublishMediaUpload:
 		// The stage is named in the code; the answer is that the other side of
@@ -160,6 +166,9 @@ func messageFor(err error, code string) string {
 	if code == CodePublishMediaUpload {
 		return "The destination did not accept the attachment; nothing was published."
 	}
+	if code == CodePublishStickerUnsupported {
+		return "The destination cannot publish this sticker as a native Telegram sticker."
+	}
 	var coded *rpc.Error
 	if errors.As(err, &coded) && coded.Message != "" {
 		return coded.Message
@@ -189,6 +198,8 @@ func classifySend(sendErr error, mediaSent bool) (channelstore.PublishStatus, *E
 		// The destination cannot take this content at all. It is not a source
 		// problem: the attachment was read and is in hand.
 		code = CodePublishUnsupported
+	case sent == rpc.CodeSendOutcomeUnknown:
+		status, code = channelstore.PublishUnknown, CodePublishUnknown
 	case sent == rpc.CodeMediaTooLarge:
 		code = CodePublishMediaTooLarge
 	case errors.Is(sendErr, rpc.ErrTimeout), errors.Is(sendErr, rpc.ErrUnavailable):

@@ -19,7 +19,7 @@ import {
   layoutFor,
   normalizeHashtags,
   normalizeMentions,
-  setClientKey,
+  setAccountID,
   setPlatform,
   setSite,
   setSlug,
@@ -51,6 +51,7 @@ const span = (token: string, type: string): Entity => ({
 
 const SOURCE: PublishSource = {
   localChannelId: 7,
+  accountID: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
   messageId: 42,
   text: TEXT,
   entities: [
@@ -156,7 +157,7 @@ test("a Telegram draft never carries WordPress destination identifiers", () => {
   setPlatform(s, "wordpress")
   s.wordpress.siteId = 3
   setPlatform(s, "telegram")
-  const payload = buildTelegramPayloads({ ...s, telegram: { ...s.telegram, clientKey: "cat", channelIds: ["5"] } })
+  const payload = buildTelegramPayloads({ ...s, telegram: { ...s.telegram, accountID: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", clientKey: "cat", channelIds: ["5"] } })
   assert.equal(payload.length, 1)
   assert.ok(!("siteId" in s.telegram))
   assert.ok(!("categories" in s.telegram))
@@ -168,13 +169,27 @@ test("a Telegram draft never carries WordPress destination identifiers", () => {
 
 test("changing the Telegram connection drops the channels of the old one", () => {
   const s = state()
-  setClientKey(s, "cat")
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
   s.telegram.channelIds = ["5", "9"]
-  setClientKey(s, "dog")
+  setAccountID(s, "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb", "dog")
   assert.deepEqual(s.telegram.channelIds, [])
   assert.equal(s.telegram.clientKey, "dog")
   // Content edits survive the destination change.
   assert.deepEqual(s.telegram.hashtags, ["فناوری", "اخبار"])
+})
+
+test("changing the destination account drops its channels but preserves the source identity and media URL", () => {
+  const s = state()
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
+  setAccountID(s, "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb")
+  s.telegram.channelIds = ["5", "9"]
+
+  setAccountID(s, "acc_cccccccccccccccccccccccccc")
+
+  assert.equal(s.telegram.accountID, "acc_cccccccccccccccccccccccccc")
+  assert.deepEqual(s.telegram.channelIds, [])
+  assert.equal(s.source.accountID, SOURCE.accountID)
+  assert.equal(s.source.attachments[0]?.url, SOURCE.attachments[0]?.url)
 })
 
 test("changing the WordPress site drops that site's taxonomy and slug work", () => {
@@ -292,13 +307,13 @@ test("the Telegram payload carries only attached media", () => {
   const s = state()
   toggleAttachment(s, "42:1")
   toggleAttachment(s, "42:2")
-  const [body] = buildTelegramPayloads({ ...s, telegram: { ...s.telegram, clientKey: "cat", channelIds: ["5"] } })
+  const [body] = buildTelegramPayloads({ ...s, telegram: { ...s.telegram, accountID: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", clientKey: "cat", channelIds: ["5"] } })
   assert.equal(body.media.mode, "omit")
 })
 
 test("an attached source image is preserved in the Telegram payload", () => {
   const s = state()
-  const [body] = buildTelegramPayloads({ ...s, telegram: { ...s.telegram, clientKey: "cat", channelIds: ["5"] } })
+  const [body] = buildTelegramPayloads({ ...s, telegram: { ...s.telegram, accountID: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", clientKey: "cat", channelIds: ["5"] } })
   assert.equal(body.media.mode, "preserve_source")
   assert.equal(body.media.attachment_id, "42:1")
 })
@@ -313,7 +328,7 @@ test("Telegram needs a connection, a channel and some content", () => {
   assert.equal(empty.valid, false)
   assert.ok(empty.errors.destination)
 
-  setClientKey(s, "cat")
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
   assert.equal(validate(s).valid, false)
 
   s.telegram.channelIds = ["5"]
@@ -322,7 +337,7 @@ test("Telegram needs a connection, a channel and some content", () => {
 
 test("empty text is allowed when media is still attached", () => {
   const s = state()
-  setClientKey(s, "cat")
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
   s.telegram.channelIds = ["5"]
   s.telegram.text = "   "
   s.telegram.hashtags = []
@@ -332,7 +347,7 @@ test("empty text is allowed when media is still attached", () => {
 
 test("empty text with nothing attached is not a publishable message", () => {
   const s = state()
-  setClientKey(s, "cat")
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
   s.telegram.channelIds = ["5"]
   s.telegram.text = ""
   s.telegram.hashtags = []
@@ -345,7 +360,7 @@ test("empty text with nothing attached is not a publishable message", () => {
 
 test("text beyond Telegram's limit is refused", () => {
   const s = state()
-  setClientKey(s, "cat")
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
   s.telegram.channelIds = ["5"]
   s.telegram.text = "x".repeat(4097)
   const v = validate(s)
@@ -437,7 +452,7 @@ test("a slug the user typed is never overwritten", () => {
 
 test("one Telegram request is built per selected channel", () => {
   const s = state()
-  setClientKey(s, "cat")
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
   s.telegram.channelIds = ["5", "9", "12"]
   const bodies = buildTelegramPayloads(s)
   assert.deepEqual(bodies.map((b) => b.destination.channel_id), ["5", "9", "12"])
@@ -451,7 +466,7 @@ test("one Telegram request is built per selected channel", () => {
 
 test("a channel is named by the id of the connection that owns it", () => {
   const s = state()
-  setClientKey(s, "cat")
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
   s.telegram.channelIds = ["5"]
   const [body] = buildTelegramPayloads(s)
   assert.equal(body.destination.channel_id, "5")
@@ -492,7 +507,7 @@ test("no WordPress payload ever carries a credential", () => {
 
 test("a Telegram payload never carries a credential either", () => {
   const s = state()
-  setClientKey(s, "cat")
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
   s.telegram.channelIds = ["5"]
   const raw = JSON.stringify(buildTelegramPayloads(s))
   assert.doesNotMatch(raw, /password|credential|token|secret|session/i)
@@ -505,7 +520,7 @@ test("a Telegram payload never carries a credential either", () => {
 test("the mobile wizard refuses to advance on an invalid step", () => {
   const s = state()
   assert.equal(canAdvance(1, s), false)
-  setClientKey(s, "cat")
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
   s.telegram.channelIds = ["5"]
   assert.equal(canAdvance(1, s), true)
   assert.equal(canAdvance(2, s), true)
@@ -736,7 +751,7 @@ test("the request body carries the link's target", () => {
   editLink(s, s.links[0].id, { anchorText: "گزارش", url: "https://new.example.com" })
   const [body] = buildTelegramPayloads({
     ...s,
-    telegram: { ...s.telegram, clientKey: "cat", channelIds: ["5"] },
+    telegram: { ...s.telegram, accountID: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", clientKey: "cat", channelIds: ["5"] },
   })
   const link = body.content.entities.find((e) => e.type === "text_url")
   assert.ok(link, "the request must carry a text_url entity")

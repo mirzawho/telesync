@@ -30,8 +30,8 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 | Caller | Request | Status | Shape |
 | --- | --- | --- | --- |
 | anonymous | `GET /api/v1/telegram/official/channels` | 401 | `unauthorized` |
-| operator | `GET /api/v1/telegram/official/channels` | 200 | JSON (below) |
-| limited user | `GET /api/v1/telegram/official/channels` | 403 | `forbidden` |
+| operator | `GET /api/v1/telegram/official/channels` | 403 | `forbidden` |
+| limited user | `GET /api/v1/telegram/official/channels` | 404 | `account_not_owned` |
 | administrator | `GET /api/v1/telegram/official/channels` | 200 | JSON (below) |
 
 <details><summary>anonymous: GET /api/v1/telegram/official/channels → 401</summary>
@@ -43,19 +43,19 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 </details>
 
-<details><summary>operator: GET /api/v1/telegram/official/channels → 200</summary>
+<details><summary>operator: GET /api/v1/telegram/official/channels → 403</summary>
 
 ```json
-{"data":{"channels":[{"id":1,"title":"Documented channel","kind":"channel","has_avatar":false,"last_message_id":1,"permissions":{"new":false,"edit":false,"delete":false,"read":true}}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","has_more":false,"page":1,"per_page":20,"request_id":"docsgen","total":1}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>limited user: GET /api/v1/telegram/official/channels → 403</summary>
+<details><summary>limited user: GET /api/v1/telegram/official/channels → 404</summary>
 
 ```json
-{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
+{"error":{"code":"account_not_owned","message":"No account of yours is available for this server.","request_id":"docsgen"}}
 
 ```
 

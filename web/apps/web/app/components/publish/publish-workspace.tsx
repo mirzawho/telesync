@@ -24,6 +24,7 @@ export interface WorkspaceProps {
   state: PublishDraftState
   options: PublishingOptions
   onChange: ApplyChange
+  onRetryChannels?: () => void
   onCancel?: () => void
   onPublish?: () => void
   publishing?: boolean
@@ -49,7 +50,7 @@ const DESKTOP_GRID = "grid grid-cols-[26fr_42fr_32fr]"
  * no back, and the destination can be changed while the preview is in view.
  */
 export function DesktopPublishingWorkspace(props: WorkspaceProps) {
-  const { state, options, onChange, errors } = props
+  const { state, options, onChange, errors, onRetryChannels } = props
   return (
     <div
       data-layout="desktop"
@@ -57,7 +58,12 @@ export function DesktopPublishingWorkspace(props: WorkspaceProps) {
     >
       <div className={cn(DESKTOP_GRID, "min-h-0 flex-1 divide-x divide-border overflow-hidden")}>
         <div className="min-h-0 overflow-y-auto px-5 py-4">
-          <DestinationPanel state={state} options={options} onChange={onChange} />
+          <DestinationPanel
+            state={state}
+            options={options}
+            onChange={onChange}
+            onRetryChannels={onRetryChannels}
+          />
         </div>
         <div className="min-h-0 overflow-y-auto px-5 py-4">
           <ContentEditorPanel
@@ -143,7 +149,7 @@ export function MobilePublishingWizard({
   onStep,
   ...props
 }: WorkspaceProps & { step: WizardStep; onStep: (step: WizardStep) => void }) {
-  const { state, options, onChange, errors } = props
+  const { state, options, onChange, errors, onRetryChannels } = props
   const validation = validate(state)
   const shown = errors ?? validation.errors
   const mayAdvance = canAdvance(step, state)
@@ -159,7 +165,12 @@ export function MobilePublishingWizard({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {step === 1 && (
-          <DestinationPanel state={state} options={options} onChange={onChange} />
+          <DestinationPanel
+            state={state}
+            options={options}
+            onChange={onChange}
+            onRetryChannels={onRetryChannels}
+          />
         )}
         {step === 2 && (
           <ContentEditorPanel
@@ -274,7 +285,7 @@ function WizardFooter({
 function destinationSummary(state: PublishDraftState): string {
   if (state.platform === "telegram") {
     const count = state.telegram.channelIds.length
-    if (!state.telegram.clientKey) return "سرور تلگرام انتخاب نشده است."
+    if (!state.telegram.accountID) return "حساب تلگرام انتخاب نشده است."
     return count === 0
       ? "کانالی انتخاب نشده است."
       : `ارسال به ${faDigits(count)} کانال`

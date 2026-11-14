@@ -89,8 +89,9 @@ type DialFunc = dialFunc
 type LookupFunc = lookupFunc
 
 // ReopenFunc reschedules one unit of queued work with a fresh attempt budget.
-// It is queue.Enqueuer.Reopen's signature.
-type ReopenFunc func(ctx context.Context, eventID string, kind automation.JobKind, targetID int64) error
+// The owner is the durable account binding on the delivery, not the shared
+// queue claimant's lease identity.
+type ReopenFunc func(ctx context.Context, eventID string, kind automation.JobKind, targetID int64, owner automation.Owner) error
 
 // EventSource reads one stored event's message snapshot.
 //

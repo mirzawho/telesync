@@ -68,7 +68,19 @@ func sendMediaFromWire(m *rpc.SendMedia) *tgapi.SendMedia {
 		Height:            m.Height,
 		SupportsStreaming: m.SupportsStreaming,
 		RoundMessage:      m.RoundMessage,
+		StickerEmoji:      m.StickerEmoji,
+		StickerAnimated:   m.StickerAnimated,
+		StickerVideo:      m.StickerVideo,
+		StickerMask:       m.StickerMask,
+		StickerMaskCoords: stickerMaskCoordsToTG(m.StickerMaskCoords),
 	}
+}
+
+func stickerMaskCoordsToTG(in *rpc.StickerMaskCoords) *tgapi.StickerMaskCoords {
+	if in == nil {
+		return nil
+	}
+	return &tgapi.StickerMaskCoords{N: in.N, X: in.X, Y: in.Y, Zoom: in.Zoom}
 }
 
 func entitiesFromWire(in []rpc.Entity) []tgapi.Entity {
@@ -97,6 +109,8 @@ func (s *Service) mapSendError(err error) error {
 			"The destination refused the message: this account may not post there.", 0)
 	case errors.Is(err, tgapi.ErrSendUnsupported):
 		return rpc.NewError(rpc.CodeSendUnsupported, "This content cannot be sent to that destination.", 0)
+	case errors.Is(err, tgapi.ErrSendOutcomeUnknown):
+		return rpc.NewError(rpc.CodeSendOutcomeUnknown, "The destination send result could not be verified; inspect the destination before retrying.", 0)
 	case errors.Is(err, tgapi.ErrMessageTooLong):
 		return rpc.NewError(rpc.CodeMessageTooLong, "The message text is too long to send.", 0)
 	}

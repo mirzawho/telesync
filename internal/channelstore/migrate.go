@@ -2,6 +2,7 @@ package channelstore
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -13,10 +14,28 @@ type migration struct {
 	version int
 	name    string
 	stmts   []string
+	// rebuildsReferencedTable runs this migration with the two pragmas a
+	// rebuild of a table other tables reference needs.
+	//
+	// SQLite's ALTER TABLE RENAME rewrites the REFERENCES clauses that name the
+	// table, so they follow it to its old name and its DROP TABLE then takes
+	// every referencing row with it through ON DELETE CASCADE. Renaming with
+	// the legacy ALTER TABLE behaviour and foreign key enforcement off leaves
+	// those clauses naming the name the rebuilt table takes, so the rebuild is
+	// invisible to them. Both pragmas are per connection and foreign_keys is a
+	// no-op inside a transaction, so the runner sets them around the
+	// transaction, restores them afterwards, and checks the result before the
+	// migration is recorded.
+	rebuildsReferencedTable bool
 }
 
 // migrations is the ordered schema history. Never edit an applied migration:
 // add a new one instead.
+// accountOwnershipSchemaVersion is the first schema in which every managed
+// channel names the account that owns it. Below this a channel row is a legacy
+// registration whose owner nobody has claimed.
+const accountOwnershipSchemaVersion = 21
+
 var migrations = []migration{
 	{
 		version: 1,
@@ -794,6 +813,424 @@ var migrations = []migration{
 			`CREATE INDEX channel_creation_operations_created_idx ON channel_creation_operations (created_at)`,
 		},
 	},
+	{
+		version: 21,
+		name:    "personal_telegram_accounts",
+		// accountOwnershipSchemaVersion names this one, because it is the
+		// migration that gives channels an owner.
+		// Ownership is an added dimension, not a rename. managed_channels keeps
+		// client_key as the server definition ('official', 'cat') and gains
+		// account_id as the user-owned authenticated session the row belongs
+		// to, so two users may independently subscribe to the same remote
+		// channel on the same server.
+		//
+		// managed_channels is rebuilt because SQLite cannot drop a table's
+		// UNIQUE constraint with ALTER. Every id is carried across unchanged, so
+		// the foreign keys in user_channels_permission, channel_categories,
+		// automation_* and webhook_* still resolve. The rebuild runs under the
+		// pragmas a referenced table needs; see migration.rebuildsReferencedTable.
+		rebuildsReferencedTable: true,
+		stmts: []string{
+			// One user-owned Telegram (or Cat) account: an opaque, stable,
+			// never-reused id is the authoritative session identity. Nothing
+			// here is ever a username, a phone number or a server key.
+			`CREATE TABLE telegram_accounts (
+	id TEXT PRIMARY KEY,
+	owner_user_id INTEGER REFERENCES users (id) ON DELETE CASCADE,
+	server_key TEXT NOT NULL,
+	network_type TEXT NOT NULL,
+	remote_user_id INTEGER NOT NULL DEFAULT 0,
+	remote_username TEXT NOT NULL DEFAULT '',
+	remote_display_name TEXT NOT NULL DEFAULT '',
+	phone_number_masked TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL
+		CHECK (status IN ('connecting', 'connected', 'disconnected', 'reconnecting',
+			'authentication_required', 'disabled', 'error', 'removed', 'quarantined')),
+	session_enc_version INTEGER NOT NULL DEFAULT 0,
+	session_nonce BLOB,
+	session_ciphertext BLOB,
+	session_enc_key_version INTEGER NOT NULL DEFAULT 1,
+	session_storage_ref TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	authorized_at TEXT,
+	last_connected_at TEXT,
+	last_disconnected_at TEXT,
+	last_error_code TEXT NOT NULL DEFAULT '',
+	updated_at TEXT NOT NULL,
+	deleted_at TEXT,
+	-- A missing owner is legal only for a quarantined account: that is exactly
+	-- "ownership is unclear", and nothing else may claim it.
+	CHECK (owner_user_id IS NOT NULL OR status = 'quarantined')
+)`,
+			// Owner-scoped dedup of the same remote identity on the same server,
+			// deliberately not global: two owners authenticating one remote
+			// identity get two accounts and two sessions, and no constraint may
+			// force them to share one. A remote identity not known yet (0) is
+			// never deduplicated, and a deleted account frees its identity.
+			`CREATE UNIQUE INDEX telegram_accounts_owner_remote_idx
+	ON telegram_accounts (owner_user_id, server_key, remote_user_id)
+	WHERE remote_user_id != 0 AND status != 'quarantined' AND deleted_at IS NULL`,
+			`CREATE INDEX telegram_accounts_owner_idx ON telegram_accounts (owner_user_id)`,
+			`CREATE INDEX telegram_accounts_status_idx ON telegram_accounts (status)`,
+
+			// The login state machine's durable, bounded, owner-scoped record.
+			// A login code or a 2FA password is never in here: only where the
+			// attempt got to and what it is waiting for.
+			//
+			// qr_token is a short-lived login token and is secret-class: never
+			// logged, never in error text, and purged when the attempt ends.
+			// delivery_hint is third-party text the server sent (an email
+			// pattern, an SMS prefix): untrusted, never rendered as HTML, and
+			// never allowed to influence control flow. code_submissions bounds
+			// a brute force against one attempt and is never serialized to a
+			// client.
+			`CREATE TABLE login_attempts (
+	id TEXT PRIMARY KEY,
+	owner_user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+	account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE,
+	server_key TEXT NOT NULL,
+	network_type TEXT NOT NULL DEFAULT '',
+	method TEXT NOT NULL CHECK (method IN ('phone', 'qr')),
+	state TEXT NOT NULL CHECK (state IN ('created', 'connecting', 'waiting_for_code',
+		'waiting_for_password', 'waiting_for_qr', 'authorized', 'failed', 'expired', 'canceled')),
+	phone_number_masked TEXT NOT NULL DEFAULT '',
+	delivery TEXT NOT NULL DEFAULT '',
+	delivery_hint TEXT NOT NULL DEFAULT '',
+	code_length INTEGER NOT NULL DEFAULT 0 CHECK (code_length >= 0),
+	code_submissions INTEGER NOT NULL DEFAULT 0 CHECK (code_submissions >= 0),
+	next_step TEXT NOT NULL DEFAULT '',
+	qr_token TEXT NOT NULL DEFAULT '',
+	qr_expires_at TEXT,
+	resend_after TEXT,
+	expires_at TEXT NOT NULL,
+	last_error_code TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	authorized_at TEXT
+)`,
+			`CREATE INDEX login_attempts_owner_idx ON login_attempts (owner_user_id, created_at)`,
+			`CREATE INDEX login_attempts_account_idx ON login_attempts (account_id)`,
+			`CREATE INDEX login_attempts_expires_idx ON login_attempts (expires_at)`,
+
+			// Which operator adopted which quarantined legacy central session,
+			// and why. Adoption is explicit and auditable: nothing assigns a
+			// shared legacy session to an administrator on its own.
+			`CREATE TABLE legacy_session_adoptions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	legacy_key TEXT NOT NULL CHECK (length(trim(legacy_key)) > 0),
+	account_id TEXT NOT NULL REFERENCES telegram_accounts (id),
+	adopted_by INTEGER NOT NULL REFERENCES users (id),
+	adopted_at TEXT NOT NULL,
+	reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
+	UNIQUE (legacy_key, account_id, adopted_by, adopted_at)
+)`,
+			`CREATE INDEX legacy_session_adoptions_key_idx ON legacy_session_adoptions (legacy_key)`,
+
+			// managed_channels: rebuild so that uniqueness is per account rather
+			// than per server definition. The old index goes first so its name is
+			// free again after the copy.
+			`DROP INDEX IF EXISTS managed_channels_client_channel_idx`,
+			`ALTER TABLE managed_channels RENAME TO managed_channels_pre_v21`,
+			`CREATE TABLE managed_channels (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	client_key TEXT NOT NULL,
+	channel_id INTEGER NOT NULL,
+	peer_type TEXT NOT NULL CHECK (peer_type IN ('channel', 'group')),
+	title TEXT NOT NULL DEFAULT '',
+	username TEXT NOT NULL DEFAULT '',
+	description TEXT NOT NULL DEFAULT '',
+	avatar_photo_id INTEGER NOT NULL DEFAULT 0,
+	membership_status TEXT NOT NULL CHECK (membership_status IN ('member', 'join_pending', 'unknown')),
+	participants_count INTEGER,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	last_synced_at TEXT NOT NULL,
+	verified INTEGER NOT NULL DEFAULT 0 CHECK (verified IN (0, 1)),
+	scam INTEGER NOT NULL DEFAULT 0 CHECK (scam IN (0, 1)),
+	fake INTEGER NOT NULL DEFAULT 0 CHECK (fake IN (0, 1)),
+	notices_known INTEGER NOT NULL DEFAULT 0 CHECK (notices_known IN (0, 1)),
+	avatar_available INTEGER NOT NULL DEFAULT 0 CHECK (avatar_available IN (0, 1)),
+	permission_new INTEGER NOT NULL DEFAULT 0 CHECK (permission_new IN (0, 1)),
+	permission_edit INTEGER NOT NULL DEFAULT 0 CHECK (permission_edit IN (0, 1)),
+	permission_delete INTEGER NOT NULL DEFAULT 0 CHECK (permission_delete IN (0, 1)),
+	permission_read INTEGER NOT NULL DEFAULT 0 CHECK (permission_read IN (0, 1)),
+	permissions_known INTEGER NOT NULL DEFAULT 0 CHECK (permissions_known IN (0, 1)),
+	account_id TEXT NOT NULL REFERENCES telegram_accounts (id) ON DELETE CASCADE,
+	UNIQUE (account_id, channel_id)
+)`,
+			// Every legacy channel is moved onto the quarantined account of the
+			// client key it was registered under, so no channel is left without
+			// an owner and none is handed to a user by guessing. A quarantined
+			// account is reached through its legacy key and never through a
+			// user's account listing.
+			`INSERT INTO telegram_accounts (
+	id, owner_user_id, server_key, network_type, remote_user_id,
+	remote_username, remote_display_name, phone_number_masked, status,
+	session_enc_version, session_enc_key_version, session_storage_ref,
+	last_error_code, created_at, updated_at)
+SELECT DISTINCT
+	'legacy_' || client_key, NULL, client_key, '', 0,
+	'', '', '', 'quarantined',
+	0, 1, '',
+	'', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+FROM managed_channels_pre_v21`,
+			`INSERT INTO managed_channels (
+	id, client_key, channel_id, peer_type, title, username, description,
+	avatar_photo_id, membership_status, participants_count,
+	created_at, updated_at, last_synced_at,
+	verified, scam, fake, notices_known, avatar_available,
+	permission_new, permission_edit, permission_delete, permission_read, permissions_known,
+	account_id)
+SELECT
+	id, client_key, channel_id, peer_type, title, username, description,
+	avatar_photo_id, membership_status, participants_count,
+	created_at, updated_at, last_synced_at,
+	verified, scam, fake, notices_known, avatar_available,
+	permission_new, permission_edit, permission_delete, permission_read, permissions_known,
+	'legacy_' || client_key FROM managed_channels_pre_v21`,
+			`DROP TABLE managed_channels_pre_v21`,
+			`CREATE INDEX managed_channels_client_channel_idx ON managed_channels (client_key, channel_id)`,
+			`CREATE INDEX managed_channels_account_idx ON managed_channels (account_id)`,
+
+			// The same ownership column everywhere a Telegram identity is named.
+			// Nullable and never backfilled by guessing: a row that predates the
+			// account says so with NULL instead of claiming an owner.
+			`ALTER TABLE webhooks ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			// owner_user_id is the Telesync user the webhook belongs to. It is
+			// denormalised beside account_id because every delivery read needs
+			// both, and a join to resolve one would be on the hot path of every
+			// history page.
+			`ALTER TABLE webhooks ADD COLUMN owner_user_id INTEGER`,
+			`CREATE INDEX webhooks_account_idx ON webhooks (account_id)`,
+			`ALTER TABLE webhook_sources ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			`CREATE INDEX webhook_sources_account_idx ON webhook_sources (account_id)`,
+			`ALTER TABLE workflows ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			// owner_user_id is the user the workflow belongs to. A workflow is one
+			// per user-owned channel registration, so its owner is the owner of
+			// that registration.
+			`ALTER TABLE workflows ADD COLUMN owner_user_id INTEGER`,
+			`CREATE INDEX workflows_account_idx ON workflows (account_id)`,
+			// automation_events is rebuilt rather than altered. Its uniqueness
+			// is the event deduplication key, and the old key — (type,
+			// network_key, telegram_channel_id, message_id) — is exactly the
+			// bug this release fixes: two users watching the same remote channel
+			// would see the same Telegram message, and the second user's copy
+			// was dropped as a duplicate of the first. Ownership is now part of
+			// the identity, so each account's observation is its own event.
+			// SQLite cannot drop a table-level UNIQUE constraint by ALTER, so
+			// the table is rebuilt the way migration 18 rebuilt automation_jobs.
+			`CREATE TABLE automation_events_rebuilt (
+	id TEXT PRIMARY KEY,
+	type TEXT NOT NULL CHECK (length(trim(type)) > 0),
+	network_key TEXT NOT NULL CHECK (length(trim(network_key)) > 0),
+	source_client_key TEXT NOT NULL CHECK (length(trim(source_client_key)) > 0),
+	account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE,
+	source_account_id TEXT,
+	owner_user_id INTEGER,
+	managed_channel_id INTEGER NOT NULL REFERENCES managed_channels (id) ON DELETE CASCADE,
+	telegram_channel_id INTEGER NOT NULL CHECK (telegram_channel_id <> 0),
+	message_id INTEGER NOT NULL CHECK (message_id > 0),
+	grouped_id INTEGER,
+	occurred_at TEXT NOT NULL,
+	received_at TEXT NOT NULL,
+	payload TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	UNIQUE (account_id, type, network_key, telegram_channel_id, message_id))`,
+			`INSERT INTO automation_events_rebuilt (
+	id, type, network_key, source_client_key, managed_channel_id,
+	telegram_channel_id, message_id, grouped_id, occurred_at, received_at,
+	payload, created_at)
+SELECT id, type, network_key, source_client_key, managed_channel_id,
+	telegram_channel_id, message_id, grouped_id, occurred_at, received_at,
+	payload, created_at FROM automation_events`,
+			`DROP TABLE automation_events`,
+			`ALTER TABLE automation_events_rebuilt RENAME TO automation_events`,
+			`CREATE INDEX automation_events_channel_idx ON automation_events (managed_channel_id, message_id)`,
+			`CREATE INDEX automation_events_received_idx ON automation_events (received_at)`,
+			`CREATE INDEX automation_events_account_idx ON automation_events (account_id)`,
+			// This trigger is dropped with the old table and must come back: it
+			// is what makes deleting an event take its jobs with it.
+			`CREATE TRIGGER automation_jobs_event_delete
+	AFTER DELETE ON automation_events
+	BEGIN
+		DELETE FROM automation_jobs
+		WHERE event_id = OLD.id AND job_type IN ('webhook_delivery', 'workflow_run');
+	END`,
+			`ALTER TABLE automation_event_sources ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			`CREATE INDEX automation_event_sources_account_idx ON automation_event_sources (account_id)`,
+			`ALTER TABLE automation_jobs ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			// owner_user_id is the Telesync user the work runs for. It is
+			// nullable only so a row written before accounts existed can still
+			// be stored; such a row names no account either and is refused at
+			// the queue door rather than run as somebody else.
+			`ALTER TABLE automation_jobs ADD COLUMN owner_user_id INTEGER`,
+			// paused is what a disconnected account leaves behind: its jobs are
+			// not lost and not silently dropped, they wait until the account is
+			// usable again.
+			`ALTER TABLE automation_jobs ADD COLUMN paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1))`,
+			// Every job predates account ownership at this point. Leave it
+			// durable but paused until an operator establishes its owner.
+			`UPDATE automation_jobs SET paused = 1 WHERE account_id IS NULL`,
+			`CREATE INDEX automation_jobs_account_idx ON automation_jobs (account_id)`,
+			`ALTER TABLE automation_update_states ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			`CREATE INDEX automation_update_states_account_idx ON automation_update_states (account_id)`,
+			`ALTER TABLE automation_channel_pts ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			`CREATE INDEX automation_channel_pts_account_idx ON automation_channel_pts (account_id)`,
+			`ALTER TABLE automation_peer_hashes ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			`CREATE INDEX automation_peer_hashes_account_idx ON automation_peer_hashes (account_id)`,
+			`ALTER TABLE publish_operations ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			`CREATE INDEX publish_operations_account_idx ON publish_operations (account_id)`,
+			`ALTER TABLE message_send_operations ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			`CREATE INDEX message_send_operations_account_idx ON message_send_operations (account_id)`,
+			`ALTER TABLE message_edit_operations ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			`CREATE INDEX message_edit_operations_account_idx ON message_edit_operations (account_id)`,
+			`ALTER TABLE channel_creation_operations ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE`,
+			`CREATE INDEX channel_creation_operations_account_idx ON channel_creation_operations (account_id)`,
+		},
+	},
+	{
+		version:                 22,
+		name:                    "account_scoped_workflow_destinations_and_categories",
+		rebuildsReferencedTable: true,
+		stmts: []string{
+			`ALTER TABLE workflow_destinations ADD COLUMN account_id TEXT REFERENCES telegram_accounts (id) ON DELETE NO ACTION`,
+			`UPDATE workflow_destinations
+			 SET account_id = (
+			   SELECT MIN(m.account_id)
+			   FROM managed_channels m
+			   JOIN workflows w ON w.id = workflow_destinations.workflow_id
+			   JOIN telegram_accounts a ON a.id = m.account_id
+			   WHERE m.client_key = workflow_destinations.client_key
+			     AND m.channel_id = workflow_destinations.channel_id
+			     AND a.owner_user_id = w.owner_user_id
+			     AND a.deleted_at IS NULL
+			   HAVING COUNT(DISTINCT m.account_id) = 1
+			 )
+			 WHERE destination_type = 'telegram'`,
+			`CREATE TRIGGER workflow_destinations_account_insert
+			 BEFORE INSERT ON workflow_destinations
+			 WHEN (NEW.destination_type = 'telegram' AND NEW.account_id IS NULL)
+			   OR (NEW.destination_type = 'wordpress' AND NEW.account_id IS NOT NULL)
+			 BEGIN SELECT RAISE(ABORT, 'workflow destination account mismatch'); END`,
+			`CREATE TRIGGER workflow_destinations_account_update
+			 BEFORE UPDATE OF destination_type, account_id ON workflow_destinations
+			 WHEN (NEW.destination_type = 'telegram' AND NEW.account_id IS NULL)
+			   OR (NEW.destination_type = 'wordpress' AND NEW.account_id IS NOT NULL)
+			 BEGIN SELECT RAISE(ABORT, 'workflow destination account mismatch'); END`,
+			`CREATE TABLE workflow_publications_rebuilt (
+			 id INTEGER PRIMARY KEY AUTOINCREMENT,
+			 workflow_run_id INTEGER NOT NULL REFERENCES workflow_runs (id) ON DELETE CASCADE,
+			 destination_type TEXT NOT NULL CHECK (destination_type IN ('telegram', 'wordpress')),
+			 client_key TEXT NOT NULL DEFAULT '',
+			 channel_id INTEGER NOT NULL DEFAULT 0,
+			 site_id INTEGER NOT NULL DEFAULT 0,
+			 status TEXT NOT NULL CHECK (status IN ('pending', 'published', 'failed', 'unknown')),
+			 remote_message_id INTEGER NOT NULL DEFAULT 0,
+			 remote_post_id INTEGER NOT NULL DEFAULT 0,
+			 remote_url TEXT NOT NULL DEFAULT '',
+			 attempt_count INTEGER NOT NULL DEFAULT 0,
+			 last_error_code TEXT NOT NULL DEFAULT '',
+			 last_error_message TEXT NOT NULL DEFAULT '',
+			 created_at TEXT NOT NULL,
+			 completed_at TEXT,
+			 account_id TEXT REFERENCES telegram_accounts (id) ON DELETE NO ACTION)`,
+			`INSERT INTO workflow_publications_rebuilt
+			 (id, workflow_run_id, destination_type, client_key, channel_id, site_id, status,
+			  remote_message_id, remote_post_id, remote_url, attempt_count, last_error_code,
+			  last_error_message, created_at, completed_at)
+			 SELECT id, workflow_run_id, destination_type, client_key, channel_id, site_id, status,
+			  remote_message_id, remote_post_id, remote_url, attempt_count, last_error_code,
+			  last_error_message, created_at, completed_at FROM workflow_publications`,
+			`UPDATE workflow_publications_rebuilt
+			 SET account_id = (
+			  SELECT MIN(d.account_id)
+			  FROM workflow_runs r
+			  JOIN workflow_destinations d ON d.workflow_id = r.workflow_id
+			  WHERE r.id = workflow_publications_rebuilt.workflow_run_id
+			    AND d.destination_type = 'telegram'
+			    AND d.client_key = workflow_publications_rebuilt.client_key
+			    AND d.channel_id = workflow_publications_rebuilt.channel_id
+			  HAVING COUNT(DISTINCT d.account_id) = 1
+			 )
+			 WHERE destination_type = 'telegram'`,
+			`DROP TABLE workflow_publications`,
+			`ALTER TABLE workflow_publications_rebuilt RENAME TO workflow_publications`,
+			`CREATE UNIQUE INDEX workflow_publications_destination_idx ON workflow_publications
+			 (workflow_run_id, destination_type, COALESCE(account_id, ''), client_key, channel_id, site_id)`,
+			`CREATE INDEX workflow_publications_remote_idx ON workflow_publications (destination_type, client_key, channel_id, remote_message_id)`,
+			`CREATE INDEX workflow_publications_account_idx ON workflow_publications (account_id)`,
+			`CREATE TABLE channel_categories_rebuilt (
+			 client_key TEXT NOT NULL,
+			 channel_id TEXT NOT NULL,
+			 category_id INTEGER NOT NULL REFERENCES categories (id) ON DELETE CASCADE,
+			 created_at TEXT NOT NULL,
+			 account_id TEXT NOT NULL REFERENCES telegram_accounts (id) ON DELETE CASCADE,
+			 PRIMARY KEY (account_id, channel_id, category_id))`,
+			`INSERT OR IGNORE INTO telegram_accounts
+			 (id, owner_user_id, server_key, network_type, status, created_at, updated_at)
+			 SELECT DISTINCT 'legacy_' || cc.client_key, NULL, cc.client_key, '',
+			  'quarantined', cc.created_at, cc.created_at
+			 FROM channel_categories cc
+			 WHERE NOT EXISTS (SELECT 1 FROM telegram_accounts a WHERE a.id = 'legacy_' || cc.client_key)`,
+			`INSERT INTO channel_categories_rebuilt (client_key, channel_id, category_id, created_at, account_id)
+			 SELECT cc.client_key, cc.channel_id, cc.category_id, cc.created_at,
+			  COALESCE(
+			   (SELECT MIN(m.account_id) FROM managed_channels m
+			    WHERE m.client_key = cc.client_key AND CAST(m.channel_id AS TEXT) = cc.channel_id
+			    HAVING COUNT(DISTINCT m.account_id) = 1),
+			   'legacy_' || cc.client_key)
+			 FROM channel_categories cc`,
+			`DROP TABLE channel_categories`,
+			`ALTER TABLE channel_categories_rebuilt RENAME TO channel_categories`,
+			`CREATE INDEX channel_categories_account_idx ON channel_categories (account_id, channel_id)`,
+		},
+	},
+	{
+		version: 23,
+		name:    "account_scoped_publish_idempotency",
+		stmts: []string{
+			// Earlier attempts are safely bound only when their stored
+			// destination identity begins with an account owned by that same
+			// user. Unresolved legacy rows remain NULL and are never guessed.
+			`UPDATE publish_operations
+			 SET account_id = substr(destination_id, 1, instr(destination_id, ':') - 1)
+			 WHERE account_id IS NULL
+			   AND destination_type = 'telegram'
+			   AND instr(destination_id, ':') > 1
+			   AND substr(destination_id, 1, 4) = 'acc_'
+			   AND EXISTS (
+			     SELECT 1 FROM telegram_accounts a
+			     WHERE a.id = substr(publish_operations.destination_id, 1,
+			       instr(publish_operations.destination_id, ':') - 1)
+			       AND a.owner_user_id = publish_operations.user_id
+			   )`,
+			`ALTER TABLE publish_operations RENAME TO publish_operations_v22`,
+			`CREATE TABLE publish_operations (
+			 id INTEGER PRIMARY KEY AUTOINCREMENT,
+			 user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+			 idempotency_key TEXT NOT NULL CHECK (length(trim(idempotency_key)) > 0),
+			 request_hash TEXT NOT NULL CHECK (length(trim(request_hash)) > 0),
+			 destination_type TEXT NOT NULL CHECK (destination_type IN ('telegram', 'wordpress')),
+			 destination_id TEXT NOT NULL CHECK (length(trim(destination_id)) > 0),
+			 status TEXT NOT NULL CHECK (status IN ('in_flight', 'succeeded', 'failed', 'unknown')),
+			 result TEXT NOT NULL DEFAULT '',
+			 error_code TEXT NOT NULL DEFAULT '',
+			 created_at TEXT NOT NULL,
+			 updated_at TEXT NOT NULL,
+			 account_id TEXT REFERENCES telegram_accounts (id) ON DELETE CASCADE)`,
+			`INSERT INTO publish_operations
+			 (id, user_id, idempotency_key, request_hash, destination_type, destination_id,
+			  status, result, error_code, created_at, updated_at, account_id)
+			 SELECT id, user_id, idempotency_key, request_hash, destination_type, destination_id,
+			  status, result, error_code, created_at, updated_at, account_id
+			 FROM publish_operations_v22`,
+			`DROP TABLE publish_operations_v22`,
+			`CREATE INDEX publish_operations_user_idx ON publish_operations (user_id, created_at)`,
+			`CREATE INDEX publish_operations_account_idx ON publish_operations (account_id)`,
+			`CREATE UNIQUE INDEX publish_operations_user_account_key_idx ON publish_operations
+			 (user_id, COALESCE(account_id, ''), idempotency_key)`,
+		},
+	},
 }
 
 // migrate brings the schema up to the latest version.
@@ -810,6 +1247,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	for _, m := range migrations {
 		if m.version <= current {
 			continue
@@ -831,7 +1269,29 @@ func (s *Store) currentVersion(ctx context.Context) (int, error) {
 }
 
 func (s *Store) applyMigration(ctx context.Context, m migration) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	// The connection is pinned so that a pragma set around the transaction is
+	// the one the transaction runs under: the pool is capped at one connection,
+	// but a pragma is per connection and foreign_keys is a no-op inside a
+	// transaction.
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("channelstore: migrate to %d (%s): %w", m.version, m.name, err)
+	}
+	defer conn.Close()
+
+	if m.rebuildsReferencedTable {
+		for _, stmt := range []string{`PRAGMA legacy_alter_table=ON`, `PRAGMA foreign_keys=OFF`} {
+			if _, err := conn.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("channelstore: migrate to %d (%s): %w", m.version, m.name, err)
+			}
+		}
+		defer func() {
+			_, _ = conn.ExecContext(context.Background(), `PRAGMA foreign_keys=ON`)
+			_, _ = conn.ExecContext(context.Background(), `PRAGMA legacy_alter_table=OFF`)
+		}()
+	}
+
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("channelstore: migrate to %d (%s): %w", m.version, m.name, err)
 	}
@@ -839,6 +1299,13 @@ func (s *Store) applyMigration(ctx context.Context, m migration) error {
 
 	for _, stmt := range m.stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("channelstore: migrate to %d (%s): %w", m.version, m.name, err)
+		}
+	}
+	if m.rebuildsReferencedTable {
+		// Enforcement was off for the copy, so what it left behind is checked
+		// here and the migration fails rather than record a broken reference.
+		if err := requireNoForeignKeyViolations(ctx, tx); err != nil {
 			return fmt.Errorf("channelstore: migrate to %d (%s): %w", m.version, m.name, err)
 		}
 	}
@@ -850,6 +1317,34 @@ func (s *Store) applyMigration(ctx context.Context, m migration) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("channelstore: migrate to %d (%s): %w", m.version, m.name, err)
+	}
+	return nil
+}
+
+// requireNoForeignKeyViolations fails when the schema holds a row that points at
+// a parent row that is not there.
+func requireNoForeignKeyViolations(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var offenders []string
+	for rows.Next() {
+		var table, parent, rowid, fkid sql.NullString
+		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+			return err
+		}
+		offenders = append(offenders, fmt.Sprintf("%s -> %s", table.String, parent.String))
+		if len(offenders) == 5 {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(offenders) > 0 {
+		return fmt.Errorf("foreign key check reports dangling references: %v", offenders)
 	}
 	return nil
 }

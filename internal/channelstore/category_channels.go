@@ -16,24 +16,21 @@ import (
 // from discovery (before it is managed) has no row yet and is simply not in the
 // list, without ever being invented.
 
-// CategoryChannels returns the managed channels filed under one category,
-// ordered by title.
+// CategoryChannelsForOwner returns only active, non-quarantined account
+// registrations belonging to ownerUserID, ordered by title.
 //
 // A missing category is ErrCategoryNotFound.
-func (s *Store) CategoryChannels(ctx context.Context, categoryID int64) ([]Channel, error) {
+func (s *Store) CategoryChannelsForOwner(ctx context.Context, ownerUserID, categoryID int64) ([]Channel, error) {
 	if _, err := s.categoryByID(ctx, categoryID); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT m.id, m.client_key, m.channel_id, m.peer_type, m.title, m.username,
-	m.description, m.avatar_photo_id, m.avatar_available, m.membership_status,
-	m.participants_count, m.verified, m.scam, m.fake, m.notices_known,
-	m.permission_new, m.permission_edit, m.permission_delete, m.permission_read,
-	m.permissions_known, m.created_at, m.updated_at, m.last_synced_at
+SELECT `+joinedChannelColumns+`
 FROM managed_channels m
-JOIN channel_categories cc ON cc.client_key = m.client_key AND cc.channel_id = m.channel_id
-WHERE cc.category_id = ?
-ORDER BY m.title, m.id`, categoryID)
+JOIN channel_categories cc ON cc.account_id = m.account_id AND cc.channel_id = CAST(m.channel_id AS TEXT)
+JOIN telegram_accounts a ON a.id = m.account_id
+WHERE cc.category_id = ? AND a.owner_user_id = ? AND a.deleted_at IS NULL AND a.status <> 'quarantined'
+ORDER BY m.title, m.id`, categoryID, ownerUserID)
 	if err != nil {
 		return nil, fmt.Errorf("channelstore: list the channels of category %d: %w", categoryID, err)
 	}
@@ -41,7 +38,7 @@ ORDER BY m.title, m.id`, categoryID)
 
 	out := []Channel{}
 	for rows.Next() {
-		ch, err := scanChannel(rows)
+		ch, err := s.scanChannel(rows)
 		if err != nil {
 			return nil, fmt.Errorf("channelstore: list the channels of category %d: %w", categoryID, err)
 		}
@@ -59,9 +56,10 @@ ORDER BY m.title, m.id`, categoryID)
 // filed in it (assigning twice is a no-op), then every other category it was
 // filed in is emptied of it. An empty set files it nowhere. A category that
 // does not exist is ErrCategoryNotFound and nothing is written.
-func (s *Store) ReplaceCategories(ctx context.Context, clientKey string, channelID int64, categoryIDs []int64) error {
-	if strings.TrimSpace(clientKey) == "" {
-		return errors.New("channelstore: client_key is required")
+func (s *Store) ReplaceCategories(ctx context.Context, accountID string, channelID int64, categoryIDs []int64) error {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return errors.New("channelstore: account_id is required")
 	}
 	if channelID <= 0 {
 		return errors.New("channelstore: channel_id is required")
@@ -84,10 +82,10 @@ func (s *Store) ReplaceCategories(ctx context.Context, clientKey string, channel
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO channel_categories (client_key, channel_id, category_id, created_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT (client_key, channel_id, category_id) DO NOTHING`,
-			clientKey, telegramID, categoryID, now,
+INSERT INTO channel_categories (client_key, account_id, channel_id, category_id, created_at)
+SELECT server_key, ?, ?, ?, ? FROM telegram_accounts WHERE id = ? AND deleted_at IS NULL
+ON CONFLICT (account_id, channel_id, category_id) DO NOTHING`,
+			accountID, telegramID, categoryID, now, accountID,
 		); err != nil {
 			return fmt.Errorf("channelstore: file channel %d: %w", channelID, err)
 		}
@@ -96,8 +94,8 @@ ON CONFLICT (client_key, channel_id, category_id) DO NOTHING`,
 	}
 
 	rows, err := tx.QueryContext(ctx, `
-SELECT category_id FROM channel_categories WHERE client_key = ? AND channel_id = ?`,
-		clientKey, telegramID)
+SELECT category_id FROM channel_categories WHERE account_id = ? AND channel_id = ?`,
+		accountID, telegramID)
 	if err != nil {
 		return fmt.Errorf("channelstore: file channel %d: %w", channelID, err)
 	}
@@ -119,8 +117,8 @@ SELECT category_id FROM channel_categories WHERE client_key = ? AND channel_id =
 	for _, categoryID := range drop {
 		if _, err := tx.ExecContext(ctx, `
 DELETE FROM channel_categories
-WHERE client_key = ? AND channel_id = ? AND category_id = ?`,
-			clientKey, telegramID, categoryID); err != nil {
+WHERE account_id = ? AND channel_id = ? AND category_id = ?`,
+			accountID, telegramID, categoryID); err != nil {
 			return fmt.Errorf("channelstore: file channel %d: %w", channelID, err)
 		}
 	}

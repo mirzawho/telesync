@@ -32,6 +32,7 @@ const tests = [
   join(appDir, "app/components/channel-explorer.test.tsx"),
   join(appDir, "app/components/channel-explorer/create-channel-form.test.tsx"),
   join(appDir, "app/routes/_panel/channel-create-legacy.test.ts"),
+  join(appDir, "app/routes/_panel/channels-account-actions.test.ts"),
   join(appDir, "app/routes/_panel/channel-messages.test.tsx"),
   join(appDir, "app/components/channel-explorer/channel-information-dialog.test.tsx"),
   join(appDir, "app/components/channel-explorer/channel-message-composer.test.tsx"),

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountauth"
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/editing"
@@ -89,6 +90,22 @@ type Config struct {
 	Users UserStore
 	// Tokens signs and verifies access tokens. Nil disables login.
 	Tokens Tokens
+	// Logins is the MTProto login state machine behind the account login
+	// routes. Nil answers those routes with 503 and changes nothing else.
+	Logins accountLoginService
+	// AccountAuthorized runs after the login service has durably authorized an
+	// account. It starts that account's Runner; failures are reported through
+	// Logf and the durable account remains recoverable at the next startup.
+	AccountAuthorized func(context.Context, int64, accountauth.LoginAttempt)
+	// AccountStatus resolves an account's current Runner/worker status for its
+	// owner-facing account response. A blank result preserves the stored state.
+	AccountStatus func(context.Context, channelstore.Account) string
+	// StopAccount asks the account Runner to stop before a lifecycle mutation.
+	// It is a no-op when the account has no Runner in this daemon.
+	StopAccount func(context.Context, int64, string) error
+	// ClearAccountSession removes local and persisted session material after
+	// logout or removal has made the account unroutable.
+	ClearAccountSession func(context.Context, int64, channelstore.Account) error
 	// Operator, when set, is the operator's fixed access token, accepted only
 	// on a loopback listener. It authenticates as a caller holding every
 	// permission but is not a user account.
@@ -153,6 +170,16 @@ type Config struct {
 	AutomationWorkflows automation.WorkflowService
 	// AutomationStatus reports queue health. Nil leaves the counters at zero.
 	AutomationStatus automation.AutomationStatusSource
+	// Accounts is the owner-scoped Telegram account repository. Nil answers
+	// the account routes with 503 and leaves the legacy keyed routes
+	// unroutable: without it no request can name an account it owns.
+	Accounts AccountStore
+	// Resolver turns a legacy server key into the caller's account. Nil does
+	// the same as Accounts: there is no account behind the request to act as.
+	Resolver accountResolver
+	// AccountChannels registers and reads channels per account. Nil disables
+	// the account-scoped channel routes; the local channel API is unaffected.
+	AccountChannels AccountChannels
 	// Logf receives one line per request failure. Nil discards.
 	Logf func(format string, args ...any)
 }
@@ -183,21 +210,23 @@ const (
 	CodeDuplicateSite         = "duplicate_site"
 	// Publishing failures. The prefix names the operation, so a client can
 	// tell a refused publish from an ordinary not-found.
-	CodePublishForbidden       = "publish_forbidden"
-	CodeMessageDeleteForbidden = "message_delete_forbidden"
-	CodePublishSourceMissing   = "publish_source_unavailable"
-	CodePublishSourceDenied    = "publish_source_forbidden"
-	CodePublishDestMissing     = "publish_destination_unavailable"
-	CodePublishDestDenied      = "publish_destination_forbidden"
-	CodePublishDenied          = "publish_permission_denied"
-	CodeMessageEditForbidden   = "message_edit_forbidden"
-	CodeEditQueueUnavailable   = "edit_queue_unavailable"
-	CodePublishUnsupported     = "publish_unsupported"
-	CodePublishMediaTooLarge   = "publish_media_too_large"
-	CodePublishConflict        = "publish_idempotency_conflict"
-	CodePublishUnknown         = "publish_outcome_unknown"
-	CodePublishFailed          = "publish_failed"
-	CodePublishPartial         = "publish_partial_failure"
+	CodePublishForbidden            = "publish_forbidden"
+	CodeMessageDeleteForbidden      = "message_delete_forbidden"
+	CodePublishSourceMissing        = "publish_source_unavailable"
+	CodePublishSourceMessageMissing = "publish_source_message_not_found"
+	CodePublishSourceDenied         = "publish_source_forbidden"
+	CodePublishDestMissing          = "publish_destination_unavailable"
+	CodePublishDestDenied           = "publish_destination_forbidden"
+	CodePublishDenied               = "publish_permission_denied"
+	CodeMessageEditForbidden        = "message_edit_forbidden"
+	CodeEditQueueUnavailable        = "edit_queue_unavailable"
+	CodePublishUnsupported          = "publish_unsupported"
+	CodePublishStickerUnsupported   = "publish_sticker_unsupported"
+	CodePublishMediaTooLarge        = "publish_media_too_large"
+	CodePublishConflict             = "publish_idempotency_conflict"
+	CodePublishUnknown              = "publish_outcome_unknown"
+	CodePublishFailed               = "publish_failed"
+	CodePublishPartial              = "publish_partial_failure"
 	// CodePublishSourceMedia is the source attachment failing to be read. It is
 	// its own stage: nothing was sent anywhere, so the draft is intact and the
 	// caller may drop the attachment and publish the text alone.
@@ -347,6 +376,14 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request, requestID stri
 			s.serveLocal(w, r, requestID)
 		})(w, r)
 		return
+	case underPath(path, accountsPrefix):
+		s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+			s.accounts(w, r, requestID)
+		})(w, r)
+		return
+	case strings.HasPrefix(path, accountsResources):
+		s.accountsResource(w, r, requestID)
+		return
 	case strings.HasPrefix(path, paths):
 		s.serveTelegram(w, r, requestID)
 		return
@@ -378,24 +415,57 @@ func (s *Server) serveTelegram(w http.ResponseWriter, r *http.Request, requestID
 	}
 	key, resource := segments[0], segments[1]
 
-	worker, ok := s.cfg.Workers.Worker(key)
-	if !ok {
-		s.fail(w, http.StatusNotFound, CodeUnknownClient,
-			"No configured Telegram client has that key.", requestID)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
 	defer cancel()
 	r = r.WithContext(ctx)
-	s.routeTelegram(ctx, w, r, key, worker, resource, segments, requestID)
+
+	// The keyed routes resolve a server key to the caller's own account and
+	// never to anyone else's (contract §6.3). There is no fallback: an owner
+	// with no account on that server has none, and one with several is asked
+	// which. An account with no worker is unavailable, and no other account's
+	// worker is ever substituted.
+	req, ok := s.resolveAccount(ctx, w, r, key, "", requestID)
+	if !ok {
+		return
+	}
+	// The worker is resolved from the caller's own accounts, never from the
+	// deployment's whole registry: an account that is not theirs has no worker
+	// here even when one is running.
+	owner := actorOf(r).user.ID
+	worker, ok := s.accountScopedWorkers(ctx, owner).Worker(req.accountID)
+	if !ok {
+		s.fail(w, http.StatusServiceUnavailable, CodeAccountNotConnected,
+			"No worker serves that account.", requestID)
+		return
+	}
+	r = withRouteSelector(r, key)
+	s.routeTelegram(ctx, w, r, req.accountID, req.serverKey, worker, resource, segments, requestID)
 }
 
 // routeTelegram is the per-resource part of the Telegram routes.
+//
+// accountID is the resolved worker/session identity; serverKey remains the
+// configured backend identity used by channel rows and durable operations.
+// Keeping them separate prevents an account id from replacing the global
+// server key in stored destinations.
 func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *http.Request,
-	key string, worker Worker, resource string, segments []string, requestID string) {
+	accountID, serverKey string, worker Worker, resource string, segments []string, requestID string) {
+
+	r = s.scopedToAccount(ctx, r, accountID)
+	// The handlers are handed a context as well as the request, and channel
+	// lookups read the scoped store out of that context. Decorating only the
+	// request would leave every lookup falling back to the deployment-wide
+	// store — which cannot see an account's own registrations at all.
+	ctx = s.scopeStore(ctx, r, accountID)
+	// Bind the actor to the same account. Every state-changing route below
+	// builds a publishing.Actor from this request, and the durable queue
+	// refuses the work it starts unless that actor names an owner. Binding it
+	// once here — at the point the account was chosen — is what stops a send,
+	// an edit or a publish from being recorded with no account and, later,
+	// delivered through some other user's session.
+	r = withAccount(r, accountID)
 	if resource == "channels" && len(segments) == 2 && r.Method == http.MethodPost {
-		s.createChannel(ctx, w, r, key, worker, requestID)
+		s.createChannel(ctx, w, r, serverKey, worker, requestID)
 		return
 	}
 	if resource == "channels" && len(segments) == 3 && segments[2] == "username-availability" {
@@ -404,7 +474,7 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 			s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "Username availability is read-only and supports GET.", requestID)
 			return
 		}
-		s.channelUsernameAvailability(ctx, w, r, key, worker, requestID)
+		s.channelUsernameAvailability(ctx, w, r, serverKey, worker, requestID)
 		return
 	}
 	// join, copy, send, delete and edit are the state-changing routes. Everything else is
@@ -416,8 +486,8 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 	if resource == "messages" && len(segments) == 2 {
 		s.fail(w, http.StatusNotFound, CodeNotFound,
 			"Unknown resource "+strconv.Quote("messages")+". "+
-				"Use /api/v1/telegram/"+key+"/messages/copy to copy a message and "+
-				"/api/v1/telegram/"+key+"/channels/{channel_id}/messages to read them.", requestID)
+				"Use /api/v1/telegram/"+serverKey+"/messages/copy to copy a message and "+
+				"/api/v1/telegram/"+serverKey+"/channels/{channel_id}/messages to read them.", requestID)
 		return
 	}
 	if resource == "messages" && len(segments) == 3 && segments[2] == "copy" {
@@ -427,7 +497,7 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 				"Copying a message changes state and must be sent as POST.", requestID)
 			return
 		}
-		s.copyTelegramMessage(ctx, w, r, key, worker, requestID)
+		s.copyTelegramMessage(ctx, w, r, serverKey, worker, requestID)
 		return
 	}
 	if resource == "channels" && len(segments) == 4 && segments[3] == "join" {
@@ -437,7 +507,7 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 				"Joining changes state and must be sent as POST.", requestID)
 			return
 		}
-		s.join(ctx, w, r, key, worker, segments[2], requestID)
+		s.join(ctx, w, r, serverKey, worker, segments[2], requestID)
 		return
 	}
 	// /channels/{id}/messages/send is a message being sent, not a message whose
@@ -453,7 +523,7 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 					"Sending a message changes state and must be sent as POST.", requestID)
 				return
 			}
-			s.sendTelegramMessage(ctx, w, r, key, segments[2], requestID)
+			s.sendTelegramMessage(ctx, w, r, serverKey, segments[2], requestID)
 		case 6:
 			if r.Method != http.MethodGet {
 				w.Header().Set("Allow", http.MethodGet)
@@ -461,7 +531,7 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 					"Reading a send operation is only GET.", requestID)
 				return
 			}
-			s.telegramSendStatus(ctx, w, r, key, segments[2], segments[5], requestID)
+			s.telegramSendStatus(ctx, w, r, serverKey, segments[2], segments[5], requestID)
 		default:
 			s.notFound(w, requestID)
 		}
@@ -473,11 +543,11 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 	if resource == "channels" && len(segments) == 5 && segments[3] == "messages" {
 		switch r.Method {
 		case http.MethodGet:
-			s.message(ctx, w, r, key, worker, segments[2], segments[4], requestID)
+			s.message(ctx, w, r, serverKey, worker, segments[2], segments[4], requestID)
 		case http.MethodPut:
-			s.editTelegramMessage(ctx, w, r, key, segments[2], segments[4], requestID)
+			s.editTelegramMessage(ctx, w, r, serverKey, segments[2], segments[4], requestID)
 		case http.MethodDelete:
-			s.deleteTelegramMessage(ctx, w, r, key, worker, segments[2], segments[4], requestID)
+			s.deleteTelegramMessage(ctx, w, r, serverKey, worker, segments[2], segments[4], requestID)
 		default:
 			w.Header().Set("Allow", "GET, PUT, DELETE")
 			s.fail(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
@@ -494,7 +564,7 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 				"Reading an edit operation is only GET.", requestID)
 			return
 		}
-		s.telegramMessageEditStatus(ctx, w, r, key, segments[2], segments[4], segments[6], requestID)
+		s.telegramMessageEditStatus(ctx, w, r, serverKey, segments[2], segments[4], segments[6], requestID)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -509,32 +579,35 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 			s.notFound(w, requestID)
 			return
 		}
-		s.health(ctx, w, key, worker, requestID)
+		s.health(ctx, w, serverKey, worker, requestID)
 	case "profile":
 		if len(segments) != 2 {
 			s.notFound(w, requestID)
 			return
 		}
-		s.profile(ctx, w, r, key, worker, requestID)
+		s.profile(ctx, w, r, serverKey, worker, requestID)
 	case "channels":
 		switch len(segments) {
 		case 2:
-			s.channels(ctx, w, r, key, worker, requestID)
+			s.channels(ctx, w, r, serverKey, worker, requestID)
 		case 3:
 			// /channels/find is discovery, not a channel named "find".
 			if segments[2] == "find" {
-				s.find(ctx, w, r, key, worker, requestID)
+				s.find(ctx, w, r, serverKey, worker, requestID)
 				return
 			}
 			// /channels/{id} is one channel's current Telegram state.
-			s.channel(ctx, w, r, key, worker, segments[2], requestID)
+			s.channel(ctx, w, r, serverKey, worker, segments[2], requestID)
 		case 4:
 			switch segments[3] {
 			case "messages":
-				s.messages(ctx, w, r, key, worker, segments[2], requestID)
+				s.messages(ctx, w, r, serverKey, worker, segments[2], requestID)
 				return
 			case "avatar":
-				s.avatar(ctx, w, r, key, worker, segments[2], requestID)
+				// Cache identity is the resolved account, not the global server
+				// definition. Both explicit-account and legacy keyed routes reach
+				// this dispatcher only after account resolution.
+				s.avatar(ctx, w, r, accountID, worker, segments[2], requestID)
 				return
 			}
 			s.notFound(w, requestID)
@@ -544,14 +617,14 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 				s.notFound(w, requestID)
 				return
 			}
-			s.message(ctx, w, r, key, worker, segments[2], segments[4], requestID)
+			s.message(ctx, w, r, serverKey, worker, segments[2], segments[4], requestID)
 		case 6:
 			// /channels/{id}/messages/{message_id}/media
 			if segments[3] != "messages" || segments[5] != "media" {
 				s.notFound(w, requestID)
 				return
 			}
-			s.media(ctx, w, r, key, worker, segments[2], segments[4], requestID)
+			s.media(ctx, w, r, serverKey, worker, segments[2], segments[4], requestID)
 		default:
 			s.notFound(w, requestID)
 		}
@@ -562,14 +635,14 @@ func (s *Server) routeTelegram(ctx context.Context, w http.ResponseWriter, r *ht
 			s.notFound(w, requestID)
 			return
 		}
-		s.customEmoji(ctx, w, r, key, worker, segments[2], requestID)
+		s.customEmoji(ctx, w, r, serverKey, worker, segments[2], requestID)
 	case "channel", "channel_message", "message", "messages":
 		// A near miss on the resource name is almost always a typo in the
 		// path. Say what the canonical route is instead of a bare 404.
 		s.fail(w, http.StatusNotFound, CodeNotFound,
 			"Unknown resource "+strconv.Quote(resource)+". "+
-				"Use /api/v1/telegram/"+key+"/channels and "+
-				"/api/v1/telegram/"+key+"/channels/{channel_id}/messages.", requestID)
+				"Use /api/v1/telegram/"+serverKey+"/channels and "+
+				"/api/v1/telegram/"+serverKey+"/channels/{channel_id}/messages.", requestID)
 	default:
 		s.notFound(w, requestID)
 	}
@@ -731,7 +804,7 @@ func (s *Server) messages(ctx context.Context, w http.ResponseWriter, r *http.Re
 	}
 	views := make([]messageView, 0, len(messages))
 	for _, msg := range messages {
-		views = append(views, messageViewOf(key, channelID, msg))
+		views = append(views, messageViewOf(routeSelectorOf(r, key), channelID, msg))
 	}
 	// The channel is already in the path, so repeating it in the body would
 	// only duplicate what the caller supplied.
@@ -856,7 +929,7 @@ func (s *Server) message(ctx context.Context, w http.ResponseWriter, r *http.Req
 
 	views := make([]messageView, 0, len(result.Messages))
 	for _, msg := range result.Messages {
-		views = append(views, messageViewOf(key, channelID, msg))
+		views = append(views, messageViewOf(routeSelectorOf(r, key), channelID, msg))
 	}
 	// A single message has no pagination; the envelope still carries meta so
 	// callers can treat every response the same way. The channel is in the path

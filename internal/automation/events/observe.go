@@ -22,8 +22,27 @@ import (
 // managedID is a local managed_channels.id and is the only value a permission
 // check may use. ok is false when this installation does not manage the channel,
 // which is a normal answer and not an error.
+//
+// The lookup is account-scoped and always has been in effect: a channel is
+// registered against exactly one account, so the row a remote channel resolves
+// to is the row that account subscribed. accountID is what makes that explicit,
+// so two users watching one remote channel resolve to their own rows rather
+// than to whichever was inserted first.
 type ManagedChannelResolver interface {
-	ManagedChannelFor(ctx context.Context, clientKey string, telegramChannelID int64) (managedID int64, ok bool, err error)
+	ManagedChannelFor(ctx context.Context, accountID, clientKey string, telegramChannelID int64) (registration ChannelRegistration, ok bool, err error)
+}
+
+// ChannelRegistration is the local row an observation resolved to, and the
+// ownership that row carries.
+type ChannelRegistration struct {
+	// ManagedChannelID is the local managed_channels.id.
+	ManagedChannelID int64
+	// AccountID is the account that owns the registration. It is the event's
+	// owning account and scopes the event identity.
+	AccountID string
+	// OwnerUserID is the Telesync user behind that account, so the work
+	// scheduled from this event is bound to an owner without a second lookup.
+	OwnerUserID int64
 }
 
 // Observation is one message a worker saw, before it is tied to a managed
@@ -34,7 +53,9 @@ type ManagedChannelResolver interface {
 // and are meaningful only inside one NetworkKey, while the local managed id is
 // resolved later and is the only one a permission check may use.
 type Observation struct {
-	ClientKey         string
+	ClientKey string
+	// AccountID is the user-owned account the observing connection belongs to.
+	AccountID         string
 	NetworkKey        string
 	TelegramChannelID int64
 	Message           rpc.Message
@@ -52,7 +73,7 @@ type Observation struct {
 // installation does not manage is simply not automation's business, and must not
 // be recorded as if it were.
 func (i *Ingestor) Observe(ctx context.Context, resolve ManagedChannelResolver, obs Observation) (Outcome, bool, error) {
-	managedID, ok, err := resolve.ManagedChannelFor(ctx, obs.ClientKey, obs.TelegramChannelID)
+	reg, ok, err := resolve.ManagedChannelFor(ctx, obs.AccountID, obs.ClientKey, obs.TelegramChannelID)
 	if err != nil {
 		return "", false, fmt.Errorf("events: resolve channel %d of %s: %w",
 			obs.TelegramChannelID, obs.ClientKey, err)
@@ -63,8 +84,10 @@ func (i *Ingestor) Observe(ctx context.Context, resolve ManagedChannelResolver, 
 
 	src := Source{
 		ClientKey:         obs.ClientKey,
+		AccountID:         reg.AccountID,
+		OwnerUserID:       reg.OwnerUserID,
 		NetworkKey:        obs.NetworkKey,
-		ManagedChannelID:  managedID,
+		ManagedChannelID:  reg.ManagedChannelID,
 		TelegramChannelID: obs.TelegramChannelID,
 		Message:           obs.Message,
 		GroupedID:         obs.GroupedID,
@@ -74,22 +97,17 @@ func (i *Ingestor) Observe(ctx context.Context, resolve ManagedChannelResolver, 
 	return outcome, true, err
 }
 
-// LocalIDsFunc adapts a batch id lookup to ManagedChannelResolver.
+// ChannelLookupFunc adapts a channel registration lookup to
+// ManagedChannelResolver.
 //
-// It is the shape of channelstore.Store.LocalIDsByChannelID, so the daemon can
-// resolve an observation's remote channel to its local managed row without this
-// package depending on the store. A channel the lookup does not return is not
-// managed.
-type LocalIDsFunc func(ctx context.Context, clientKey string, channelIDs []int64) (map[int64]int64, error)
+// It is the shape of the daemon's account-scoped registration lookup, so this
+// package does not depend on the store. A channel the lookup does not return is
+// not managed by that account.
+type ChannelLookupFunc func(ctx context.Context, accountID, clientKey string, channelID int64) (ChannelRegistration, bool, error)
 
 // ManagedChannelFor implements ManagedChannelResolver for a single channel.
-func (f LocalIDsFunc) ManagedChannelFor(ctx context.Context, clientKey string, telegramChannelID int64) (int64, bool, error) {
-	m, err := f(ctx, clientKey, []int64{telegramChannelID})
-	if err != nil {
-		return 0, false, err
-	}
-	id, ok := m[telegramChannelID]
-	return id, ok, nil
+func (f ChannelLookupFunc) ManagedChannelFor(ctx context.Context, accountID, clientKey string, telegramChannelID int64) (ChannelRegistration, bool, error) {
+	return f(ctx, accountID, clientKey, telegramChannelID)
 }
 
 // NewRPCIngestBackend adapts an Ingestor to the daemon half of the automation
@@ -106,6 +124,7 @@ func NewRPCIngestBackend(ingest *Ingestor, resolve ManagedChannelResolver) rpc.I
 	return rpc.IngestBackendFunc(func(ctx context.Context, msg rpc.IngestMessage) (rpc.IngestOutcome, error) {
 		outcome, _, err := ingest.Observe(ctx, resolve, Observation{
 			ClientKey:         msg.ClientKey,
+			AccountID:         msg.AccountID,
 			NetworkKey:        msg.NetworkKey,
 			TelegramChannelID: msg.TelegramChannelID,
 			Message:           msg.Message,
@@ -128,6 +147,12 @@ func wireOutcome(o Outcome) rpc.IngestOutcome {
 	case OutcomeSuppressed:
 		return rpc.IngestSuppressed
 	case OutcomeUnmanaged:
+		return rpc.IngestUnmanaged
+	case OutcomeQuarantined:
+		// The wire's vocabulary is the older four. A quarantined observation is
+		// reported as unmanaged to the worker: nothing was scheduled, and the
+		// worker has no action to take either way. The daemon's own logs and the
+		// operator view say quarantined.
 		return rpc.IngestUnmanaged
 	default:
 		return rpc.IngestInserted

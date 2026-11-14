@@ -54,10 +54,26 @@ type AutomationJob struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	CompletedAt      *time.Time
+	// OwnerUserID and AccountID are the work's ownership binding. Both are zero
+	// on a row that predates accounts, and such a row is paused: it is never
+	// claimed and never assigned an account by inference.
+	OwnerUserID int64
+	AccountID   string
+	// Paused reports that the owning account cannot run work right now — it is
+	// disconnected, removed, or the row has no owner at all. A paused job keeps
+	// its binding and its place in line and becomes claimable again when the
+	// account is usable.
+	Paused bool
+}
+
+// Owner is the ownership binding in the shape every handler works with.
+func (j AutomationJob) Owner() automation.Owner {
+	return automation.Owner{OwnerUserID: j.OwnerUserID, AccountID: j.AccountID}
 }
 
 // Job is the shape handlers receive. Handlers see the attempt in flight and
-// nothing about locks or scheduling.
+// nothing about locks or scheduling. The owner travels with it so a handler
+// never has to guess which account it may act as.
 func (j AutomationJob) Job() automation.Job {
 	return automation.Job{
 		ID:          j.ID,
@@ -68,12 +84,17 @@ func (j AutomationJob) Job() automation.Job {
 		MaxAttempts: j.MaxAttempts,
 		AvailableAt: j.AvailableAt,
 		CreatedAt:   j.CreatedAt,
+		Owner:       j.Owner(),
 	}
 }
 
+// automationJobColumns is the one list of a job row's columns. The owner
+// columns are read with the row because a job without its binding is not a job
+// anything may execute.
 const automationJobColumns = `id, event_id, job_type, target_id, status,
 	attempt_count, max_attempts, available_at, locked_by, locked_until,
-	last_error_code, last_error_message, created_at, updated_at, completed_at`
+	last_error_code, last_error_message, created_at, updated_at, completed_at,
+	owner_user_id, account_id, paused`
 
 func scanAutomationJob(row scanner) (AutomationJob, error) {
 	var (
@@ -85,12 +106,23 @@ func scanAutomationJob(row scanner) (AutomationJob, error) {
 		createdAt   string
 		updatedAt   string
 		completedAt sql.NullString
+		accountID   sql.NullString
+		ownerID     sql.NullInt64
+		paused      int64
 	)
 	if err := row.Scan(&out.ID, &out.EventID, &kind, &out.TargetID, &status,
 		&out.Attempt, &out.MaxAttempts, &availableAt, &out.LockedBy, &lockedUntil,
-		&out.LastErrorCode, &out.LastErrorMessage, &createdAt, &updatedAt, &completedAt); err != nil {
+		&out.LastErrorCode, &out.LastErrorMessage, &createdAt, &updatedAt, &completedAt,
+		&ownerID, &accountID, &paused); err != nil {
 		return AutomationJob{}, err
 	}
+	if ownerID.Valid {
+		out.OwnerUserID = ownerID.Int64
+	}
+	if accountID.Valid {
+		out.AccountID = accountID.String
+	}
+	out.Paused = paused != 0
 	out.Kind = automation.JobKind(kind)
 	out.Status = automation.JobStatus(status)
 	out.AvailableAt = parseTime(availableAt)
@@ -112,6 +144,10 @@ type EnqueueJobRequest struct {
 	EventID  string
 	Kind     automation.JobKind
 	TargetID int64
+	// Owner is who the work runs for. It is required: a job that names no
+	// account is a job nothing may execute, and it is refused at the door rather
+	// than stored as permanent background noise.
+	Owner automation.Owner
 	// MaxAttempts bounds this job's tries. It is stored per row so changing the
 	// configuration does not rewrite jobs already queued.
 	MaxAttempts int
@@ -152,6 +188,12 @@ func (s *Store) EnqueueAutomationJob(ctx context.Context, req EnqueueJobRequest)
 	if req.MaxAttempts <= 0 {
 		return AutomationJob{}, false, fmt.Errorf("%w: max_attempts must be positive", ErrInvalidAutomationJob)
 	}
+	if !req.Owner.Bound() {
+		// Work with no owning account is work nothing is allowed to execute.
+		// Refusing it here is what keeps the queue free of rows that would have
+		// to be paused forever or, worse, run as somebody else.
+		return AutomationJob{}, false, fmt.Errorf("%w: the job names no owning account", ErrInvalidAutomationJob)
+	}
 
 	now := s.automationNow()
 	available := req.AvailableAt
@@ -162,11 +204,12 @@ func (s *Store) EnqueueAutomationJob(ctx context.Context, req EnqueueJobRequest)
 INSERT INTO automation_jobs (
 	event_id, job_type, target_id, status, attempt_count, max_attempts,
 	available_at, locked_by, locked_until, last_error_code, last_error_message,
-	created_at, updated_at, completed_at
-) VALUES (?, ?, ?, ?, 0, ?, ?, '', NULL, '', '', ?, ?, NULL)
+	created_at, updated_at, completed_at, owner_user_id, account_id, paused
+) VALUES (?, ?, ?, ?, 0, ?, ?, '', NULL, '', '', ?, ?, NULL, ?, ?, 0)
 ON CONFLICT (job_type, target_id, event_id) DO NOTHING`,
 		req.EventID, string(req.Kind), req.TargetID, string(automation.JobPending), req.MaxAttempts,
-		formatAutomationTime(available), formatAutomationTime(now), formatAutomationTime(now))
+		formatAutomationTime(available), formatAutomationTime(now), formatAutomationTime(now),
+		req.Owner.OwnerUserID, req.Owner.AccountID)
 	if err != nil {
 		return AutomationJob{}, false, fmt.Errorf("channelstore: enqueue automation job: %w", err)
 	}
@@ -211,6 +254,10 @@ type ClaimJobRequest struct {
 	// Worker names the claiming process, so a lease can be attributed and
 	// released. It is an identity for the lease, not a credential.
 	Worker string
+	// AccountID optionally limits the claim to one account. An empty value is
+	// the shared queue claimant: it may claim any runnable, owner-bound job,
+	// whose durable owner must then determine the account used for dispatch.
+	AccountID string
 	// Lease is how long the claim stands before another worker may reclaim the
 	// job. Zero or negative means the caller made a mistake.
 	Lease time.Duration
@@ -220,35 +267,79 @@ type ClaimJobRequest struct {
 // the selection sees it. It correlates on the candidate's own job_type and
 // target_id, so it needs no knowledge of which row will win.
 //
-// Ordering policy: a job that failed terminally is recorded and left alone, and
-// it does not block the ones behind it. Serialising behind a job that can never
-// run again would strand a target's whole future, which is a worse failure than
-// running one message after a gap the record already explains. A job still
-// pending, processing or waiting to be retried does hold its place in line.
-const claimableSelect = `((
+// Ownership: an account-specific claimant sees only its account; the shared
+// claimant sees any job whose durable owner matches a connected account row.
+// Ownerless legacy rows are quarantined regardless of claimant. Ordering is
+// per account and target: an earlier live job holds its place, but a paused,
+// ownerless, or disconnected job cannot strand runnable work.
+//
+// It binds the optional account filter twice (empty means shared), then the
+// current instant twice.
+const claimableSelect = `((? = '' OR automation_jobs.account_id = ?) AND
+	automation_jobs.account_id IS NOT NULL AND automation_jobs.owner_user_id IS NOT NULL AND
+	automation_jobs.paused = 0 AND EXISTS (
+		SELECT 1 FROM telegram_accounts AS owning_account
+		WHERE owning_account.id = automation_jobs.account_id
+		  AND owning_account.owner_user_id = automation_jobs.owner_user_id
+		  AND owning_account.status = 'connected'
+		  AND owning_account.deleted_at IS NULL
+	) AND (
 	(status IN ('pending', 'retry_wait') AND available_at <= ?)
 	OR (status = 'processing' AND locked_until IS NOT NULL AND locked_until <= ?)
 ) AND NOT EXISTS (
 	SELECT 1 FROM automation_jobs AS earlier
 	WHERE earlier.job_type = automation_jobs.job_type
 	  AND earlier.target_id = automation_jobs.target_id
+	  AND earlier.account_id = automation_jobs.account_id
+	  AND earlier.owner_user_id = automation_jobs.owner_user_id
 	  AND earlier.id < automation_jobs.id
+	  AND earlier.paused = 0
+	  AND earlier.account_id IS NOT NULL
+	  AND earlier.owner_user_id IS NOT NULL
 	  AND earlier.status IN ('pending', 'processing', 'retry_wait')
+	  AND EXISTS (
+		SELECT 1 FROM telegram_accounts AS earlier_account
+		WHERE earlier_account.id = earlier.account_id
+		  AND earlier_account.owner_user_id = earlier.owner_user_id
+		  AND earlier_account.status = 'connected'
+		  AND earlier_account.deleted_at IS NULL
+	  )
 ))`
 
 // claimableGuard is the same predicate for the write, stated against a named
 // row so the update cannot take a job the selection would have refused. The
 // two are kept apart rather than concatenated because the subquery has to be
 // correlated differently in each; the columns they test are identical on
-// purpose, and any divergence between them is a bug. It binds five values: the
-// current instant twice, then the chosen row's job_type, target_id and id.
-const claimableGuard = `((
+// purpose, and any divergence between them is a bug. It binds the optional
+// account filter twice, the current instant twice, then the chosen row's
+// job_type, target_id and id.
+const claimableGuard = `((? = '' OR automation_jobs.account_id = ?) AND
+	automation_jobs.account_id IS NOT NULL AND automation_jobs.owner_user_id IS NOT NULL AND
+	automation_jobs.paused = 0 AND EXISTS (
+		SELECT 1 FROM telegram_accounts AS owning_account
+		WHERE owning_account.id = automation_jobs.account_id
+		  AND owning_account.owner_user_id = automation_jobs.owner_user_id
+		  AND owning_account.status = 'connected'
+		  AND owning_account.deleted_at IS NULL
+	) AND (
 	(status IN ('pending', 'retry_wait') AND available_at <= ?)
 	OR (status = 'processing' AND locked_until IS NOT NULL AND locked_until <= ?)
 ) AND NOT EXISTS (
 	SELECT 1 FROM automation_jobs AS earlier
 	WHERE earlier.job_type = ? AND earlier.target_id = ? AND earlier.id < ?
+	  AND earlier.account_id = automation_jobs.account_id
+	  AND earlier.owner_user_id = automation_jobs.owner_user_id
+	  AND earlier.paused = 0
+	  AND earlier.account_id IS NOT NULL
+	  AND earlier.owner_user_id IS NOT NULL
 	  AND earlier.status IN ('pending', 'processing', 'retry_wait')
+	  AND EXISTS (
+		SELECT 1 FROM telegram_accounts AS earlier_account
+		WHERE earlier_account.id = earlier.account_id
+		  AND earlier_account.owner_user_id = earlier.owner_user_id
+		  AND earlier_account.status = 'connected'
+		  AND earlier_account.deleted_at IS NULL
+	  )
 ))`
 
 // ClaimAutomationJob leases the next runnable job for worker, if there is one.
@@ -260,10 +351,15 @@ const claimableGuard = `((
 //
 // Claiming increments attempt_count: the lease is what spends the attempt, and
 // a job whose worker died must not be retried forever without that showing.
+//
+// A shared claimant can take any runnable bound job. The returned Owner is
+// authoritative for dispatch; a claimer's worker name is only a lease identity
+// and is never used to select a Telegram account.
 func (s *Store) ClaimAutomationJob(ctx context.Context, req ClaimJobRequest) (AutomationJob, bool, error) {
 	if strings.TrimSpace(req.Worker) == "" {
 		return AutomationJob{}, false, fmt.Errorf("%w: worker name is empty", ErrInvalidAutomationJob)
 	}
+	accountID := strings.TrimSpace(req.AccountID)
 	if req.Lease <= 0 {
 		return AutomationJob{}, false, fmt.Errorf("%w: lease must be positive", ErrInvalidAutomationJob)
 	}
@@ -275,7 +371,7 @@ func (s *Store) ClaimAutomationJob(ctx context.Context, req ClaimJobRequest) (Au
 	// The guarded update can lose a race to another process; try a few times
 	// rather than report an empty queue that is not empty.
 	for attempt := 0; attempt < 3; attempt++ {
-		job, ok, err := s.tryClaimAutomationJob(ctx, req.Worker, nowStamp, untilStamp)
+		job, ok, err := s.tryClaimAutomationJob(ctx, req.Worker, accountID, nowStamp, untilStamp)
 		if err != nil || ok {
 			return job, ok, err
 		}
@@ -283,7 +379,7 @@ func (s *Store) ClaimAutomationJob(ctx context.Context, req ClaimJobRequest) (Au
 	return AutomationJob{}, false, nil
 }
 
-func (s *Store) tryClaimAutomationJob(ctx context.Context, worker, nowStamp, untilStamp string) (AutomationJob, bool, error) {
+func (s *Store) tryClaimAutomationJob(ctx context.Context, worker, accountID, nowStamp, untilStamp string) (AutomationJob, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AutomationJob{}, false, fmt.Errorf("channelstore: claim automation job: %w", err)
@@ -298,7 +394,7 @@ func (s *Store) tryClaimAutomationJob(ctx context.Context, worker, nowStamp, unt
 	err = tx.QueryRowContext(ctx, `
 SELECT id, job_type, target_id FROM automation_jobs
 WHERE `+claimableSelect+`
-ORDER BY id LIMIT 1`, nowStamp, nowStamp).Scan(&id, &kind, &targetID)
+ORDER BY id LIMIT 1`, accountID, accountID, nowStamp, nowStamp).Scan(&id, &kind, &targetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AutomationJob{}, false, nil
 	}
@@ -312,7 +408,7 @@ SET status = ?, locked_by = ?, locked_until = ?,
 	attempt_count = attempt_count + 1, updated_at = ?
 WHERE id = ? AND `+claimableGuard,
 		string(automation.JobProcessing), worker, untilStamp, nowStamp,
-		id, nowStamp, nowStamp, kind, targetID, id)
+		id, accountID, accountID, nowStamp, nowStamp, kind, targetID, id)
 	if err != nil {
 		return AutomationJob{}, false, fmt.Errorf("channelstore: claim automation job %d: %w", id, err)
 	}
@@ -445,6 +541,10 @@ type ReopenJobRequest struct {
 	EventID  string
 	Kind     automation.JobKind
 	TargetID int64
+	// Owner is the account asking for the work to be retried. A reopen is
+	// refused unless it is the account the job is already bound to: an operator
+	// retry is the same work under the same account, never a transfer of it.
+	Owner automation.Owner
 	// MaxAttempts is the fresh budget. Zero keeps the row's own value.
 	MaxAttempts int
 }
@@ -473,6 +573,14 @@ func (s *Store) ReopenAutomationJob(ctx context.Context, req ReopenJobRequest) (
 	if !found {
 		return AutomationJob{}, false, fmt.Errorf("%w: job %s/%d/%s",
 			ErrAutomationJobNotFound, req.Kind, req.TargetID, req.EventID)
+	}
+	if !req.Owner.Bound() || existing.AccountID != req.Owner.AccountID || existing.OwnerUserID != req.Owner.OwnerUserID {
+		// The caller is not the account this work belongs to. Refusing is what
+		// keeps a retry from becoming a way to run somebody else's queued work.
+		// An unbound caller is not an exception: it cannot prove which work it
+		// is authorized to retry.
+		return AutomationJob{}, false, fmt.Errorf(
+			"%w: job %d belongs to another account", automation.ErrConflict, existing.ID)
 	}
 	switch existing.Status {
 	case automation.JobSucceeded:
@@ -515,19 +623,139 @@ func (s *Store) AutomationJob(ctx context.Context, id int64) (AutomationJob, boo
 	return job, true, nil
 }
 
+// PauseAccountJobs stops one account's queued work from being claimed.
+//
+// It is what an account disconnect does. The work is not cancelled and not
+// rewound: it keeps its binding, its attempt count and its place in line, and
+// becomes claimable again when the account is usable. Pausing one account never
+// touches another's work.
+//
+// Jobs that name no account at all are paused too. They describe work nobody
+// owns, and running them under whichever account is connected would invent an
+// ownership the record does not have.
+func (s *Store) PauseAccountJobs(ctx context.Context, accountID string) error {
+	if strings.TrimSpace(accountID) == "" {
+		return fmt.Errorf("%w: no account to pause", ErrInvalidAutomationJob)
+	}
+	now := formatAutomationTime(s.automationNow())
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE automation_jobs SET paused = 1, updated_at = ?
+WHERE account_id = ? AND paused = 0
+  AND status IN ('pending', 'retry_wait', 'processing')`,
+		now, accountID); err != nil {
+		return fmt.Errorf("channelstore: pause jobs of account %s: %w", accountID, err)
+	}
+	return nil
+}
+
+// ResumeAccountJobs puts one account's paused work back in the queue.
+//
+// It is what reauthentication does, and it is deliberately the exact inverse of
+// PauseAccountJobs: only work that was paused comes back, so nothing that an
+// operator cancelled or that finished in the meantime is revived.
+func (s *Store) ResumeAccountJobs(ctx context.Context, accountID string) error {
+	if strings.TrimSpace(accountID) == "" {
+		return fmt.Errorf("%w: no account to resume", ErrInvalidAutomationJob)
+	}
+	now := formatAutomationTime(s.automationNow())
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE automation_jobs SET paused = 0, updated_at = ?
+WHERE account_id = ? AND paused = 1
+  AND status IN ('pending', 'retry_wait', 'processing')`,
+		now, accountID); err != nil {
+		return fmt.Errorf("channelstore: resume jobs of account %s: %w", accountID, err)
+	}
+	return nil
+}
+
+// PausedAutomationJobs reports the work that is stopped, oldest first.
+//
+// It is what the brief's quarantine rule needs to be visible: a job with no
+// owning account, and a job whose account is disconnected or gone, are listed
+// here rather than silently run under somebody else. An operator can see what
+// is waiting on an adoption and act on it.
+func (s *Store) PausedAutomationJobs(ctx context.Context, limit int) ([]AutomationJob, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+automationJobColumns+` FROM automation_jobs
+		 WHERE paused = 1 OR account_id IS NULL OR owner_user_id IS NULL
+		 ORDER BY id LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("channelstore: list paused automation jobs: %w", err)
+	}
+	defer rows.Close()
+	out := []AutomationJob{}
+	for rows.Next() {
+		job, err := scanAutomationJob(rows)
+		if err != nil {
+			return nil, fmt.Errorf("channelstore: list paused automation jobs: %w", err)
+		}
+		out = append(out, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("channelstore: list paused automation jobs: %w", err)
+	}
+	return out, nil
+}
+
+// ClearJobOwnership makes one job look like a legacy row, with no owner and no
+// account.
+//
+// It exists so the transition can be exercised and so an operator tool can
+// detach work from an account that is being retired. The row is not deleted:
+// its history stays readable and it is paused, exactly like every other job
+// that predates account ownership.
+func (s *Store) ClearJobOwnership(ctx context.Context, id int64) error {
+	now := formatAutomationTime(s.automationNow())
+	res, err := s.db.ExecContext(ctx, `
+UPDATE automation_jobs SET owner_user_id = NULL, account_id = NULL, paused = 1, updated_at = ?
+WHERE id = ?`, now, id)
+	if err != nil {
+		return fmt.Errorf("channelstore: clear job %d ownership: %w", id, err)
+	}
+	return requireJobRow(res, id)
+}
+
+func requireJobRow(res sql.Result, id int64) error {
+	written, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("channelstore: automation job %d: %w", id, err)
+	}
+	if written == 0 {
+		return fmt.Errorf("channelstore: automation job %d: %w", id, ErrAutomationJobNotFound)
+	}
+	return nil
+}
+
 // AutomationJobQuery selects jobs for diagnosis and tests.
 type AutomationJobQuery struct {
 	EventID string
 	Kind    automation.JobKind
 	// Status, when non-empty, narrows to one lifecycle state.
 	Status automation.JobStatus
-	Limit  int
+	// OwnerUserID, when positive, narrows to one owner's work. A historical
+	// result list is always scoped this way: one user's job history is not
+	// another's to read.
+	OwnerUserID int64
+	// AccountID, when non-empty, narrows to one account's work.
+	AccountID string
+	Limit     int
 }
 
 // AutomationJobs lists matching jobs, oldest first.
 func (s *Store) AutomationJobs(ctx context.Context, q AutomationJobQuery) ([]AutomationJob, error) {
 	var conds []string
 	var args []any
+	if q.OwnerUserID > 0 {
+		conds = append(conds, `owner_user_id = ?`)
+		args = append(args, q.OwnerUserID)
+	}
+	if q.AccountID != "" {
+		conds = append(conds, `account_id = ?`)
+		args = append(args, q.AccountID)
+	}
 	if q.EventID != "" {
 		conds = append(conds, `event_id = ?`)
 		args = append(args, q.EventID)

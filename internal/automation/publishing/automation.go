@@ -100,6 +100,7 @@ func telegramRequestOf(in automation.PublishRequest) Request {
 	req.Options.Silent = in.Options.Silent
 	req.Options.DisableWebPagePreview = in.Options.DisableWebPagePreview
 	req.IdempotencyKey = in.IdempotencyKey
+	req.Destination.AccountID = in.Destination.AccountID
 	return req
 }
 

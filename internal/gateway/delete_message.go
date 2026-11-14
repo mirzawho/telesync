@@ -11,7 +11,8 @@ import (
 )
 
 type deletedMessage struct {
-	Deleted    bool `json:"deleted"`
+	Deleted    bool   `json:"deleted"`
+	AccountID  string `json:"account_id,omitempty"`
 	Connection struct {
 		ClientKey string `json:"client_key"`
 	} `json:"connection"`
@@ -69,7 +70,10 @@ func (s *Server) deleteTelegramMessage(ctx context.Context, w http.ResponseWrite
 	}
 	s.logf("gateway: client=%s op=delete_message request_id=%s channel_id=%d message_id=%d duration=%s result=deleted",
 		key, requestID, channelID, messageID, time.Since(started))
-	data := deletedMessage{Deleted: true, ChannelID: strconv.FormatInt(channelID, 10), MessageID: int(messageID)}
+	data := deletedMessage{
+		Deleted: true, AccountID: accountRouteIDForResponse(r),
+		ChannelID: strconv.FormatInt(channelID, 10), MessageID: int(messageID),
+	}
 	data.Connection.ClientKey = key
 	writeJSON(w, http.StatusOK, envelope{
 		Data: data,

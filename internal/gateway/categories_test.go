@@ -363,8 +363,9 @@ func TestDeleteCategoryKeepsChannelAssignmentsOfOtherCategories(t *testing.T) {
 	ctx := t.Context()
 	keep := env.grantedCategory(t, store, "Keep")
 	drop := env.grantedCategory(t, store, "Drop")
+	accountID := env.testEnv.account["official"].ID
 	for _, id := range []int64{keep.ID, drop.ID} {
-		if _, err := store.AssignChannel(ctx, "official", "500", id); err != nil {
+		if _, err := store.AssignChannel(ctx, accountID, "500", id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -372,7 +373,7 @@ func TestDeleteCategoryKeepsChannelAssignmentsOfOtherCategories(t *testing.T) {
 	if resp := env.send(t, defaultCaller, http.MethodDelete, fmt.Sprintf("%s/%d", categoriesPath, drop.ID), ""); resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	counts, err := store.AssignmentCounts(ctx, "official", "500")
+	counts, err := store.AssignmentCounts(ctx, accountID, "500")
 	if err != nil {
 		t.Fatal(err)
 	}

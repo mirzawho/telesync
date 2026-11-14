@@ -54,6 +54,23 @@ func (s *Store) CreateWebhookDelivery(ctx context.Context, rec automation.Webhoo
 	if !validDeliveryStatus(rec.Status) {
 		return automation.WebhookDelivery{}, fmt.Errorf("%w: unknown status %q", ErrInvalidDelivery, rec.Status)
 	}
+	// A delivery is owned by the webhook it belongs to, and that is a
+	// consistency check as well as a fact: the webhook's owner and the event's
+	// owner have to be the same user. A webhook subscribed to a channel it has
+	// no business watching would otherwise be a way to receive another tenant's
+	// message payloads, and this is where that stops.
+	owner, err := s.deliveryOwnership(ctx, rec.WebhookID, rec.EventID)
+	if err != nil {
+		return automation.WebhookDelivery{}, err
+	}
+	if !owner.Bound() || (rec.OwnerUserID != 0 && rec.OwnerUserID != owner.OwnerUserID) ||
+		(rec.AccountID != "" && rec.AccountID != owner.AccountID) {
+		return automation.WebhookDelivery{}, fmt.Errorf(
+			"%w: queued delivery does not match its persisted owner and account", ErrInvalidDelivery)
+	}
+	rec.OwnerUserID = owner.OwnerUserID
+	rec.AccountID = owner.AccountID
+
 	now := s.now().UTC()
 	rec.CreatedAt = now
 	rec.UpdatedAt = now
@@ -81,6 +98,43 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		return automation.WebhookDelivery{}, fmt.Errorf("channelstore: create webhook delivery: %w", err)
 	}
 	return s.getWebhookDeliveryRow(ctx, id)
+}
+
+// deliveryOwnership derives the owner a delivery is recorded under.
+//
+// It is a consistency check as well as a derivation: the webhook's owner and the
+// event's owner must be the same user. A webhook subscribed to a channel it has
+// no business watching would otherwise be a way to receive another tenant's
+// message payloads, and this is where that stops.
+func (s *Store) deliveryOwnership(ctx context.Context, webhookID int64, eventID string) (automation.Owner, error) {
+	var (
+		hookOwner, eventOwner sql.NullInt64
+		hookAccount           sql.NullString
+		eventAccount          sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, `
+SELECT w.owner_user_id, w.account_id, e.account_id, a.owner_user_id
+FROM webhooks w
+JOIN automation_events e ON e.id = ?
+LEFT JOIN telegram_accounts a ON a.id = e.account_id
+WHERE w.id = ?`, eventID, webhookID).Scan(&hookOwner, &hookAccount, &eventAccount, &eventOwner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return automation.Owner{}, fmt.Errorf("%w: the webhook or the event does not exist", ErrInvalidDelivery)
+	}
+	if err != nil {
+		return automation.Owner{}, fmt.Errorf("channelstore: read delivery ownership: %w", err)
+	}
+	if !hookOwner.Valid || !eventOwner.Valid || !hookAccount.Valid || !eventAccount.Valid ||
+		hookOwner.Int64 <= 0 || eventOwner.Int64 <= 0 ||
+		hookAccount.String == "" || eventAccount.String == "" ||
+		hookOwner.Int64 != eventOwner.Int64 || hookAccount.String != eventAccount.String {
+		return automation.Owner{}, fmt.Errorf(
+			"%w: this webhook has no resolved owner/account match for that event", ErrInvalidDelivery)
+	}
+	owner := automation.Owner{}
+	owner.OwnerUserID = hookOwner.Int64
+	owner.AccountID = hookAccount.String
+	return owner, nil
 }
 
 // WebhookDeliveryForEvent reads the one delivery of one event to one webhook.
@@ -117,6 +171,116 @@ func (s *Store) GetWebhookDelivery(ctx context.Context, id int64) (automation.We
 	return rec, true, nil
 }
 
+// GetDeliveryFor returns one delivery only when owner owns its webhook.
+//
+// A delivery's request and response history is the most sensitive material in
+// the subsystem: it is a message payload and an endpoint's answer. "Not found"
+// is the answer for another owner's delivery, so an id never confirms that one
+// exists.
+func (s *Store) GetDeliveryFor(ctx context.Context, ownerUserID, webhookID, deliveryID int64) (automation.WebhookDelivery, bool, error) {
+	if ownerUserID <= 0 {
+		return automation.WebhookDelivery{}, false, nil
+	}
+	rec, found, err := s.GetWebhookDelivery(ctx, deliveryID)
+	if err != nil || !found {
+		return automation.WebhookDelivery{}, false, err
+	}
+	if rec.OwnerUserID != ownerUserID || rec.WebhookID != webhookID {
+		return automation.WebhookDelivery{}, false, nil
+	}
+	return rec, true, nil
+}
+
+// ListDeliveriesFor lists one webhook's deliveries only when owner owns it.
+func (s *Store) ListDeliveriesFor(ctx context.Context, ownerUserID, webhookID int64, opts automation.DeliveryListOptions) (automation.WebhookDeliveryPage, error) {
+	if ownerUserID <= 0 {
+		return automation.WebhookDeliveryPage{Deliveries: []automation.WebhookDelivery{}}, nil
+	}
+	owned, found, err := s.GetWebhookFor(ctx, ownerUserID, webhookID)
+	if err != nil {
+		return automation.WebhookDeliveryPage{}, err
+	}
+	if !found {
+		return automation.WebhookDeliveryPage{Deliveries: []automation.WebhookDelivery{}}, nil
+	}
+	opts.OwnerUserID = owned.OwnerUserID
+	return s.ListWebhookDeliveries(ctx, webhookID, opts)
+}
+
+// WebhookAttemptsFor reads one delivery's request/response history only when
+// owner owns it.
+func (s *Store) WebhookAttemptsFor(ctx context.Context, ownerUserID, deliveryID int64) ([]automation.WebhookAttempt, error) {
+	if ownerUserID <= 0 {
+		return []automation.WebhookAttempt{}, nil
+	}
+	rec, found, err := s.getWebhookDeliveryRowOrNone(ctx, deliveryID)
+	if err != nil {
+		return nil, err
+	}
+	if !found || rec.OwnerUserID != ownerUserID {
+		return []automation.WebhookAttempt{}, nil
+	}
+	return s.WebhookAttempts(ctx, deliveryID)
+}
+
+func (s *Store) getWebhookDeliveryRowOrNone(ctx context.Context, id int64) (automation.WebhookDelivery, bool, error) {
+	rec, err := s.getWebhookDeliveryRow(ctx, id)
+	if errors.Is(err, ErrDeliveryNotFound) {
+		return automation.WebhookDelivery{}, false, nil
+	}
+	if err != nil {
+		return automation.WebhookDelivery{}, false, err
+	}
+	return rec, true, nil
+}
+
+// fillDeliveryOwners attaches each delivery's ownership from its webhook.
+//
+// webhook_deliveries carries no owner columns: a delivery is owned by the
+// webhook it is a delivery of, and that relationship is the whole of the
+// binding. It is read out here so every record handed to a caller says whose it
+// is, and the owner-scoped reads filter on it.
+func (s *Store) fillDeliveryOwners(ctx context.Context, recs []automation.WebhookDelivery) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(recs))
+	seen := map[int64]bool{}
+	for _, rec := range recs {
+		if !seen[rec.WebhookID] {
+			seen[rec.WebhookID] = true
+			ids = append(ids, rec.WebhookID)
+		}
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, COALESCE(owner_user_id, 0), COALESCE(account_id, '')
+		 FROM webhooks WHERE id IN (`+placeholders+`)`, toAny(ids)...)
+	if err != nil {
+		return fmt.Errorf("channelstore: read delivery owners: %w", err)
+	}
+	defer rows.Close()
+	owners := map[int64]automation.Owner{}
+	for rows.Next() {
+		var id, ownerID int64
+		var account string
+		if err := rows.Scan(&id, &ownerID, &account); err != nil {
+			return fmt.Errorf("channelstore: read delivery owners: %w", err)
+		}
+		owners[id] = automation.Owner{OwnerUserID: ownerID, AccountID: account}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("channelstore: read delivery owners: %w", err)
+	}
+	for i := range recs {
+		if o, ok := owners[recs[i].WebhookID]; ok {
+			recs[i].OwnerUserID = o.OwnerUserID
+			recs[i].AccountID = o.AccountID
+		}
+	}
+	return nil
+}
+
 // ListWebhookDeliveries returns one page of one webhook's deliveries and the
 // total matching the filter, newest first.
 func (s *Store) ListWebhookDeliveries(ctx context.Context, webhookID int64, opts automation.DeliveryListOptions) (automation.WebhookDeliveryPage, error) {
@@ -125,6 +289,14 @@ func (s *Store) ListWebhookDeliveries(ctx context.Context, webhookID int64, opts
 	}
 	conds := []string{"webhook_id = ?"}
 	args := []any{webhookID}
+	// Ownership is not a column on this table: a delivery is owned by the
+	// webhook it is a delivery of. The caller's owner is applied against that
+	// binding after the rows are read, so a page never contains another
+	// tenant's history even when the ids were guessed.
+	if opts.OwnerUserID > 0 {
+		conds = append(conds, "webhook_id IN (SELECT id FROM webhooks WHERE owner_user_id = ?)")
+		args = append(args, opts.OwnerUserID)
+	}
 	if status := strings.TrimSpace(opts.Status); status != "" {
 		if !validDeliveryStatus(status) {
 			return automation.WebhookDeliveryPage{}, fmt.Errorf("%w: unknown status %q", ErrInvalidDelivery, status)
@@ -156,6 +328,9 @@ func (s *Store) ListWebhookDeliveries(ctx context.Context, webhookID int64, opts
 	}
 	if err := rows.Err(); err != nil {
 		return automation.WebhookDeliveryPage{}, fmt.Errorf("channelstore: list webhook deliveries: %w", err)
+	}
+	if err := s.fillDeliveryOwners(ctx, out); err != nil {
+		return automation.WebhookDeliveryPage{}, err
 	}
 	return automation.WebhookDeliveryPage{Deliveries: out, Total: total}, nil
 }
@@ -295,6 +470,11 @@ func (s *Store) LatestWebhookAttempt(ctx context.Context, deliveryID int64) (aut
 }
 
 // getWebhookDeliveryRow reads the delivery row without its history.
+//
+// Its ownership comes from the webhook it belongs to: webhook_deliveries has no
+// owner columns of its own, and the webhook is the authority on whose delivery
+// this is. The field is filled in here so every record that leaves this file
+// says whose it is.
 func (s *Store) getWebhookDeliveryRow(ctx context.Context, id int64) (automation.WebhookDelivery, error) {
 	rec, err := scanDelivery(s.db.QueryRowContext(ctx, selectDeliveryColumns+` WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -303,7 +483,31 @@ func (s *Store) getWebhookDeliveryRow(ctx context.Context, id int64) (automation
 	if err != nil {
 		return automation.WebhookDelivery{}, fmt.Errorf("channelstore: read webhook delivery %d: %w", id, err)
 	}
+	owner, err := s.webhookOwner(ctx, rec.WebhookID)
+	if err != nil {
+		return automation.WebhookDelivery{}, err
+	}
+	rec.OwnerUserID = owner.OwnerUserID
+	rec.AccountID = owner.AccountID
 	return rec, nil
+}
+
+// webhookOwner reads one webhook's ownership binding.
+func (s *Store) webhookOwner(ctx context.Context, webhookID int64) (automation.Owner, error) {
+	var (
+		ownerID sql.NullInt64
+		account sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT owner_user_id, account_id FROM webhooks WHERE id = ?`, webhookID).
+		Scan(&ownerID, &account)
+	if errors.Is(err, sql.ErrNoRows) {
+		return automation.Owner{}, fmt.Errorf("%w: webhook %d does not exist", ErrInvalidDelivery, webhookID)
+	}
+	if err != nil {
+		return automation.Owner{}, fmt.Errorf("channelstore: read webhook %d owner: %w", webhookID, err)
+	}
+	return automation.Owner{OwnerUserID: ownerID.Int64, AccountID: account.String}, nil
 }
 
 const selectDeliveryColumns = `SELECT id, webhook_id, event_id, status, attempt_count, next_attempt_at,

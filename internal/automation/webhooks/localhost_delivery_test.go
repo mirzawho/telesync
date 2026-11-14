@@ -32,6 +32,7 @@ func deliveryJob(webhookID int64, attempt, max int) automation.Job {
 		TargetID:    webhookID,
 		Attempt:     attempt,
 		MaxAttempts: max,
+		Owner:       automation.Owner{OwnerUserID: testOwnerUserID, AccountID: testAccountID},
 	}
 }
 

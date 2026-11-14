@@ -193,7 +193,7 @@ func TestACrossConnectionTransferReadsSourceAndUploadsVoiceOntoTheDestination(t 
 	source, dest := &fakeWorker{}, w.worker
 	source.page = w.worker.page
 	source.media, source.mediaType = voiceBytes, "audio/ogg"
-	w.service.Workers = keyedRegistry{"source": source, "dest": dest}
+	w.service.Workers = keyedRegistry{w.source.AccountID: source, "dest": dest}
 
 	if _, err := w.service.PublishTelegram(context.Background(), actorFor(t, w), "dest", requestFor(w)); err != nil {
 		t.Fatalf("PublishTelegram: %v", err)
@@ -365,5 +365,158 @@ func TestAnUnreadableSourceAttachmentSendsNothing(t *testing.T) {
 	}
 	if w.worker.sendCalls != 0 {
 		t.Fatalf("send attempts = %d, want 0", w.worker.sendCalls)
+	}
+}
+
+// "other" is not enough semantic metadata to build an outgoing attachment.
+// Even if a byte stream can be read, it must not become an empty post or be
+// guessed into a generic document.
+func TestMediaOnlyOtherMetadataReturnsTypedErrorWithoutSendingBlankMessage(t *testing.T) {
+	w := newWorld(t)
+	w.grant(t, channelstore.PermissionContentPublish, channelstore.PermissionChannelsView)
+	var err error
+	w.source, err = w.store.Upsert(context.Background(), channelstore.Channel{
+		ClientKey: "source", ChannelID: 1004276399, PeerType: channelstore.PeerChannel,
+		Title: "Source", MembershipStatus: channelstore.StatusMember,
+	})
+	if err != nil {
+		t.Fatalf("Upsert source: %v", err)
+	}
+	w.worker.page = rpc.MessagePage{
+		Channel: rpc.Channel{ID: 1004276399},
+		Messages: []rpc.Message{{
+			ID: 55, Text: "",
+			Media: &rpc.Media{ID: "1004276399:55", Type: "other", Label: "پیوست", Size: 0},
+		}},
+	}
+	w.worker.media = []byte("retrievable source attachment")
+	w.worker.mediaType = "application/octet-stream"
+
+	req := requestFor(w)
+	req.Source.MessageID = 55
+	req.Destination.ChannelID = "154"
+	req.Content = publishing.RequestContent{Text: "", Entities: []rpc.Entity{}}
+	req.Media = publishing.RequestMedia{Mode: publishing.MediaPreserveSource}
+
+	_, err = w.service.PublishTelegram(context.Background(), actorFor(t, w), "dest", req)
+	if err == nil {
+		t.Fatal("unclassified source media must not be reported as a successful empty message")
+	}
+	if code := publishing.CodeOf(err); code != publishing.CodePublishUnsupported {
+		t.Fatalf("error code = %q, want %q: %v", code, publishing.CodePublishUnsupported, err)
+	}
+	if w.worker.sendCalls != 0 {
+		t.Fatalf("send calls = %d, want 0; no blank message may be sent", w.worker.sendCalls)
+	}
+}
+
+func TestCaptionlessMediaWithUnknownCachedSizeNeedsNoAttachmentID(t *testing.T) {
+	w := newWorld(t)
+	w.grant(t, channelstore.PermissionContentPublish, channelstore.PermissionChannelsView)
+	attachment := []byte("actual document bytes")
+	w.worker.page = rpc.MessagePage{
+		Channel: rpc.Channel{ID: 555},
+		Messages: []rpc.Message{{
+			ID: 9, Text: "",
+			Media: &rpc.Media{ID: "555:9", Type: "document", Size: 0, MimeType: "application/pdf"},
+		}},
+	}
+	w.worker.media = attachment
+	w.worker.mediaType = "application/pdf"
+	req := requestFor(w)
+	req.Content = publishing.RequestContent{Text: "", Entities: []rpc.Entity{}}
+	req.Media = publishing.RequestMedia{Mode: publishing.MediaPreserveSource}
+
+	result, err := w.service.PublishTelegram(context.Background(), actorFor(t, w), "dest", req)
+	if err != nil {
+		t.Fatalf("PublishTelegram: %v", err)
+	}
+	if len(w.worker.sends) != 1 || w.worker.sends[0].Media == nil {
+		t.Fatalf("send = %+v, want source attachment", w.worker.sends)
+	}
+	if got := w.worker.sends[0].Media; got.Kind != "document" || string(got.Data) != string(attachment) {
+		t.Fatalf("outgoing media = %+v, want original document bytes", got)
+	}
+	if result.Message == nil || result.Message.ID != 4321 {
+		t.Fatalf("destination result = %+v, want confirmed destination message", result)
+	}
+}
+
+func TestZeroByteMediaCannotBePublishedAsAnEmptyMessage(t *testing.T) {
+	w := newWorld(t)
+	w.grant(t, channelstore.PermissionContentPublish, channelstore.PermissionChannelsView)
+	w.worker.page = rpc.MessagePage{Channel: rpc.Channel{ID: 555}, Messages: []rpc.Message{{
+		ID: 9, Media: &rpc.Media{ID: "555:9", Type: "document", Size: 0},
+	}}}
+	w.worker.media = []byte{}
+	req := requestFor(w)
+	req.Content = publishing.RequestContent{Text: "", Entities: []rpc.Entity{}}
+	req.Media = publishing.RequestMedia{Mode: publishing.MediaPreserveSource}
+
+	_, err := w.service.PublishTelegram(context.Background(), actorFor(t, w), "dest", req)
+	if err == nil || publishing.CodeOf(err) != publishing.CodePublishSourceMedia {
+		t.Fatalf("error = %v, code = %q; want source-media unavailable", err, publishing.CodeOf(err))
+	}
+	if w.worker.sendCalls != 0 {
+		t.Fatalf("send calls = %d, want 0", w.worker.sendCalls)
+	}
+}
+
+func TestCaptionlessStickerKeepsNativeMetadataThroughPublishing(t *testing.T) {
+	w := newWorld(t)
+	w.grant(t, channelstore.PermissionContentPublish, channelstore.PermissionChannelsView)
+	w.worker.page = rpc.MessagePage{
+		Channel: rpc.Channel{ID: 555},
+		Messages: []rpc.Message{{
+			ID: 9,
+			Media: &rpc.Media{
+				ID: "555:9", Type: "sticker", MimeType: "image/webp",
+				Width: 512, Height: 512, StickerEmoji: "🙂", StickerMask: true,
+				StickerMaskCoords: &rpc.StickerMaskCoords{N: 2, X: 0.5, Y: -1.25, Zoom: 1.4},
+			},
+		}},
+	}
+	w.worker.media = []byte("original webp sticker bytes")
+	w.worker.mediaType = "image/webp"
+	req := requestFor(w)
+	req.Content = publishing.RequestContent{Text: "", Entities: []rpc.Entity{}}
+
+	if _, err := w.service.PublishTelegram(context.Background(), actorFor(t, w), "dest", req); err != nil {
+		t.Fatalf("PublishTelegram: %v", err)
+	}
+	if len(w.worker.sends) != 1 {
+		t.Fatalf("send calls = %d, want 1", len(w.worker.sends))
+	}
+	got := w.worker.sends[0].Media
+	if got == nil || got.Kind != "sticker" || got.MimeType != "image/webp" ||
+		got.StickerEmoji != "🙂" || !got.StickerMask || got.StickerMaskCoords == nil ||
+		got.StickerMaskCoords.N != 2 || got.Width != 512 || got.Height != 512 {
+		t.Fatalf("outgoing sticker media = %+v", got)
+	}
+}
+
+func TestUnverifiedStickerResultIsUnknownAndIsNotRetried(t *testing.T) {
+	w := newWorld(t)
+	w.grant(t, channelstore.PermissionContentPublish, channelstore.PermissionChannelsView)
+	w.worker.page = rpc.MessagePage{Channel: rpc.Channel{ID: 555}, Messages: []rpc.Message{{
+		ID: 9, Media: &rpc.Media{ID: "555:9", Type: "sticker", MimeType: "image/webp", StickerEmoji: "🙂"},
+	}}}
+	w.worker.media = []byte("webp sticker")
+	w.worker.mediaType = "image/webp"
+	w.worker.sendErr = rpc.NewError(rpc.CodeSendOutcomeUnknown,
+		"The destination send result could not be verified.", 0)
+	req := requestFor(w)
+	req.Content = publishing.RequestContent{Text: "", Entities: []rpc.Entity{}}
+
+	_, err := w.service.PublishTelegram(context.Background(), actorFor(t, w), "dest", req)
+	if err == nil || publishing.CodeOf(err) != publishing.CodePublishUnknown {
+		t.Fatalf("first error = %v, code = %q, want publish_outcome_unknown", err, publishing.CodeOf(err))
+	}
+	_, err = w.service.PublishTelegram(context.Background(), actorFor(t, w), "dest", req)
+	if err == nil || publishing.CodeOf(err) != publishing.CodePublishUnknown {
+		t.Fatalf("retry error = %v, code = %q, want existing unknown operation", err, publishing.CodeOf(err))
+	}
+	if w.worker.sendCalls != 1 {
+		t.Fatalf("send calls = %d, want 1; an ambiguous sticker send is never retried blindly", w.worker.sendCalls)
 	}
 }

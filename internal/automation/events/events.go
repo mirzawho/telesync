@@ -23,17 +23,25 @@ import (
 
 // Identity derives the stable id of one event from what makes it unique.
 //
-// The identity is (type, network, channel, message) and deliberately excludes
-// the observing connection. Two accounts watching the same channel on the same
-// network describe one logical message, and an id that included the observer
-// would let the same message run an automation twice. A different network is a
-// different identity even when its channel and message numbers coincide, which
-// is why the network is in there.
+// The identity is (owner account, type, network, channel, message) and
+// deliberately excludes the observing connection within one account: a replayed
+// update from the same account describes one logical message and must not run
+// an automation twice. A different network is a different identity even when
+// its channel and message numbers coincide, which is why the network is in
+// there.
+//
+// The account is in there because two users may deliberately watch the same
+// remote channel on the same network. They are two subscriptions and two
+// automations, and an identity that omitted the account would silently drop one
+// user's work because another user had already seen the message. That is the
+// v0.0.3 assumption this release removes.
 //
 // The id is derived and not generated, so a replayed update produces the same
 // value and the database refuses it a second time.
-func Identity(eventType automation.EventType, networkKey string, telegramChannelID, messageID int64) string {
+func Identity(accountID string, eventType automation.EventType, networkKey string, telegramChannelID, messageID int64) string {
 	var b strings.Builder
+	b.WriteString(accountID)
+	b.WriteByte(0)
 	b.WriteString(string(eventType))
 	b.WriteByte(0)
 	b.WriteString(networkKey)
@@ -54,7 +62,13 @@ func Identity(eventType automation.EventType, networkKey string, telegramChannel
 type Source struct {
 	// ClientKey is the connection that observed the message. It is recorded as
 	// a possible media reader and is not part of the event identity.
-	ClientKey         string
+	ClientKey string
+	// AccountID is the user-owned account that connection belongs to. It scopes
+	// the event identity and is what makes two users' subscriptions independent.
+	AccountID string
+	// OwnerUserID is the Telesync user the account belongs to, carried so the
+	// work scheduled from this event can be bound to an owner without a lookup.
+	OwnerUserID       int64
 	NetworkKey        string
 	ManagedChannelID  int64
 	TelegramChannelID int64
@@ -93,11 +107,18 @@ func (s Source) Event() automation.MessageEvent {
 		grouped = &g
 	}
 
+	// WithOwner is not decoration. Without it the event carries no owner, the
+	// queue refuses every job scheduled from it as unowned work, and ingestion
+	// reports the event as quarantined — which looks like a quiet system rather
+	// than a dead one. The owner comes from the registration that resolved this
+	// observation, so it is the account's real owner and not a second lookup.
 	return automation.MessageEvent{
-		ID:                Identity(automation.EventMessageCreated, s.NetworkKey, s.TelegramChannelID, int64(s.Message.ID)),
+		ID:                Identity(s.AccountID, automation.EventMessageCreated, s.NetworkKey, s.TelegramChannelID, int64(s.Message.ID)),
 		Type:              automation.EventMessageCreated,
 		NetworkKey:        s.NetworkKey,
 		SourceClientKey:   s.ClientKey,
+		AccountID:         s.AccountID,
+		SourceAccountID:   s.AccountID,
 		ManagedChannelID:  s.ManagedChannelID,
 		TelegramChannelID: s.TelegramChannelID,
 		MessageID:         int64(s.Message.ID),
@@ -105,7 +126,7 @@ func (s Source) Event() automation.MessageEvent {
 		OccurredAt:        occurred.UTC(),
 		ReceivedAt:        s.ReceivedAt.UTC(),
 		Payload:           payload,
-	}
+	}.WithOwner(s.OwnerUserID)
 }
 
 // Outcome says what ingestion did with one observation. It is worth naming
@@ -122,6 +143,11 @@ const (
 	// OutcomeSuppressed is a message this installation published. It is not
 	// stored as an event at all: a workflow must not feed itself.
 	OutcomeSuppressed Outcome = "suppressed"
+	// OutcomeQuarantined is a message in a channel that has no owning account.
+	// It is stored so an operator can see what is waiting, and nothing is
+	// scheduled: there is no account the work could run under, and inventing one
+	// would invent ownership.
+	OutcomeQuarantined Outcome = "quarantined"
 	// OutcomeUnmanaged is a message in a channel this installation does not
 	// manage. Nothing is stored: automation reacts to managed source channels
 	// only, and an unmanaged message is not a failure to record.
@@ -169,6 +195,12 @@ func (i *Ingestor) WithLogf(logf func(format string, args ...any)) *Ingestor {
 // jobs pointing at an event that does not exist. A gap is visible and can be
 // repaired by re-ingesting the message, because ingestion is idempotent and
 // re-running it reuses the same event id and the same unique job.
+//
+// An event with no owning account is stored and never fanned out. It describes
+// a channel registered under a legacy central session, and there is no account
+// its work could run under: choosing one would invent ownership, which the
+// brief forbids. It stays visible so an operator can see what is waiting on an
+// adoption.
 func (i *Ingestor) Ingest(ctx context.Context, event automation.MessageEvent) (Outcome, error) {
 	if i.outbound != nil {
 		own, err := i.outbound.IsOwnPublication(ctx,
@@ -195,6 +227,12 @@ func (i *Ingestor) Ingest(ctx context.Context, event automation.MessageEvent) (O
 		return OutcomeDuplicate, nil
 	}
 
+	owner := automation.Owner{OwnerUserID: event.AccountOwnerUserID(), AccountID: event.AccountID}
+	if !owner.Bound() {
+		i.logf("events: event %s has no owning account; stored but not scheduled", event.ID)
+		return OutcomeQuarantined, nil
+	}
+
 	if err := i.fanOut(ctx, event); err != nil {
 		return OutcomeInserted, fmt.Errorf("events: fan out %s: %w", event.ID, err)
 	}
@@ -204,8 +242,16 @@ func (i *Ingestor) Ingest(ctx context.Context, event automation.MessageEvent) (O
 // fanOut schedules one job per subscribed automation. A failure to reach one
 // subscriber is reported but does not undo the others: the event is already
 // durable, and the error names what was missed so it can be repaired.
+//
+// Every job is bound to the event's own owner and account. That binding is what
+// a worker is claimed against, so a workflow scheduled for one user can never
+// be executed by another user's session.
 func (i *Ingestor) fanOut(ctx context.Context, event automation.MessageEvent) error {
 	var problems []string
+	owner := automation.Owner{
+		OwnerUserID: event.AccountOwnerUserID(),
+		AccountID:   event.AccountID,
+	}
 
 	if i.jobs != nil && i.webhooks != nil {
 		ids, err := i.webhooks.WebhookIDsForChannel(ctx, event.ManagedChannelID)
@@ -213,7 +259,7 @@ func (i *Ingestor) fanOut(ctx context.Context, event automation.MessageEvent) er
 			problems = append(problems, "webhooks: "+err.Error())
 		}
 		for _, id := range ids {
-			if err := i.jobs.EnqueueWebhookDelivery(ctx, event.ID, id); err != nil {
+			if err := i.jobs.EnqueueWebhookDelivery(ctx, event.ID, id, owner); err != nil {
 				problems = append(problems, fmt.Sprintf("webhook %d: %v", id, err))
 			}
 		}
@@ -225,7 +271,7 @@ func (i *Ingestor) fanOut(ctx context.Context, event automation.MessageEvent) er
 		case err != nil:
 			problems = append(problems, "workflow: "+err.Error())
 		case ok:
-			if err := i.jobs.EnqueueWorkflowRun(ctx, event.ID, id); err != nil {
+			if err := i.jobs.EnqueueWorkflowRun(ctx, event.ID, id, owner); err != nil {
 				problems = append(problems, fmt.Sprintf("workflow %d: %v", id, err))
 			}
 		}

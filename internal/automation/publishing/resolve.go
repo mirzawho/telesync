@@ -2,6 +2,7 @@ package publishing
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 
@@ -69,19 +70,31 @@ func (s *Service) resolvePublishSource(ctx context.Context, a Actor, req Request
 		return sourceMessage{}, &Error{http.StatusForbidden, CodePublishSourceDenied,
 			"The source channel may not be read by this account."}
 	}
-	worker, ok := s.publishWorker(row.ClientKey)
+	worker, ok := s.publishWorker(row.AccountID)
 	if !ok {
 		return sourceMessage{}, &Error{http.StatusServiceUnavailable, CodeWorkerUnavail,
 			"The Telegram client the source belongs to is unavailable."}
 	}
 	page, err := worker.Message(ctx, row.ChannelID, req.Source.MessageID)
 	if err != nil {
-		return sourceMessage{}, &Error{http.StatusNotFound, CodePublishSourceMissing,
-			"The source message is not available."}
+		if errors.Is(err, rpc.ErrChannelNotFound) {
+			return sourceMessage{}, &Error{http.StatusNotFound, CodePublishSourceMessageMissing,
+				"The source message was not found on its source connection."}
+		}
+		if errors.Is(err, rpc.ErrUnavailable) || errors.Is(err, rpc.ErrNotConnected) {
+			return sourceMessage{}, &Error{http.StatusServiceUnavailable, CodeWorkerUnavail,
+				"The source connection is unavailable."}
+		}
+		if errors.Is(err, rpc.ErrTimeout) {
+			return sourceMessage{}, &Error{http.StatusGatewayTimeout, CodePublishSourceMedia,
+				"The source connection timed out while resolving the source message."}
+		}
+		return sourceMessage{}, &Error{http.StatusBadGateway, CodePublishSourceMedia,
+			"The source message could not be resolved."}
 	}
 	if len(page.Messages) != 1 {
-		return sourceMessage{}, &Error{http.StatusNotFound, CodePublishSourceMissing,
-			"The source message is not available."}
+		return sourceMessage{}, &Error{http.StatusNotFound, CodePublishSourceMessageMissing,
+			"The source message was not found on its source connection."}
 	}
 	message := page.Messages[0]
 	source := sourceMessage{row: row, message: message, worker: worker}
@@ -115,30 +128,63 @@ func (s *Service) resolvePublishSource(ctx context.Context, a Actor, req Request
 // and this connection can actually post to, and returns the connection the post
 // goes out on.
 //
-// The Telegram peer id is resolved to its local record first, so the permission
-// rule is asked about the record and never about a Telegram number that no
-// assignment can name.
+// For account-scoped work, the Telegram peer id is resolved only within that
+// account's local registrations. A discovered but unregistered peer has no local
+// assignment, so only global channel visibility can admit it.
 //
 // The worker it answers with is the destination's and never the source's: the
 // source is read through its own connection and the post is sent through this
 // one. Handing a send to the source connection would post the message into the
 // channel it came from.
-func (s *Service) resolvePublishDestination(ctx context.Context, a Actor, key string, destID int64) (Worker, error) {
+func (s *Service) resolvePublishDestination(ctx context.Context, a Actor, key, accountID string, destID int64) (Worker, error) {
 	localID := int64(0)
 	if s.Channels != nil {
-		row, ok, err := s.Channels.Get(ctx, key, destID)
-		if err != nil {
-			return nil, &Error{http.StatusInternalServerError, CodeStoreError, err.Error()}
+		if accountID != "" {
+			ownerID, found, err := s.Channels.AccountOwner(ctx, accountID)
+			if err != nil {
+				return nil, &Error{http.StatusInternalServerError, CodeStoreError, err.Error()}
+			}
+			if !found || a.UserID <= 0 || ownerID != a.UserID {
+				return nil, &Error{http.StatusNotFound, CodePublishDestMissing,
+					"The selected account does not own this destination."}
+			}
+			accountChannels, ok := s.Channels.(AccountManagedChannels)
+			if !ok {
+				return nil, &Error{http.StatusServiceUnavailable, CodePublishDestMissing,
+					"Account-scoped destination storage is unavailable."}
+			}
+			row, found, err := accountChannels.GetForAccount(ctx, accountID, destID)
+			if err != nil {
+				return nil, &Error{http.StatusInternalServerError, CodeStoreError, err.Error()}
+			}
+			if found {
+				localID = row.ID
+			}
+		} else {
+			row, found, err := s.Channels.Get(ctx, key, destID)
+			if err != nil {
+				return nil, &Error{http.StatusInternalServerError, CodeStoreError, err.Error()}
+			}
+			if found {
+				localID = row.ID
+			}
 		}
-		if ok {
-			localID = row.ID
-		}
+	} else {
+		return nil, &Error{http.StatusServiceUnavailable, CodePublishDestMissing,
+			"The local channel store is unavailable."}
 	}
 	if !visible(a.Auth, channelstore.KindChannel, channelstore.ActionView, localID) {
 		return nil, &Error{http.StatusForbidden, CodePublishDestDenied,
 			"The destination channel may not be named by this account."}
 	}
-	worker, ok := s.publishWorker(key)
+	workerKey := accountID
+	if workerKey == "" {
+		// Compatibility for non-workflow publishing against pre-account local
+		// registrations. Workflow execution rejects unresolved NULL accounts
+		// before reaching this resolver.
+		workerKey = key
+	}
+	worker, ok := s.publishWorker(workerKey)
 	if !ok {
 		return nil, &Error{http.StatusServiceUnavailable, CodeWorkerUnavail,
 			"The Telegram client this channel belongs to is unavailable."}

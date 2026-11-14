@@ -28,16 +28,19 @@ var ErrInvalidAutomationEvent = fmt.Errorf("channelstore: invalid automation eve
 // InsertMessageEvent stores one normalized event and reports whether it was
 // new.
 //
-// inserted is false when the same logical message was already recorded. That
-// is a normal outcome, not an error: duplicate update delivery is expected, and
-// the same message seen through a second account on the same network is one
-// event. The observing client_key is still recorded against the existing row,
-// so at least one connection authorized to read the media stays known even if
-// the connection that created the row later loses access.
+// inserted is false when this account had already recorded the same logical
+// message. That is a normal outcome, not an error: duplicate update delivery is
+// expected. The observing client_key is still recorded against the existing
+// row, so at least one connection authorized to read the media stays known even
+// if the connection that created the row later loses access.
 //
-// The identity is (type, network_key, telegram_channel_id, message_id). It
-// deliberately excludes source_client_key: two accounts on one network describe
-// one logical message and must not run an automation twice.
+// The identity is (account_id, type, network_key, telegram_channel_id,
+// message_id). It deliberately excludes source_client_key: a second connection
+// of the same account on one network describes one logical message and must not
+// run an automation twice. It deliberately includes the account, because two
+// users may watch the same remote channel on purpose, and dropping one user's
+// event because the other had already seen the message is dropping their
+// automation silently. That is the v0.0.3 assumption this release removes.
 func (s *Store) InsertMessageEvent(ctx context.Context, event automation.MessageEvent) (bool, error) {
 	if err := validateAutomationEvent(event); err != nil {
 		return false, err
@@ -56,12 +59,15 @@ func (s *Store) InsertMessageEvent(ctx context.Context, event automation.Message
 
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO automation_events (
-	id, type, network_key, source_client_key, managed_channel_id,
+	id, type, network_key, source_client_key, account_id, source_account_id,
+	owner_user_id, managed_channel_id,
 	telegram_channel_id, message_id, grouped_id, occurred_at, received_at,
 	payload, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (type, network_key, telegram_channel_id, message_id) DO NOTHING`,
-		event.ID, string(event.Type), event.NetworkKey, event.SourceClientKey, event.ManagedChannelID,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (account_id, type, network_key, telegram_channel_id, message_id) DO NOTHING`,
+		event.ID, string(event.Type), event.NetworkKey, event.SourceClientKey,
+		nullableText(event.AccountID), nullableText(event.SourceAccountID),
+		nullableOwnerID(event.AccountOwnerUserID()), event.ManagedChannelID,
 		event.TelegramChannelID, event.MessageID, nullableInt64(event.GroupedID),
 		formatAutomationTime(event.OccurredAt), formatAutomationTime(event.ReceivedAt), string(payload), formatAutomationTime(now),
 	)
@@ -82,7 +88,9 @@ ON CONFLICT (type, network_key, telegram_channel_id, message_id) DO NOTHING`,
 		// filing an observer under an id that is not the event's.
 		err := tx.QueryRowContext(ctx,
 			`SELECT id FROM automation_events
-			 WHERE type = ? AND network_key = ? AND telegram_channel_id = ? AND message_id = ?`,
+			 WHERE account_id IS ? AND type = ? AND network_key = ?
+			   AND telegram_channel_id = ? AND message_id = ?`,
+			nullableText(event.AccountID),
 			string(event.Type), event.NetworkKey, event.TelegramChannelID, event.MessageID,
 		).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -96,10 +104,11 @@ ON CONFLICT (type, network_key, telegram_channel_id, message_id) DO NOTHING`,
 	// Either way the observer is recorded. This is the row that keeps an
 	// authorized media reader discoverable after a duplicate observation.
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO automation_event_sources (event_id, client_key, first_seen_at, last_seen_at)
-VALUES (?, ?, ?, ?)
+INSERT INTO automation_event_sources (event_id, client_key, account_id, first_seen_at, last_seen_at)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (event_id, client_key) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
-		id, event.SourceClientKey, formatAutomationTime(now), formatAutomationTime(now),
+		id, event.SourceClientKey, nullableText(event.SourceAccountID),
+		formatAutomationTime(now), formatAutomationTime(now),
 	); err != nil {
 		return false, fmt.Errorf("channelstore: record automation event source %s: %w", id, err)
 	}
@@ -120,6 +129,11 @@ func validateAutomationEvent(event automation.MessageEvent) error {
 		return fmt.Errorf("%w: network_key is empty", ErrInvalidAutomationEvent)
 	case strings.TrimSpace(event.SourceClientKey) == "":
 		return fmt.Errorf("%w: source_client_key is empty", ErrInvalidAutomationEvent)
+	case strings.TrimSpace(event.AccountID) == "":
+		// An event names its owning account. A legacy observation with no
+		// account is not an event ingestion produces any more, and accepting one
+		// would create work nothing is allowed to run.
+		return fmt.Errorf("%w: account_id is empty", ErrInvalidAutomationEvent)
 	case event.ManagedChannelID <= 0:
 		return fmt.Errorf("%w: managed_channel_id must be positive", ErrInvalidAutomationEvent)
 	case event.TelegramChannelID == 0:
@@ -133,9 +147,13 @@ func validateAutomationEvent(event automation.MessageEvent) error {
 // AutomationEvent returns one stored event by its id.
 func (s *Store) AutomationEvent(ctx context.Context, id string) (automation.MessageEvent, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, type, network_key, source_client_key, managed_channel_id,
-	telegram_channel_id, message_id, grouped_id, occurred_at, received_at, payload
-FROM automation_events WHERE id = ?`, id)
+SELECT e.id, e.type, e.network_key, e.source_client_key, e.managed_channel_id,
+	e.telegram_channel_id, e.message_id, e.grouped_id, e.occurred_at, e.received_at,
+	e.payload, COALESCE(e.account_id, ''), COALESCE(e.source_account_id, ''),
+	COALESCE(a.owner_user_id, 0)
+FROM automation_events e
+LEFT JOIN telegram_accounts a ON a.id = e.account_id
+WHERE e.id = ?`, id)
 	out, err := scanAutomationEvent(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return automation.MessageEvent{}, false, nil
@@ -154,12 +172,19 @@ func scanAutomationEvent(row scanner) (automation.MessageEvent, error) {
 		occurredAt string
 		receivedAt string
 		payload    string
+		accountID  string
+		sourceAcc  string
+		ownerID    int64
 	)
 	if err := row.Scan(&out.ID, &typ, &out.NetworkKey, &out.SourceClientKey, &out.ManagedChannelID,
-		&out.TelegramChannelID, &out.MessageID, &grouped, &occurredAt, &receivedAt, &payload); err != nil {
+		&out.TelegramChannelID, &out.MessageID, &grouped, &occurredAt, &receivedAt, &payload,
+		&accountID, &sourceAcc, &ownerID); err != nil {
 		return automation.MessageEvent{}, err
 	}
 	out.Type = automation.EventType(typ)
+	out.AccountID = accountID
+	out.SourceAccountID = sourceAcc
+	out = out.WithOwner(ownerID)
 	if grouped.Valid {
 		v := grouped.Int64
 		out.GroupedID = &v
@@ -215,6 +240,15 @@ func (s *Store) CountAutomationEvents(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("channelstore: count automation events: %w", err)
 	}
 	return total, nil
+}
+
+// nullableOwnerID stores a missing owner as NULL, which is what says "this row
+// predates accounts". A zero would look like a user id that exists.
+func nullableOwnerID(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
 }
 
 func nullableInt64(p *int64) any {

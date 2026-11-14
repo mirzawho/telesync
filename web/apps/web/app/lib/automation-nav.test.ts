@@ -27,7 +27,7 @@ import routeConfig from "@/routes"
 
 // --- navigation -------------------------------------------------------------
 
-test("the automation destination is the sixth nav item", () => {
+test("the navigation lists every destination in its one order", () => {
   assert.deepEqual(
     navItems.map((item) => item.to),
     [
@@ -36,25 +36,24 @@ test("the automation destination is the sixth nav item", () => {
       "/channels",
       "/wordpress",
       "/administrators",
+      "/accounts",
       "/automation",
     ]
   )
   const automation = navItems.find((item) => item.to === "/automation")
   assert.equal(automation?.label, "اتوماسیون")
   assert.equal(automation?.access, "automation")
+  // Personal accounts belong to whoever is signed in: the API scopes the list,
+  // so there is no right behind the destination that could be granted or taken.
+  const accounts = navItems.find((item) => item.to === "/accounts")
+  assert.equal(accounts?.label, "حساب‌های من")
+  assert.equal(accounts?.access, null)
 })
 
 test("the bar keeps five first-class destinations and overflows the rest", () => {
   assert.deepEqual(
     navItems.map((item) => item.placement),
-    [
-      "primary",
-      "primary",
-      "primary",
-      "primary",
-      "primary",
-      "overflow",
-    ]
+    ["primary", "primary", "primary", "primary", "primary", "overflow", "overflow"]
   )
   const access = {
     channels: true,
@@ -74,7 +73,7 @@ test("the bar keeps five first-class destinations and overflows the rest", () =>
   )
   assert.deepEqual(
     overflowNavItems(access).map((item) => item.to),
-    ["/automation"]
+    ["/accounts", "/automation"]
   )
   // The two lists together are the navigation, in its one order.
   assert.deepEqual(
@@ -100,6 +99,7 @@ test("automation is shown only with its access flag", () => {
       "/channels",
       "/wordpress",
       "/administrators",
+      "/accounts",
       "/automation",
     ]
   )
@@ -110,20 +110,28 @@ test("automation is shown only with its access flag", () => {
     automation: false,
   })
   assert.ok(!denied.some((item) => item.to === "/automation"))
-  // The five existing destinations are untouched by the new flag.
+  // The destinations without a flag are untouched by the automation one.
   assert.deepEqual(
     denied.map((item) => item.to),
-    ["/dashboard", "/categories", "/channels", "/wordpress", "/administrators"]
+    [
+      "/dashboard",
+      "/categories",
+      "/channels",
+      "/wordpress",
+      "/administrators",
+      "/accounts",
+    ]
   )
-  // Taking the flag away leaves the bar with nothing to overflow to.
+  // Taking the flag away leaves accounts as the only overflow item; personal
+  // accounts are nobody's to grant.
   assert.deepEqual(
     overflowNavItems({
       channels: true,
       categories: true,
       users: true,
       automation: false,
-    }),
-    []
+    }).map((item) => item.to),
+    ["/accounts"]
   )
 })
 
@@ -135,18 +143,26 @@ test("a summary that omits the flag grants nothing, as everywhere else", () => {
   })
   assert.ok(!items.some((item) => item.to === "/automation"))
   assert.deepEqual(
-    overflowNavItems({ channels: true, categories: true, users: true }),
-    []
+    overflowNavItems({ channels: true, categories: true, users: true }).map(
+      (item) => item.to
+    ),
+    ["/accounts"]
   )
 })
 
 test("no access summary at all still shows the whole navigation", () => {
   assert.equal(visibleNavItems(undefined).length, navItems.length)
-  assert.equal(visibleNavItems({}).length, 2, "only the unguarded items")
+  assert.equal(visibleNavItems({}).length, 3, "only the unguarded items")
   assert.deepEqual(primaryNavItems({}).map((item) => item.to), [
     "/dashboard",
     "/wordpress",
   ])
+  // Personal accounts are unguarded too: the list is the caller's own by the
+  // API's construction, not by a permission.
+  assert.deepEqual(
+    visibleNavItems({}).map((item) => item.to),
+    ["/dashboard", "/wordpress", "/accounts"]
+  )
 })
 
 test("every automation screen is under the automation destination", () => {

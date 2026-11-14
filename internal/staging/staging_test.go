@@ -38,6 +38,7 @@ func TestAStreamedAttachmentIsDurableUnderAServerOwnedName(t *testing.T) {
 
 	got, err := s.Write(context.Background(), bytes.NewReader(body), staging.Meta{
 		OriginalName: "report.pdf", MIMEType: "application/pdf",
+		OwnerUserID: 1, AccountID: "acc_test",
 	})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
@@ -72,7 +73,7 @@ func TestAStreamedAttachmentIsDurableUnderAServerOwnedName(t *testing.T) {
 // them: the name is the identity of one staged file and nothing else.
 func TestBTwoUploadsOfTheSameFileNameAreTwoFiles(t *testing.T) {
 	s := newStaging(t, 1<<20)
-	meta := staging.Meta{OriginalName: "photo.jpg", MIMEType: "image/jpeg"}
+	meta := staging.Meta{OriginalName: "photo.jpg", MIMEType: "image/jpeg", OwnerUserID: 1, AccountID: "acc_test"}
 
 	first, err := s.Write(context.Background(), strings.NewReader("one"), meta)
 	if err != nil {
@@ -105,6 +106,7 @@ func TestCAnOversizedUploadIsRefusedAndKeptNowhere(t *testing.T) {
 
 	_, err := s.Write(context.Background(), bytes.NewReader(make([]byte, 65)), staging.Meta{
 		OriginalName: "big.bin", MIMEType: "application/octet-stream",
+		OwnerUserID: 1, AccountID: "acc_test",
 	})
 	if !errors.Is(err, staging.ErrTooLarge) {
 		t.Fatalf("err = %v, want ErrTooLarge", err)
@@ -124,7 +126,7 @@ func TestDASizeExactlyAtTheLimitIsAccepted(t *testing.T) {
 	s := newStaging(t, 64)
 	body := bytes.Repeat([]byte("x"), 64)
 
-	got, err := s.Write(context.Background(), bytes.NewReader(body), staging.Meta{OriginalName: "at.bin"})
+	got, err := s.Write(context.Background(), bytes.NewReader(body), staging.Meta{OriginalName: "at.bin", OwnerUserID: 1, AccountID: "acc_test"})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -163,7 +165,7 @@ func TestENoClientSuppliedNameReachesTheFilesystem(t *testing.T) {
 	}
 
 	// The real staged file is still where it belongs.
-	got, err := s.Write(context.Background(), strings.NewReader("mine"), staging.Meta{OriginalName: "x"})
+	got, err := s.Write(context.Background(), strings.NewReader("mine"), staging.Meta{OriginalName: "x", OwnerUserID: 1, AccountID: "acc_test"})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -180,7 +182,7 @@ func TestFStagedFilesArePrivateToThisProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	got, err := s.Write(context.Background(), strings.NewReader("body"), staging.Meta{OriginalName: "x"})
+	got, err := s.Write(context.Background(), strings.NewReader("body"), staging.Meta{OriginalName: "x", OwnerUserID: 1, AccountID: "acc_test"})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -229,11 +231,11 @@ func TestGAPlantedSymlinkIsNotRead(t *testing.T) {
 // claims is removed, and one an operation still needs is kept.
 func TestHReconcileRemovesWhatNoOperationClaims(t *testing.T) {
 	s := newStaging(t, 1<<20)
-	orphan, err := s.Write(context.Background(), strings.NewReader("orphan"), staging.Meta{OriginalName: "o"})
+	orphan, err := s.Write(context.Background(), strings.NewReader("orphan"), staging.Meta{OriginalName: "o", OwnerUserID: 1, AccountID: "acc_test"})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	kept, err := s.Write(context.Background(), strings.NewReader("kept"), staging.Meta{OriginalName: "k"})
+	kept, err := s.Write(context.Background(), strings.NewReader("kept"), staging.Meta{OriginalName: "k", OwnerUserID: 1, AccountID: "acc_test"})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -261,7 +263,7 @@ func TestIAnInterruptedWriteLeavesNothingBehind(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := s.Write(ctx, strings.NewReader("half an attachment"), staging.Meta{OriginalName: "x"})
+	_, err := s.Write(ctx, strings.NewReader("half an attachment"), staging.Meta{OriginalName: "x", OwnerUserID: 1, AccountID: "acc_test"})
 	if err == nil {
 		t.Fatal("Write succeeded after its context was cancelled")
 	}
@@ -282,6 +284,7 @@ func TestJTheClientsFileNameIsMetadataOnly(t *testing.T) {
 
 	got, err := s.Write(context.Background(), strings.NewReader("body"), staging.Meta{
 		OriginalName: "../../etc/passwd", MIMEType: "text/plain",
+		OwnerUserID: 1, AccountID: "acc_test",
 	})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
@@ -301,7 +304,7 @@ func TestJTheClientsFileNameIsMetadataOnly(t *testing.T) {
 // a retention sweep and a completion cleanup can both run.
 func TestKRemoveIsIdempotent(t *testing.T) {
 	s := newStaging(t, 1<<20)
-	got, err := s.Write(context.Background(), strings.NewReader("body"), staging.Meta{OriginalName: "x"})
+	got, err := s.Write(context.Background(), strings.NewReader("body"), staging.Meta{OriginalName: "x", OwnerUserID: 1, AccountID: "acc_test"})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -324,7 +327,7 @@ func TestLOpenCreatesTheDirectoryItWasGiven(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if _, err := s.Write(context.Background(), strings.NewReader("body"), staging.Meta{OriginalName: "x"}); err != nil {
+	if _, err := s.Write(context.Background(), strings.NewReader("body"), staging.Meta{OriginalName: "x", OwnerUserID: 1, AccountID: "acc_test"}); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	info, err := os.Stat(dir)
@@ -342,7 +345,7 @@ func TestLOpenCreatesTheDirectoryItWasGiven(t *testing.T) {
 func TestMOpenStreamsRatherThanLoading(t *testing.T) {
 	s := newStaging(t, 1<<20)
 	body := bytes.Repeat([]byte("z"), 4096)
-	got, err := s.Write(context.Background(), bytes.NewReader(body), staging.Meta{OriginalName: "x"})
+	got, err := s.Write(context.Background(), bytes.NewReader(body), staging.Meta{OriginalName: "x", OwnerUserID: 1, AccountID: "acc_test"})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}

@@ -17,18 +17,23 @@ import {
   SERVER_REQUIRED,
   SOURCE_REQUIRED,
   SourceServerField,
+  channelsForAccount,
   channelsForServer,
   serverKeyFor,
   sourceItems,
+  sourceItemsForAccount,
   type SourceChannel,
 } from "@/components/automation/source-selection"
+import {
+  AccountCombobox,
+  AccountPausedNotice,
+} from "@/components/accounts/account-combobox"
 import {
   WordPressDestinationOptions,
   type SiteTerms,
 } from "@/components/automation/workflow-wordpress-options"
 import { MultiPicker } from "@/components/multi-picker"
 import { SwitchState } from "@/components/automation/status"
-import { TelegramServerCombobox } from "@/components/telegram-server-combobox"
 import { LoadingState } from "@/components/states"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
@@ -53,7 +58,7 @@ import {
   type DestinationType,
   type WorkflowDraft,
 } from "@/lib/automation"
-import type { TelegramServer } from "@/lib/types"
+import type { TelegramAccount, TelegramServer } from "@/lib/types"
 
 // The one create/edit form of the workflow area.
 //
@@ -115,7 +120,8 @@ export interface ChannelOptions {
 export interface DestinationBlock {
   key: string
   type: DestinationType
-  // Telegram address: the connection, and the peer ids picked on it.
+  // Telegram address: the exact account and the peer ids picked on it.
+  accountID: string
   clientKey: string
   channelIDs: number[]
   // Each channel keeps the options it was stored with. This panel has no editor
@@ -146,7 +152,8 @@ const peerIDOf = (value: unknown): number | null =>
 // written to the API.
 export function isCompleteDestination(destination: DestinationDraft): boolean {
   return destination.type === "telegram"
-    ? destination.clientKey.trim() !== "" &&
+    ? destination.accountID.trim() !== "" &&
+        destination.clientKey.trim() !== "" &&
         peerIDOf(destination.channelID) !== null
     : positiveID(destination.siteID) !== null
 }
@@ -159,14 +166,16 @@ export function destinationBlocks(
   destinations.forEach((row, index) => {
     const telegram = row.type === "telegram"
     const address = telegram
-      ? row.clientKey.trim()
+      ? row.accountID.trim()
       : String(positiveID(row.siteID) ?? "")
     // A row with no address is its own block: two unchosen destinations must not
     // collapse into one just because both are still empty.
     const key = telegram
       ? address
         ? `tg:${address}`
-        : `tg:new:${index}`
+        : row.clientKey.trim()
+          ? `tg:unresolved:${row.clientKey.trim()}`
+          : `tg:new:${index}`
       : address
         ? `wp:${address}`
         : `wp:new:${index}`
@@ -175,6 +184,7 @@ export function destinationBlocks(
       block = {
         key,
         type: row.type,
+        accountID: telegram ? row.accountID : "",
         clientKey: telegram ? row.clientKey : "",
         channelIDs: [],
         optionsByID: {},
@@ -202,7 +212,9 @@ export function destinationBlocks(
     block.enabled = block.enabled && row.enabled
     block.complete =
       block.type === "telegram"
-        ? block.clientKey.trim() !== "" && block.channelIDs.length > 0
+        ? block.accountID.trim() !== "" &&
+          block.clientKey.trim() !== "" &&
+          block.channelIDs.length > 0
         : block.siteID !== null
   })
   return blocks
@@ -218,6 +230,7 @@ function rowsOf(blocks: DestinationBlock[]): DestinationDraft[] {
         return [
           {
             type: "telegram" as const,
+            accountID: block.accountID,
             clientKey: block.clientKey,
             channelID: null,
             siteID: null,
@@ -228,6 +241,7 @@ function rowsOf(blocks: DestinationBlock[]): DestinationDraft[] {
       }
       return block.channelIDs.map((channelID) => ({
         type: "telegram" as const,
+        accountID: block.accountID,
         clientKey: block.clientKey,
         channelID,
         siteID: null,
@@ -238,6 +252,7 @@ function rowsOf(blocks: DestinationBlock[]): DestinationDraft[] {
     return [
       {
         type: "wordpress" as const,
+        accountID: "",
         clientKey: "",
         channelID: null,
         siteID: block.siteID,
@@ -269,6 +284,7 @@ export function addDestination(
     {
       key: `${type === "telegram" ? "tg" : "wp"}:new:${destinations.length}`,
       type,
+      accountID: "",
       clientKey: "",
       channelIDs: [],
       optionsByID: {},
@@ -296,13 +312,13 @@ export function removeDestination(
 // empty picker to fill rather than a destination that quietly vanished.
 export function trimChannels(
   destinations: DestinationDraft[],
-  clientKey: string,
+  accountID: string,
   eligible: number[]
 ): DestinationDraft[] {
   const allowed = new Set(eligible)
   return rowsOf(
     destinationBlocks(destinations).map((block) =>
-      block.type === "telegram" && block.clientKey === clientKey
+      block.type === "telegram" && block.accountID === accountID
         ? {
             ...block,
             channelIDs: block.channelIDs.filter((channelID) =>
@@ -323,9 +339,10 @@ export function WorkflowForm({
   sourceChannels,
   taken,
   conflict,
+  accounts = [],
   servers,
   sites,
-  channelsByKey,
+  channelsByAccount,
   siteTerms,
   error,
   fieldErrors,
@@ -340,11 +357,14 @@ export function WorkflowForm({
   draft: WorkflowDraft
   onDraftChange: (next: WorkflowDraft) => void
   sourceChannels: SourceChannel[]
+  // accounts is the reader's own, and nothing else: the workflow is bound to
+  // one of them and cannot be offered any it does not own.
+  accounts?: TelegramAccount[]
   taken: Map<number, TakenWorkflow>
   conflict?: ConflictWorkflow | null
   servers: TelegramServer[]
   sites: NamedOption[]
-  channelsByKey?: Map<string, ChannelOptions>
+  channelsByAccount?: Map<string, ChannelOptions>
   // Each registered site's own WordPress terms, keyed by site id. A workflow
   // publishes only term ids the destination site already has.
   siteTerms?: Map<number, SiteTerms>
@@ -450,6 +470,39 @@ export function WorkflowForm({
   const sourceError =
     sourceTouched && draft.managedChannelID === null ? SOURCE_REQUIRED : null
 
+  // Which account the workflow runs as. Until the operator chooses one it is
+  // the account the saved source channel belongs to, so an edit opens on its
+  // own record and a create opens on none. Nothing here rewrites the saved
+  // binding while the list is still arriving.
+  const [chosenAccount, setChosenAccount] = React.useState<string | undefined>()
+  const accountID =
+    chosenAccount ?? (draft.accountID ? draft.accountID : undefined)
+  const selectedSourceIDs =
+    draft.managedChannelID === null ? [] : [draft.managedChannelID]
+  const account = accounts.find((candidate) => candidate.id === accountID)
+  const changeAccount = (id: string | undefined) => {
+    setChosenAccount(id)
+    setSourceTouched(true)
+    patch({ accountID: id ?? null })
+    // A channel the new account does not hold is not a source this workflow can
+    // run on, so the choice leaves with the account rather than being posted as
+    // a source it cannot reach. The workflow is never handed to another account
+    // instead: the reader chose, and the reader un-chooses.
+    const reachable = channelsForAccount(sourceChannels, id)
+    if (
+      draft.managedChannelID !== null &&
+      !reachable.some((channel) => channel.id === draft.managedChannelID)
+    ) {
+      setManagedChannelID("")
+    }
+  }
+  // The source list is the chosen account's own inventory. With no account
+  // chosen it falls back to the connection filter, so a legacy record still
+  // opens on something rather than on nothing.
+  const sourceOptions = accountID
+    ? sourceItemsForAccount(sourceChannels, accountID, selectedSourceIDs)
+    : sourceItems(sourceChannels, sourceServer, selectedSourceIDs)
+
   // A source is not optional: with no connection, or no channel on the chosen
   // one, there is nothing to save. The button says so rather than accepting a
   // submit that could only come back refused.
@@ -531,6 +584,30 @@ export function WorkflowForm({
           <h2 id="workflow-source-heading" className="text-sm font-semibold">
             کانال مبدأ
           </h2>
+          {/* The account is the identity the workflow runs as, and it is
+              chosen first: everything below — the source channel, the channels
+              it may publish to — is that account's. It is never inferred from a
+              server filter and never swapped for another account because this
+              one lost its session. */}
+          <Field>
+            <FieldLabel htmlFor="workflow-account">حساب تلگرام</FieldLabel>
+            <AccountCombobox
+              id="workflow-account"
+              accounts={accounts}
+              value={accountID}
+              onChange={changeAccount}
+              disabled={sourceLocked || pending}
+              emptyText="حسابی متصل نیست؛ نخست از «حساب‌های من» یک حساب متصل کنید."
+            />
+            <FieldDescription>
+              این ورک‌فلو با این حساب اجرا می‌شود و کانال‌های همین حساب را
+              می‌خواند.
+            </FieldDescription>
+          </Field>
+          {/* A workflow bound to an account that is no longer connected is
+              paused, and says so. It is not moved to another account, and it is
+              not left looking as though it were still running. */}
+          <AccountPausedNotice account={account} />
           {/* The connection is chosen first and the channel follows from it:
               only channels this connection can reach are offered. The
               connection is the managed channel's own client_key, so this is a
@@ -550,11 +627,7 @@ export function WorkflowForm({
             <OptionCombobox
               id="workflow-channel"
               label="کانال مبدأ"
-              options={sourceItems(
-                sourceChannels,
-                sourceServer,
-                draft.managedChannelID === null ? [] : [draft.managedChannelID]
-              ).map((channel) => ({
+              options={sourceOptions.map((channel) => ({
                 value: String(channel.id),
                 label: channel.label,
                 detail: channel.detail,
@@ -692,24 +765,32 @@ export function WorkflowForm({
               {block.type === "telegram" ? (
                 <>
                   <Field>
-                    <FieldLabel htmlFor={`workflow-server-${block.key}`}>
-                      اتصال تلگرام
+                    <FieldLabel htmlFor={`workflow-destination-account-${block.key}`}>
+                      حساب تلگرام مقصد
                     </FieldLabel>
-                    <TelegramServerCombobox
-                      id={`workflow-server-${block.key}`}
-                      servers={servers}
-                      value={block.clientKey || undefined}
-                      onChange={(next) =>
-                        change(block.key, { clientKey: next ?? "" })
-                      }
-                      placeholder="اتصال تلگرام را انتخاب کنید"
-                      emptyText="اتصالی یافت نشد."
+                    <AccountCombobox
+                      id={`workflow-destination-account-${block.key}`}
+                      accounts={accounts}
+                      value={block.accountID || undefined}
+                      aria-label="حساب تلگرام مقصد"
+                      onChange={(next) => {
+                        const selected = accounts.find(
+                          (account) => account.id === next
+                        )
+                        change(block.key, {
+                          accountID: next ?? "",
+                          clientKey: selected?.server_key ?? "",
+                          channelIDs: [],
+                        })
+                      }}
+                      placeholder="حساب مقصد را انتخاب کنید"
+                      emptyText="حساب تلگرامی یافت نشد."
                       disabled={pending}
                     />
                   </Field>
                   <TelegramChannels
                     block={block}
-                    options={channelsByKey?.get(block.clientKey)}
+                    options={channelsByAccount?.get(block.accountID)}
                     pending={pending}
                     onChannels={(channelIDs) =>
                       change(block.key, { channelIDs })
@@ -946,10 +1027,10 @@ function TelegramChannels({
   pending: boolean
   onChannels: (channelIDs: number[]) => void
 }) {
-  if (!block.clientKey) {
+  if (!block.accountID) {
     return (
       <p className="text-xs text-muted-foreground">
-        برای افزودن مقصد تلگرامی، اول یک اتصال را انتخاب کنید.
+        برای افزودن مقصد تلگرامی، اول حساب مقصد را انتخاب کنید.
       </p>
     )
   }

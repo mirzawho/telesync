@@ -31,8 +31,8 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 | Caller | Request | Status | Shape |
 | --- | --- | --- | --- |
 | anonymous | `DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 401 | `unauthorized` |
-| operator | `DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
-| limited user | `DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
+| operator | `DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 403 | `forbidden` |
+| limited user | `DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 404 | `account_not_owned` |
 | administrator | `DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
 
 <details><summary>anonymous: DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 401</summary>
@@ -44,19 +44,19 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 </details>
 
-<details><summary>operator: DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+<details><summary>operator: DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 403</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>limited user: DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+<details><summary>limited user: DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 404</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+{"error":{"code":"account_not_owned","message":"No account of yours is available for this server.","request_id":"docsgen"}}
 
 ```
 
@@ -73,12 +73,12 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 ### Responses captured from the documentation examples
 
-- `DELETE /api/v1/telegram/official/channels/1671633563/messages/1233` as operator → `200`
+- `DELETE /api/v1/telegram/official/channels/1671633563/messages/1233` as operator → `403`
 
-<details><summary>DELETE /api/v1/telegram/official/channels/1671633563/messages/1233 → 200</summary>
+<details><summary>DELETE /api/v1/telegram/official/channels/1671633563/messages/1233 → 403</summary>
 
 ```json
-{"data":{"deleted":true,"connection":{"client_key":"official"},"channel_id":"1671633563","message_id":1233},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
@@ -103,8 +103,8 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 | Caller | Request | Status | Shape |
 | --- | --- | --- | --- |
 | anonymous | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 401 | `unauthorized` |
-| operator | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
-| limited user | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
+| operator | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 403 | `forbidden` |
+| limited user | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 404 | `account_not_owned` |
 | administrator | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
 
 <details><summary>anonymous: GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 401</summary>
@@ -116,19 +116,19 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 </details>
 
-<details><summary>operator: GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+<details><summary>operator: GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 403</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"channel_id must be a positive integer.","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>limited user: GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+<details><summary>limited user: GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 404</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"channel_id must be a positive integer.","request_id":"docsgen"}}
+{"error":{"code":"account_not_owned","message":"No account of yours is available for this server.","request_id":"docsgen"}}
 
 ```
 
@@ -145,22 +145,22 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 ### Responses captured from the documentation examples
 
-- `GET /api/v1/telegram/official/channels/1671633563/messages/1233` as operator → `200`
-- `GET /api/v1/telegram/official/channels/1671633563/messages/1233` as operator → `200`
+- `GET /api/v1/telegram/official/channels/1671633563/messages/1233` as operator → `403`
+- `GET /api/v1/telegram/official/channels/1671633563/messages/1233` as operator → `403`
 
-<details><summary>GET /api/v1/telegram/official/channels/1671633563/messages/1233 → 200</summary>
+<details><summary>GET /api/v1/telegram/official/channels/1671633563/messages/1233 → 403</summary>
 
 ```json
-{"data":{"messages":[{"id":1,"date":"2026-10-25T09:00:00Z","text":"Documented post","sender":{"id":1,"name":"Documented","username":"documented"},"media":{"id":"1:1","type":"photo","label":"photo","mime_type":"image/jpeg","size":5,"url":"/telegram/official/channels/1671633563/messages/1/media"},"views":null,"reactions":[],"entities":[]}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>GET /api/v1/telegram/official/channels/1671633563/messages/1233 → 200</summary>
+<details><summary>GET /api/v1/telegram/official/channels/1671633563/messages/1233 → 403</summary>
 
 ```json
-{"data":{"messages":[{"id":1,"date":"2026-10-25T09:00:00Z","text":"Documented post","sender":{"id":1,"name":"Documented","username":"documented"},"media":{"id":"1:1","type":"photo","label":"photo","mime_type":"image/jpeg","size":5,"url":"/telegram/official/channels/1671633563/messages/1/media"},"views":null,"reactions":[],"entities":[]}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
@@ -177,8 +177,8 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 | Caller | Request | Status | Shape |
 | --- | --- | --- | --- |
 | anonymous | `PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 401 | `unauthorized` |
-| operator | `PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
-| limited user | `PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
+| operator | `PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 403 | `forbidden` |
+| limited user | `PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 404 | `account_not_owned` |
 | administrator | `PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id` | 400 | `invalid_input` |
 
 <details><summary>anonymous: PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 401</summary>
@@ -190,19 +190,19 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 </details>
 
-<details><summary>operator: PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+<details><summary>operator: PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 403</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>limited user: PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 400</summary>
+<details><summary>limited user: PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id → 404</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+{"error":{"code":"account_not_owned","message":"No account of yours is available for this server.","request_id":"docsgen"}}
 
 ```
 

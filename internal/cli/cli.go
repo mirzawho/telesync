@@ -37,6 +37,10 @@ type RuntimeRequest struct {
 	Config appconfig.Config
 	// Client is the resolved, enabled client (worker and auth only).
 	Client appconfig.Client
+	// AccountID is the account identity for an account worker. It is the only
+	// account-related process argument; owner and server metadata are loaded
+	// from trusted persistence/configuration by the worker runtime.
+	AccountID string
 }
 
 // RuntimeDeps are the runtime command implementations. A nil field disables
@@ -80,9 +84,12 @@ Usage:
   telesync daemon [--config <path>]
       Start the supervisor and the public HTTP API.
 
+  telesync worker --account <account_id> [--config <path>]
+      Run one account worker process. The daemon starts these; it owns one
+      account session, peer cache and private socket.
+
   telesync worker --key <client> [--config <path>]
-      Run one worker process. The daemon starts these; it owns one Telegram
-      client and one session.
+      Legacy configured-client worker mode during migration.
 
   telesync auth --key <client> [--config <path>] [--timeout 5m]
       Run the one-time interactive authorization for one client and save its

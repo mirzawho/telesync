@@ -9,7 +9,7 @@
     "start": "react-router-serve ./build/server/index.js",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "react-router typegen && tsc",
-    "test": "node scripts/test-content.mjs && node scripts/test-media.mjs && node scripts/test-panel.mjs && node scripts/test-publish.mjs && node scripts/test-administrators.mjs && node scripts/test-automation.mjs && node scripts/test-webhook.mjs && node scripts/test-responsive.mjs"
+    "test": "node scripts/test-content.mjs && node scripts/test-media.mjs && node scripts/test-panel.mjs && node scripts/test-publish.mjs && node scripts/test-administrators.mjs && node scripts/test-automation.mjs && node scripts/test-webhook.mjs && node scripts/test-responsive.mjs && node scripts/test-accounts.mjs"
   },
   "dependencies": {
     "@react-router/node": "8.5.0",

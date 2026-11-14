@@ -142,6 +142,10 @@ func (p *fakeProber) Ready(_ context.Context, socket string) error {
 	return nil
 }
 
+func (p *fakeProber) ReadyAccount(ctx context.Context, socket string, _ supervisor.AccountMetadata) error {
+	return p.Ready(ctx, socket)
+}
+
 func clients(keys ...string) []appconfig.Client {
 	out := make([]appconfig.Client, 0, len(keys))
 	for _, k := range keys {

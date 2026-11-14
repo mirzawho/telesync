@@ -125,6 +125,8 @@ interface WireSummary {
 
 interface WireWebhookView {
   id: number
+  // Optional: a record saved before the account refactor carries none.
+  account_id?: string
   name: string
   description: string
   enabled: boolean
@@ -193,6 +195,7 @@ interface WireDestination {
   client_key: string
   channel_id: number
   site_id: number
+  account_id?: string | null
   options: Record<string, unknown>
   position: number
   enabled: boolean
@@ -219,6 +222,10 @@ interface WireRunSummary {
 interface WireWorkflowView {
   id: number
   managed_channel_id: number
+  // The workflow's owning account, added by the account refactor. Optional
+  // here because a record saved before it existed has none, and that is read as
+  // "not bound to an account" rather than as an error.
+  account_id?: string
   channel?: WireChannelRef
   enabled: boolean
   ai_enabled: boolean
@@ -238,6 +245,7 @@ interface WirePublication {
   client_key: string
   channel_id: number
   site_id: number
+  account_id?: string | null
   status: string
   remote_message_id: number
   remote_post_id: number
@@ -320,6 +328,9 @@ export interface DeliveryCounts {
 
 export interface WebhookItem {
   id: number
+  // accountID is the account this webhook observes under, when the record
+  // carries one. Empty means not bound — never "whatever account is handy".
+  accountID: string
   name: string
   description: string
   enabled: boolean
@@ -398,6 +409,9 @@ export interface WorkflowDestinationItem {
   // A Telegram peer id, meaningful only together with `clientKey`.
   channelID: number
   siteID: number
+  // Empty is preserved for unresolved legacy destinations; it never resolves
+  // through a server key.
+  accountID: string
   options: Record<string, unknown>
   position: number
   enabled: boolean
@@ -418,6 +432,10 @@ export interface WorkflowItem {
   // The source channel, as a local managed_channels.id. Its title is resolved
   // from the channel rows, or from `channel` when the API filled that in.
   managedChannelID: number
+  // accountID is the user-owned account the workflow runs as, when the record
+  // carries one. Empty means a workflow saved before accounts existed, or one
+  // whose owner is not established — never "any account will do".
+  accountID: string
   channel: WorkflowChannelRef | null
   enabled: boolean
   aiEnabled: boolean
@@ -442,6 +460,7 @@ export interface RunPublication {
   clientKey: string
   channelID: number
   siteID: number
+  accountID: string
   status: PublicationStatus
   remoteMessageID: number
   remotePostID: number
@@ -573,6 +592,7 @@ export function readWebhook(raw: unknown): WebhookItem {
   const summary = wire.summary as Partial<WireSummary> | undefined
   return {
     id: num(wire.id),
+    accountID: str(wire.account_id),
     name: str(wire.name),
     description: str(wire.description),
     enabled: bool(wire.enabled),
@@ -686,6 +706,7 @@ export function readWorkflow(raw: unknown): WorkflowItem {
   return {
     id: num(wire.id),
     managedChannelID: num(wire.managed_channel_id),
+    accountID: str(wire.account_id),
     channel: readChannelRef(channel),
     enabled: bool(wire.enabled),
     aiEnabled: bool(wire.ai_enabled),
@@ -701,6 +722,7 @@ export function readWorkflow(raw: unknown): WorkflowItem {
         clientKey: str(destination.client_key),
         channelID: num(destination.channel_id),
         siteID: num(destination.site_id),
+        accountID: str(destination.account_id),
         options:
           destination.options && typeof destination.options === "object"
             ? (destination.options as Record<string, unknown>)
@@ -755,7 +777,8 @@ export function readRun(raw: unknown): RunItem {
         type: readDestinationType(publication.destination_type),
         clientKey: str(publication.client_key),
         channelID: num(publication.channel_id),
-        siteID: num(publication.site_id),
+      siteID: num(publication.site_id),
+      accountID: str(publication.account_id),
         status: readPublicationStatus(publication.status),
         remoteMessageID: num(publication.remote_message_id),
         remotePostID: num(publication.remote_post_id),
@@ -1089,6 +1112,10 @@ export function runDurationMs(run: Pick<RunItem, "createdAt" | "completedAt">): 
 // ---------------------------------------------------------------------------
 
 export interface WebhookDraft {
+  // accountID is the user-owned account this webhook observes under. Like a
+  // workflow's, it is an opaque `acc_…` id and is never swapped for another
+  // account because this one lost its session.
+  accountID: string | null
   name: string
   description: string
   enabled: boolean
@@ -1106,6 +1133,7 @@ export interface WebhookDraft {
 
 export function emptyWebhookDraft(): WebhookDraft {
   return {
+    accountID: null,
     name: "",
     description: "",
     enabled: true,
@@ -1123,6 +1151,7 @@ export function emptyWebhookDraft(): WebhookDraft {
 
 export function webhookDraftOf(webhook: WebhookItem): WebhookDraft {
   return {
+    accountID: webhook.accountID ? webhook.accountID : null,
     name: webhook.name,
     description: webhook.description,
     enabled: webhook.enabled,
@@ -1141,6 +1170,10 @@ export function webhookDraftOf(webhook: WebhookItem): WebhookDraft {
 
 export function webhookBody(draft: WebhookDraft): Record<string, unknown> {
   return {
+    // The account this webhook observes under, written with every save. Empty
+    // means not bound yet; the backend refuses to enable a webhook that is not
+    // bound to one of its owner's accounts.
+    account_id: draft.accountID ?? "",
     name: draft.name.trim(),
     description: draft.description.trim(),
     enabled: draft.enabled,
@@ -1160,6 +1193,9 @@ export function webhookBody(draft: WebhookDraft): Record<string, unknown> {
 
 export interface DestinationDraft {
   type: DestinationType
+  // The exact personal account is selected separately from the global server.
+  // Empty is an unresolved Telegram destination and is never guessed.
+  accountID: string
   clientKey: string
   channelID: number | null
   siteID: number | null
@@ -1172,6 +1208,12 @@ export interface DestinationDraft {
 
 export interface WorkflowDraft {
   managedChannelID: number | null
+  // accountID is the user-owned account this workflow runs as. It is an opaque
+  // `acc_…` id and never a server key: the workflow publishes under one
+  // identity, and that identity is the reader's own. It is never inferred from
+  // a destination and never swapped for another account because this one
+  // dropped its session.
+  accountID: string | null
   enabled: boolean
   aiEnabled: boolean
   aiPrompt: string
@@ -1183,6 +1225,7 @@ export interface WorkflowDraft {
 export function emptyWorkflowDraft(): WorkflowDraft {
   return {
     managedChannelID: null,
+    accountID: null,
     // A new workflow starts off. Switching one on is a separate, deliberate
     // step — and one the backend refuses unless the workflow has an enabled
     // destination to publish to and an account to publish under.
@@ -1200,12 +1243,14 @@ export function emptyWorkflowDraft(): WorkflowDraft {
 // Telegram, `siteID` for WordPress; the other address is left null so the
 // payload builder can write the zero the schema expects.
 export function telegramDestination(
+  accountID: string,
   clientKey: string,
   channelID: number,
   enabled = true
 ): DestinationDraft {
   return {
     type: "telegram",
+    accountID,
     clientKey,
     channelID,
     siteID: null,
@@ -1220,6 +1265,7 @@ export function wordpressDestination(
 ): DestinationDraft {
   return {
     type: "wordpress",
+    accountID: "",
     clientKey: "",
     channelID: null,
     siteID,
@@ -1231,6 +1277,7 @@ export function wordpressDestination(
 export function workflowDraftOf(workflow: WorkflowItem): WorkflowDraft {
   return {
     managedChannelID: workflow.managedChannelID,
+    accountID: workflow.accountID,
     enabled: workflow.enabled,
     aiEnabled: workflow.aiEnabled,
     aiPrompt: workflow.aiPrompt,
@@ -1238,6 +1285,7 @@ export function workflowDraftOf(workflow: WorkflowItem): WorkflowDraft {
     aiPublishOnFailure: workflow.aiPublishOnFailure,
     destinations: workflow.destinations.map((destination) => ({
       type: destination.type,
+      accountID: destination.accountID,
       clientKey: destination.clientKey,
       channelID: destination.type === "telegram" ? destination.channelID : null,
       siteID: destination.type === "wordpress" ? destination.siteID : null,
@@ -1254,6 +1302,10 @@ export function workflowDraftOf(workflow: WorkflowItem): WorkflowDraft {
 export function workflowBody(draft: WorkflowDraft): Record<string, unknown> {
   return {
     managed_channel_id: draft.managedChannelID,
+    // The workflow's own account, written with every save so a workflow is
+    // never left running under an identity nobody chose. An empty string is a
+    // workflow that is not bound yet, which the backend refuses to enable.
+    account_id: draft.accountID ?? "",
     enabled: draft.enabled,
     ai_enabled: draft.aiEnabled,
     ai_prompt: draft.aiPrompt.trim(),
@@ -1263,11 +1315,13 @@ export function workflowBody(draft: WorkflowDraft): Record<string, unknown> {
       destination_type: destination.type,
       ...(destination.type === "telegram"
         ? {
+            account_id: destination.accountID,
             client_key: destination.clientKey,
             channel_id: destination.channelID ?? 0,
             site_id: 0,
           }
         : {
+            account_id: "",
             client_key: "",
             channel_id: 0,
             site_id: destination.siteID ?? 0,

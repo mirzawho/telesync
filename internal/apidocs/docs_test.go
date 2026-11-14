@@ -65,7 +65,15 @@ func TestRouteTableMatchesGateway(t *testing.T) {
 		for _, r := range apidocs.Routes {
 			for _, method := range r.Methods {
 				path := apidocs.Concrete(r.Pattern)
+				// A Telegram route is reached through a user-owned account, and
+				// the operator token is a credential and not an account: it owns
+				// no Telegram identity, so it is correctly refused there. The
+				// probe asks those routes as the documented account holder.
 				token := probeToken
+				if strings.HasPrefix(path, "/api/v1/telegram/") ||
+					strings.HasPrefix(path, "/api/v1/me/telegram-accounts") {
+					token = handler.adminToken(t)
+				}
 				if method == http.MethodPut && strings.Contains(path, "/messages/") {
 					token = handler.adminToken(t)
 				}
@@ -98,7 +106,17 @@ func TestRouteTableMatchesGateway(t *testing.T) {
 				continue
 			}
 			for _, method := range probeMethods {
-				rec := serve(handler, method, p, probeToken, "", "")
+				// A Telegram route must be asked as somebody who owns an
+				// account, or every one of them answers 403 at the account gate
+				// and the walk proves nothing about the resource name. What is
+				// under test is that a misspelled resource is refused *as a
+				// resource* — 404, not a silent match.
+				token := probeToken
+				if strings.HasPrefix(p, "/api/v1/telegram/") ||
+					strings.HasPrefix(p, "/api/v1/me/telegram-accounts") {
+					token = handler.adminToken(t)
+				}
+				rec := serve(handler, method, p, token, "", "")
 				switch rec.Code {
 				case http.StatusOK, http.StatusCreated, http.StatusForbidden:
 					t.Errorf("%s %s: status %d: %s", method, p, rec.Code,
@@ -466,10 +484,16 @@ func TestExamplesRunAgainstTheGateway(t *testing.T) {
 			continue
 		}
 		token := probeToken
-		if strings.Contains(path, "/edit/") || (ex.Method == http.MethodPut && strings.Contains(path, "/messages/")) {
+		if strings.Contains(path, "/edit/") ||
+			strings.HasPrefix(path, "/api/v1/me/telegram-accounts") ||
+			strings.HasPrefix(path, "/api/v1/local/") ||
+			(ex.Method == http.MethodPut && strings.Contains(path, "/messages/")) {
 			token = handler.adminToken(t)
 		}
 		rec := serve(handler, ex.Method, path, token, ex.ContentType, body)
+		if strings.HasPrefix(path, "/api/v1/me/telegram-accounts") && rec.Code != http.StatusOK {
+			t.Errorf("%s %s answered %d: %s", ex.Method, path, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
 		switch rec.Code {
 		case http.StatusUnauthorized:
 			// The probe can authenticate; a 401 here means the example

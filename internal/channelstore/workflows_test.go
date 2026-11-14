@@ -18,6 +18,7 @@ import (
 type wfEnv struct {
 	store   *channelstore.Store
 	user    channelstore.User
+	account string
 	channel channelstore.Channel
 }
 
@@ -29,11 +30,15 @@ func newWFEnv(t *testing.T) *wfEnv {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	row, err := store.Upsert(ctx, channel("official", 555))
+	// A workflow is one per user-owned channel registration, so the channel is
+	// registered under a real account and the workflow names it. A workflow that
+	// names no account would have no session to publish through.
+	account := ownerAccount(t, store, user.ID, "official", channelstore.NetworkTelegram, 1)
+	row, err := store.UpsertFor(ctx, account, channel("official", 555))
 	if err != nil {
-		t.Fatalf("Upsert: %v", err)
+		t.Fatalf("UpsertFor: %v", err)
 	}
-	return &wfEnv{store: store, user: user, channel: row}
+	return &wfEnv{store: store, user: user, account: account, channel: row}
 }
 
 // telegramDest is one configured Telegram destination. channel_id is the
@@ -50,10 +55,13 @@ func telegramDest(channelID int64) automation.WorkflowDestination {
 
 // input is a complete workflow configuration on this environment's channel.
 func (e *wfEnv) input() automation.WorkflowInput {
+	dest := telegramDest(555)
+	dest.AccountID = e.account
 	return automation.WorkflowInput{
 		ManagedChannelID: e.channel.ID,
+		AccountID:        e.account,
 		CreatedBy:        e.user.ID,
-		Destinations:     []automation.WorkflowDestination{telegramDest(555)},
+		Destinations:     []automation.WorkflowDestination{dest},
 	}
 }
 
@@ -73,11 +81,50 @@ func TestCreateWorkflowStoresTheConfiguration(t *testing.T) {
 		t.Fatalf("timestamps = %+v", wf)
 	}
 	if len(wf.Destinations) != 1 || wf.Destinations[0].ClientKey != "official" ||
-		wf.Destinations[0].ChannelID != 555 {
+		wf.Destinations[0].ChannelID != 555 || wf.Destinations[0].AccountID != env.account {
 		t.Fatalf("destinations = %+v", wf.Destinations)
 	}
 	if silent, ok := wf.Destinations[0].Options["silent"].(bool); !ok || !silent {
 		t.Fatalf("options = %+v", wf.Destinations[0].Options)
+	}
+}
+
+func TestWorkflowDestinationRequiresExactSameOwnerRegistration(t *testing.T) {
+	env := newWFEnv(t)
+	ctx := context.Background()
+	destinationAccount := ownerAccount(t, env.store, env.user.ID, "official", channelstore.NetworkTelegram, 2)
+	if _, err := env.store.UpsertFor(ctx, destinationAccount, channel("official", 777)); err != nil {
+		t.Fatalf("register destination: %v", err)
+	}
+
+	in := env.input()
+	dest := telegramDest(777)
+	dest.AccountID = destinationAccount
+	in.Destinations = []automation.WorkflowDestination{dest}
+	saved, err := env.store.CreateWorkflow(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateWorkflow with exact destination account: %v", err)
+	}
+	if got := saved.Destinations[0].AccountID; got != destinationAccount {
+		t.Fatalf("destination account = %q, want %q", got, destinationAccount)
+	}
+
+	in = env.input()
+	dest.AccountID = env.account
+	in.Destinations = []automation.WorkflowDestination{dest}
+	if _, _, err := env.store.UpdateWorkflow(ctx, saved.ID, in); !errors.Is(err, automation.ErrInvalid) {
+		t.Fatalf("wrong destination account error = %v, want automation.ErrInvalid", err)
+	}
+}
+
+func TestWorkflowDestinationRequiresRegisteredAccount(t *testing.T) {
+	env := newWFEnv(t)
+	in := env.input()
+	dest := telegramDest(999)
+	dest.AccountID = env.account
+	in.Destinations = []automation.WorkflowDestination{dest}
+	if _, err := env.store.CreateWorkflow(context.Background(), in); !errors.Is(err, automation.ErrInvalid) {
+		t.Fatalf("unregistered destination error = %v, want automation.ErrInvalid", err)
 	}
 }
 
@@ -99,6 +146,7 @@ func TestCreateWorkflowRefusesASecondWorkflowForOneChannel(t *testing.T) {
 func TestCreateWorkflowRefusesAnEnabledWorkflowWithoutDestinations(t *testing.T) {
 	env := newWFEnv(t)
 	draft := automation.WorkflowInput{
+		AccountID:        env.account,
 		ManagedChannelID: env.channel.ID, CreatedBy: env.user.ID, Enabled: true,
 	}
 	if _, err := env.store.CreateWorkflow(context.Background(), draft); !errors.Is(err, automation.ErrInvalid) {
@@ -153,6 +201,7 @@ func TestCreateWorkflowRefusesADestinationThatMixesTypes(t *testing.T) {
 	}
 
 	wordpress := automation.WorkflowInput{
+		AccountID:        env.account,
 		ManagedChannelID: env.channel.ID,
 		CreatedBy:        env.user.ID,
 		Destinations: []automation.WorkflowDestination{{
@@ -271,9 +320,12 @@ func TestWorkflowIDForChannelReportsTheSingleWorkflow(t *testing.T) {
 func TestListWorkflowsPagesAndFilters(t *testing.T) {
 	env := newWFEnv(t)
 	ctx := context.Background()
-	other, err := env.store.Upsert(ctx, channel("official", 777))
+	// Registered under the same account: a workflow may only name a source
+	// channel its own account is subscribed to, which is what keeps one user's
+	// workflow from driving another's registration.
+	other, err := env.store.UpsertFor(ctx, env.account, channel("official", 777))
 	if err != nil {
-		t.Fatalf("Upsert: %v", err)
+		t.Fatalf("UpsertFor: %v", err)
 	}
 	if _, err := env.store.CreateWorkflow(ctx, env.input()); err != nil {
 		t.Fatalf("CreateWorkflow: %v", err)

@@ -132,19 +132,25 @@ type fakeEnqueuer struct {
 	mu        sync.Mutex
 	webhooks  [][2]any
 	workflows [][2]any
+	// owners is what each enqueue was bound to. Work with no owner is refused
+	// by the real queue, so a test that dropped this would not notice a fan-out
+	// that lost the binding.
+	owners []automation.Owner
 }
 
-func (f *fakeEnqueuer) EnqueueWebhookDelivery(ctx context.Context, eventID string, webhookID int64) error {
+func (f *fakeEnqueuer) EnqueueWebhookDelivery(ctx context.Context, eventID string, webhookID int64, owner automation.Owner) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.webhooks = append(f.webhooks, [2]any{eventID, webhookID})
+	f.owners = append(f.owners, owner)
 	return nil
 }
 
-func (f *fakeEnqueuer) EnqueueWorkflowRun(ctx context.Context, eventID string, workflowID int64) error {
+func (f *fakeEnqueuer) EnqueueWorkflowRun(ctx context.Context, eventID string, workflowID int64, owner automation.Owner) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.workflows = append(f.workflows, [2]any{eventID, workflowID})
+	f.owners = append(f.owners, owner)
 	return nil
 }
 
@@ -155,6 +161,13 @@ func (f *fakeEnqueuer) webhookJobs() int {
 }
 
 const testEventID = "evt_0123456789abcdef"
+
+// testOwner is the one owner every fixture here works for. The binding is the
+// subject of these tests, so it is named rather than left implicit.
+const (
+	testOwnerUserID = int64(100)
+	testAccountID   = "acc_testfixture"
+)
 
 func newEnv(t *testing.T, responses ...scripted) *env {
 	t.Helper()
@@ -169,7 +182,7 @@ func newEnv(t *testing.T, responses ...scripted) *env {
 		channels: map[int64]webhooks.Channel{},
 		jobs:     jobs,
 	}
-	e.events[testEventID] = messageEvent(nil)
+	e.events[testEventID] = messageEvent(nil).WithOwner(testOwnerUserID)
 
 	svc, err := webhooks.New(webhooks.Config{
 		PublicBaseURL: "https://telesync.example.com",
@@ -212,6 +225,8 @@ func (e *env) webhook(authMode string) automation.Webhook {
 		AuthHeader:  "",
 		Timeout:     5 * time.Second,
 		MaxAttempts: 5,
+		OwnerUserID: testOwnerUserID,
+		AccountID:   testAccountID,
 	}
 	if authMode == webhooks.AuthHeader {
 		rec.AuthHeader = "X-Feed-Token"
@@ -224,6 +239,9 @@ func (e *env) webhook(authMode string) automation.Webhook {
 	return saved
 }
 
+// job is the work as the queue hands it to a handler: bound to one owner, and
+// never to a second. Every delivery this creates inherits that binding, which
+// is what makes its history private and its retry authorisable.
 func (e *env) job(webhookID int64, attempt, max int) automation.Job {
 	return automation.Job{
 		ID:          1,
@@ -232,6 +250,23 @@ func (e *env) job(webhookID int64, attempt, max int) automation.Job {
 		TargetID:    webhookID,
 		Attempt:     attempt,
 		MaxAttempts: max,
+		Owner:       automation.Owner{OwnerUserID: testOwnerUserID, AccountID: testAccountID},
+	}
+}
+
+func TestDeliveryRefusesAJobWithAnotherPersistedAccount(t *testing.T) {
+	e := newEnv(t, scripted{status: 200, body: "ok"})
+	wh := e.webhook(webhooks.AuthHMAC)
+	job := e.job(wh.ID, 1, 5)
+	job.Owner.AccountID = "acc_other"
+	if err := e.svc.Handler()(context.Background(), job); err == nil {
+		t.Fatal("a job bound to another account must not deliver this webhook")
+	}
+	if got := len(e.rt.sent()); got != 0 {
+		t.Fatalf("mismatched job sent %d requests", got)
+	}
+	if got := len(e.store.deliveries); got != 0 {
+		t.Fatalf("mismatched job created %d delivery records", got)
 	}
 }
 
@@ -611,6 +646,7 @@ func TestDeliveryRefusesABlockedTargetAtDeliveryTime(t *testing.T) {
 			err = svc.Handler()(context.Background(), automation.Job{
 				EventID: testEventID, Kind: automation.JobWebhookDelivery, TargetID: saved.ID,
 				Attempt: 1, MaxAttempts: 5,
+				Owner: automation.Owner{OwnerUserID: testOwnerUserID, AccountID: testAccountID},
 			})
 			if err == nil {
 				t.Fatalf("delivery to %s was allowed", target)
@@ -682,6 +718,7 @@ func TestDeliveryDialsTheAddressItResolvedAndNotTheName(t *testing.T) {
 	err = svc.Handler()(context.Background(), automation.Job{
 		EventID: testEventID, Kind: automation.JobWebhookDelivery, TargetID: saved.ID,
 		Attempt: 1, MaxAttempts: 5,
+		Owner: automation.Owner{OwnerUserID: testOwnerUserID, AccountID: testAccountID},
 	})
 	if err == nil {
 		t.Fatal("a delivery with a dialler that opens nothing reported success")
@@ -740,6 +777,7 @@ func TestDeliveryRefusesAHostThatResolvesSomewherePrivate(t *testing.T) {
 	err = svc.Handler()(context.Background(), automation.Job{
 		EventID: testEventID, Kind: automation.JobWebhookDelivery, TargetID: saved.ID,
 		Attempt: 1, MaxAttempts: 5,
+		Owner: automation.Owner{OwnerUserID: testOwnerUserID, AccountID: testAccountID},
 	})
 	var jobErr *automation.JobError
 	if !errors.As(err, &jobErr) {
@@ -784,6 +822,7 @@ func TestDeliveryBoundsTheResponseBodyAndRecordsTruncation(t *testing.T) {
 	if err := svc.Handler()(context.Background(), automation.Job{
 		EventID: testEventID, Kind: automation.JobWebhookDelivery, TargetID: saved.ID,
 		Attempt: 1, MaxAttempts: 5,
+		Owner: automation.Owner{OwnerUserID: testOwnerUserID, AccountID: testAccountID},
 	}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -833,6 +872,7 @@ func TestDeliveryRecordsTimeoutsAndConnectionFailuresAsRetryable(t *testing.T) {
 	err = svc.Handler()(context.Background(), automation.Job{
 		EventID: testEventID, Kind: automation.JobWebhookDelivery, TargetID: saved.ID,
 		Attempt: 1, MaxAttempts: 5,
+		Owner: automation.Owner{OwnerUserID: testOwnerUserID, AccountID: testAccountID},
 	})
 	var jobErr *automation.JobError
 	if !errors.As(err, &jobErr) {
@@ -1135,14 +1175,14 @@ var (
 // reopenRecorder stands in for queue.Enqueuer.Reopen and can be told to refuse.
 type reopenRecorder struct {
 	mu    sync.Mutex
-	calls [][3]any
+	calls [][4]any
 	err   error
 }
 
-func (r *reopenRecorder) reopen(ctx context.Context, eventID string, kind automation.JobKind, targetID int64) error {
+func (r *reopenRecorder) reopen(ctx context.Context, eventID string, kind automation.JobKind, targetID int64, owner automation.Owner) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.calls = append(r.calls, [3]any{eventID, kind, targetID})
+	r.calls = append(r.calls, [4]any{eventID, kind, targetID, owner})
 	return r.err
 }
 
@@ -1269,7 +1309,8 @@ func TestRetryDeliveryGivesTheQueuedJobAFreshAttemptBudget(t *testing.T) {
 	if e.jobs.webhookJobs() != 0 {
 		t.Fatalf("the retry re-enqueued instead of reopening: %d", e.jobs.webhookJobs())
 	}
-	if got := reopen.calls[0]; got[0] != testEventID || got[1] != automation.JobWebhookDelivery || got[2] != wh.ID {
+	if got := reopen.calls[0]; got[0] != testEventID || got[1] != automation.JobWebhookDelivery ||
+		got[2] != wh.ID || got[3] != (automation.Owner{OwnerUserID: testOwnerUserID, AccountID: testAccountID}) {
 		t.Fatalf("Reopen was called with %v", got)
 	}
 
@@ -1327,7 +1368,9 @@ func TestRetryDeliveryEnqueuesWhenThereIsNoJobToReopen(t *testing.T) {
 	wh := e.webhook(webhooks.AuthNone)
 	// A delivery whose job row was never created.
 	created, err := e.store.CreateWebhookDelivery(context.Background(), automation.WebhookDelivery{
-		WebhookID: wh.ID, EventID: testEventID, Status: webhooks.StatusFailed,
+		WebhookID: wh.ID, EventID: testEventID,
+		OwnerUserID: testOwnerUserID, AccountID: testAccountID,
+		Status: webhooks.StatusFailed,
 	})
 	if err != nil {
 		t.Fatal(err)

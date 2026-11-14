@@ -71,7 +71,7 @@ function TelegramPostPreview({
 
   return (
     <div className="flex flex-col gap-3">
-      {state.telegram.clientKey && state.telegram.channelIds.length > 0 && (
+      {state.telegram.accountID && state.telegram.channelIds.length > 0 && (
         <p className="text-xs text-muted-foreground">
           ارسال به {faDigits(chosen.length || state.telegram.channelIds.length)} کانال
           {chosen.length > 0 && (

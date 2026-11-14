@@ -14,6 +14,11 @@ export interface ChannelFilter {
   filed: Readonly<Record<number, readonly number[]>>
   // Empty means all connections; otherwise keys are Telegram client keys.
   serverKeys?: readonly string[]
+  // Empty means every account in scope; otherwise the opaque ids of the
+  // accounts to show channels for. It narrows a list already scoped to the
+  // reader's own accounts (`scopeToOwnAccounts`) — it never widens it, because
+  // an id a reader could put in the URL is simply not in their own set.
+  accountIds?: readonly string[]
 }
 
 // toggleCategory is one click on a category chip: an inactive category is
@@ -52,6 +57,12 @@ export function filterChannels(
   const wanted = filter.categoryIds
   return channels.filter((channel) => {
     if (filter.serverKeys?.length && !filter.serverKeys.includes(channel.client_key)) return false
+    if (
+      filter.accountIds?.length &&
+      !filter.accountIds.includes(channel.account_id ?? "")
+    ) {
+      return false
+    }
     if (!matchesSearch(channel, filter.search)) return false
     if (wanted.length === 0) return true
     const under = filter.filed[channel.id] ?? []

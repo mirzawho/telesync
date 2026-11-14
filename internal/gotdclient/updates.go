@@ -49,7 +49,14 @@ func (f IngestSinkFunc) Ingest(ctx context.Context, msg rpc.IngestMessage) (rpc.
 // updates already put in order and with gaps resolved. It runs in the worker and
 // holds no database; the sink carries each observation to the daemon.
 type updateHandler struct {
-	clientKey  string
+	// clientKey scopes the observation to one connection. It is the account id
+	// on the account path.
+	clientKey string
+	// accountID is the opaque user-owned account that saw the message. It is
+	// empty only on the legacy configured-client path, which has no account.
+	accountID string
+	// networkKey is the server definition the connection belongs to, so two
+	// connections on one network describe one logical message.
 	networkKey string
 	sink       IngestSink
 	now        func() time.Time
@@ -59,7 +66,7 @@ type updateHandler struct {
 // newUpdateHandler builds the handler. sink may be nil, in which case updates
 // are normalized and dropped: automation is optional and a worker without it
 // must not fail to start.
-func newUpdateHandler(clientKey, networkKey string, sink IngestSink,
+func newUpdateHandler(clientKey, accountID, networkKey string, sink IngestSink,
 	now func() time.Time, logf func(format string, args ...any)) *updateHandler {
 	if now == nil {
 		now = time.Now
@@ -68,7 +75,7 @@ func newUpdateHandler(clientKey, networkKey string, sink IngestSink,
 		logf = func(string, ...any) {}
 	}
 	return &updateHandler{
-		clientKey: clientKey, networkKey: networkKey,
+		clientKey: clientKey, accountID: accountID, networkKey: networkKey,
 		sink: sink, now: now, logf: logf,
 	}
 }
@@ -92,7 +99,7 @@ func (h *updateHandler) Handle(ctx context.Context, u tg.UpdatesClass) error {
 		return nil
 	}
 	received := h.now().UTC()
-	msgs := normalizeIngest(h.clientKey, h.networkKey, u, received)
+	msgs := normalizeIngest(h.clientKey, h.accountID, h.networkKey, u, received)
 	var failures []string
 	for _, msg := range msgs {
 		if _, err := h.sink.Ingest(ctx, msg); err != nil {
@@ -115,10 +122,11 @@ func (h *updateHandler) Handle(ctx context.Context, u tg.UpdatesClass) error {
 // read markers, service notices — is deliberately not turned into an event.
 // Media is metadata only: the bytes are never copied here and travel later
 // through the authorized media pipeline.
-func normalizeIngest(clientKey, networkKey string, u tg.UpdatesClass, received time.Time) []rpc.IngestMessage {
+func normalizeIngest(clientKey, accountID, networkKey string, u tg.UpdatesClass, received time.Time) []rpc.IngestMessage {
 	var out []rpc.IngestMessage
 	forEachUpdate(u, func(msg *tg.Message, channelID int64, users map[int64]*tg.User) {
 		out = append(out, rpc.IngestMessage{
+			AccountID:         accountID,
 			ClientKey:         clientKey,
 			NetworkKey:        networkKey,
 			TelegramChannelID: channelID,

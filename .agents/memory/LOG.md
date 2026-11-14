@@ -1,5 +1,432 @@
 # Log (newest last)
 
+## 2026-11-14 — Implement Add Telegram Account dialog UX
+
+- User approved `.agents/handoffs/v0.0.5-add-account-dialog-ux.md`.
+- Reworked the add-account wizard into a compact Persian RTL dialog with one
+  shared X close control, friendly nonwrapping server rows, concise step titles,
+  selected-server context, and stacked full-width actions for phone, code, and
+  2FA. Kept API calls/contracts, reducer semantics, cancellation cleanup,
+  deferred validation, countdown, password visibility, and safe back behavior.
+- Added focused regression assertions covering cancel absence/shared close,
+  row structure/labels, validation/actions, and code/2FA layout.
+- Validation from `web/apps/web`: account suite 140/140; `npm test` passed
+  (panel suite reports 183 tests); `npm run typecheck`, `npm run build`,
+  Prettier check, and `git diff --check` passed.
+- No browser/mobile visual verification was performed; real viewport and
+  keyboard behavior remain unverified. No backend/API/session changes,
+  dependencies, commits, or pushes. Preserved unrelated dirty worktree changes.
+- Handoff marked DONE.
+
+## 2026-11-14 — Prepare Add Telegram Account dialog UX redesign
+
+- Verified the login wizard, shared Dialog X close control, login reducer, and
+  account API helpers. Current UI has a 520px width, footer cancel, technical
+  server-row text, and horizontally arranged actions; API/state contracts are
+  already implemented and must remain unchanged.
+- Added four focused SSR assertions. `node scripts/test-accounts.mjs` reports
+  135 pass / 4 expected fail; failures match the missing requested width, row
+  layout, phone action/validation, and code/2FA action layout.
+- No production code changed. Graphify stats is unavailable and the existing
+  graph (11,333 nodes, 0 edges) is stale. Handoff
+  `.agents/handoffs/v0.0.5-add-account-dialog-ux.md` awaits explicit approval.
+
+## 2026-11-14 — Implement account-scoped copy destination resolution
+
+- The publishing resolver now verifies ownership of the explicitly selected
+  account, then resolves registered channels with `GetForAccount(accountID,
+  remoteChannelID)`. It does not inspect another account's same-server row.
+  Unregistered destinations remain valid candidates, but must pass app
+  visibility and the selected Runner's live channel/send-right check. Legacy
+  unscoped publishing retains its prior keyed lookup.
+- Extended the real-gateway regression to assert HTTP 200, destination message
+  10/channel 5002, no send through account A, and same-key retry replay without
+  a duplicate send. The test was observed Red before the production change and
+  Green afterward.
+- Focused gateway regression and publishing/channelstore tests pass; `go vet`,
+  daemon binary build, frontend tests, typecheck and production build pass.
+  `go test ./... -count=1` still fails in numerous gateway identity/permission
+  legacy fixtures and one gotd sticker readback test. `gofmt -l .` lists
+  unrelated existing files.
+- No frontend or public API contract changed. At implementation close no live
+  daemon restart or authorized Telegram/Cat send had been performed; see the
+  follow-up below. Handoff remains VERIFYING; no commit/push.
+
+## 2026-11-14 — Restart daemon for account-scoped copy verification
+
+- Restarted the running daemon from the freshly built `./bin/telesync daemon`.
+  Live `/healthz` returned HTTP 200 and the reported account's worker process
+  restored.
+- The mounted account-scoped channel-list request without credentials returned
+  HTTP 401. No authenticated browser/API credential or authorized test
+  destination was available, so no real message was published.
+- The destination regression now registers remote peer 5002 under both A and B
+  and verifies selected-account resolution; it returns HTTP 200 and replays
+  idempotently without a second send. Live authenticated copy remains
+  unverified. No commit/push.
+
+## 2026-11-14 — Account-scoped publish idempotency and final restart
+
+- Migration 23 changes publish operation uniqueness to user/account/key. It
+  preserves existing attempts, binds only legacy Telegram rows whose
+  destination prefix identifies an account owned by the same user, and leaves
+  unresolved rows unbound. `BeginPublishOperation` now scopes lookup/replay to
+  the destination account; unscoped legacy lookup only returns unscoped rows.
+- Added a store Red/Green for same-user/same-key operations on two accounts,
+  migration preservation/backfill coverage, and a real-gateway test proving
+  distinct sends and retries for two owned accounts. The collision bug was
+  observed Red as `created=false, err=nil` before the scope change.
+- Added explicit source-account/destination-account separation coverage and
+  integrated discovery-to-copy in the primary regression: the copy body uses
+  the remote peer ID returned by the selected account's send-capable channel
+  list.
+- Rebuilt and restarted the daemon after the final code. Live DB schema is 23
+  and has the account-scoped publish-key index; `/healthz` is 200 and both
+  account workers launch. Unauthenticated mounted discovery returns 401.
+- Targeted gateway/channelstore/publishing tests, `go vet ./...`, daemon build,
+  frontend test/typecheck/build pass. Full Go suite retains the previously
+  observed gateway fixture failures and gotd sticker readback failure. No
+  authenticated live copy was attempted because no API credential and
+  authorized test destination are available.
+
+## 2026-11-14 — Prepare account-scoped copy destination resolution
+
+- Confirmed the exact rejection in `internal/automation/publishing/resolve.go`:
+  `resolvePublishDestination` calls `Channels.Get(ctx, key, destID)`, so the
+  first server-key/remote-ID registration can belong to another personal
+  account. The account mismatch is raised before the selected account Runner
+  revalidates access or `Permissions.New`.
+- Added
+  `TestAccountScopedPublishDoesNotResolveDestinationByServerKeyFirst` to the
+  real account gateway suite. It uses source account B and a destination peer
+  registered under A but independently accessible to B. Focused test is
+  genuinely Red: HTTP 409 with the exact misleading `invalid_input` message.
+- No production changes. Handoff
+  `.agents/handoffs/v0.0.5-account-scoped-copy-destination-resolution.md`
+  awaits explicit user approval. The dirty graph snapshot is stale and its CLI
+  has no `stats` command. No corrected HTTP response or live destination send
+  was verified.
+
+## 2026-11-14 — Implement account-scoped publishing destinations
+
+- Fixed account route dispatch for `GET .../{account_id}/channels` and
+  account-scoped `POST .../{account_id}/messages/copy`.
+- Added mounted-HTTP, ownership/isolation, send-filter, empty/error, pagination,
+  and selected-account unregistered-peer regressions. The publisher revalidates
+  account ownership and send rights; it does not fall back to a shared session.
+- The dialog loads all pages, fails closed on absent send permission, and
+  displays Persian empty/error/retry states while preserving the publish and
+  WordPress flows.
+- Verified focused gateway/publishing tests; full frontend test suites,
+  `npm run typecheck`, `npm run build`, panel embedding (152 files), daemon
+  binary build, `go vet ./...`, apidocs tests and docsgen `--check`.
+- `go test ./... -count=1` fails in numerous gateway identity/fixture cases and
+  one gotd sticker readback test; these failures are untriaged and not proven
+  baseline. `gofmt -l .` reports unrelated files. No authenticated live browser,
+  daemon, or Telegram send was tested. No commit/push.
+
+## 2026-11-14 — Prepare account-scoped publishing destination list fix
+
+- Traced the exact mounted URL through the real gateway dispatch. `/admin` is
+  stripped correctly, frontend URL is canonical, and the request reaches
+  `accountsResource`.
+- Exact cause: `accountsResource` requires at least three suffix segments, but
+  `{account_id}/channels` has two. The generic 404 occurs before account
+  discovery; it is not route-prefix mismatch, account-not-found, or legacy-route
+  shadowing.
+- Added `TestAccountScopedChannelListIsRegisteredOnMountedAdminMux` using the
+  authenticated registered handler, SQLite account store, selected-account
+  worker, send/read-only channels and pagination. Focused command fails as
+  intended: actual 404, expected 200.
+- No production changes. Handoff
+  `.agents/handoffs/v0.0.5-account-scoped-publish-destinations.md` awaits
+  explicit approval. Graphify stats unsupported and graph stale versus HEAD;
+  browser/live daemon verification and docs/build checks were not run.
+
+## 2026-11-14 — Approved v0.0.5 account refactor integration update
+
+- Integrated the personal-account Explorer selector/filter and legacy
+  `server=` translation (matching-account union, never arbitrary first match),
+  account-aware Create/Join and manual publishing, offline cached-channel
+  rendering, account-specific discovery errors, and account-keyed message
+  operations.
+- Migration 22 now stores destination account identity for workflow
+  destinations/publications and category assignments; ambiguous category
+  assignments are quarantined and unresolved legacy workflow destinations stay
+  NULL/paused. Category-channel queries are owner-scoped and account-keyed;
+  local avatar cache entries are account-keyed. Workflow retry and dispatch use
+  the exact persisted destination account. Account-scoped send/edit/delete
+  results carry `account_id`, keeping `client_key` informational.
+- Fixed the channel category filter comparison to compare textual Telegram IDs
+  consistently with the account-scoped assignment table. The gateway category
+  test fixture now assigns under `account_id`.
+- Fixed the docs probe to use an authenticated owner token for `/api/v1/local/*`
+  examples; moved the example channel-leave request after examples which use
+  that channel. `go test ./internal/apidocs` and docsgen checks pass.
+- Fixed four panel failures by giving message-pane test fixtures the now-required
+  account identity; `node scripts/test-panel.mjs` passes 183/183 and `npm test`
+  passes all configured suites. Typecheck and production build pass; the
+  embedded panel reports current.
+- `go test ./...` remains failing in many gateway tests whose fixtures or
+  expectations still assume global/server-key identities, plus one
+  `internal/gotdclient` sticker send/readback failure. A focused gateway account,
+  category, delete, workflow, and avatar run passes. These failures have not
+  been proven pre-existing and remain a completion blocker. `go vet ./...`,
+  `go build ./...`, full channelstore/avatarcache suites and `git diff --check`
+  pass. No browser/live Telegram/Cat verification, commit, or deployment.
+
+## 2026-11-14 — Migration 22 workflow/category/account avatar slice (partial)
+
+- Appended migration 22 without changing earlier migrations. It adds Telegram
+  destination account identity with runtime-enforcing triggers, rebuilds
+  publication history with NO ACTION account FK and COALESCE-based uniqueness,
+  and rebuilds category assignments keyed by account while quarantining
+  ambiguous/unmapped assignments under `legacy_<server>`.
+- Account-scoped category write/list/count and channel filter operations were
+  updated, and `CategoryChannelsForOwner` filters to the requesting owner's
+  active, non-quarantined account registrations. Local avatar cache calls now
+  use the persisted account ID; direct cache test covers two accounts and one
+  remote channel independently.
+- Passed focused migration 21→22 and direct avatar isolation tests. Existing
+  category package tests still fail because old fixtures pass server keys, and
+  owner-scoped membership behavior still needs its two-owner regression. Gateway
+  package compilation is blocked by a dirty-tree `LocalChannelStore` interface
+  mismatch in `publish.go`. Account-scoped route avatar identity is not yet
+  verified; no full suite or live integration was run.
+
+## 2026-11-14 — Automation destination account-identity audit
+
+- Rechecked workflow destination persistence and publishing resolution. The
+  current store joins Telegram destinations to `managed_channels` to infer
+  `AccountID`; neither destination configuration nor durable workflow
+  publication rows persist that account identity. A retry/reopen therefore
+  cannot prove it is using the account originally selected.
+- No migration, gateway/API, or other out-of-scope file was changed. Exact
+  durable Telegram workflow destination identity remains blocked pending a
+  schema/integration decision.
+- `go test ./internal/automation/... ./internal/staging ./internal/sending
+  -count=1`, webhook tests, targeted channelstore ownership tests excluding the
+  known-broken `list_test.go`, and `git diff --check` pass. No live Telegram/Cat
+  verification was performed.
+
+## 2026-11-14 — Implement Accounts/Categories table parity
+
+- User approved `.agents/handoffs/v0.0.5-accounts-categories-table-parity.md`.
+- AccountList now matches the Categories table shell (`rounded-xl border
+  bg-card`), relies on shared row sizing, removes the unnecessary 760px table
+  minimum, and aligns physical-left sticky Actions with `w-12 text-end`.
+  The row uses a 32px avatar and inline account name/username to bring its
+  content-driven height close to Categories. Friendly server label, real
+  status, formatted date, existing vertical-ellipsis actions, and no dash for a
+  missing username are retained.
+- `node scripts/test-accounts.mjs`: 135/135 pass;
+  `node scripts/test-responsive.mjs`: 55/55 pass; `npm run build` and
+  `git diff --check` pass.
+- Headless Chromium rendered the actual CategoriesTable and AccountList
+  components with production CSS at 1440×900 and 390×844. Shell/headers match,
+  row heights are visually close, and mobile retains horizontal scrolling
+  without card conversion or visible overlap. This is not a live authenticated
+  route session.
+- `npm run typecheck` fails on unrelated contract/type mismatches in
+  `create-channel-form.test.tsx` and `publish-workspace.test.tsx`.
+  Focused TypeScript check of `account-list.tsx` passes; route-level focused
+  compilation still hits unrelated channel-message/publish errors. `npm test`
+  stops in the panel suite at 171/179; eight failures are in unrelated channel
+  explorer/message/create/account-action tests.
+- No backend changes, commits, or pushes. Handoff remains VERIFYING because
+  workspace-wide typecheck and panel-suite failures are unrelated and out of
+  scope.
+
+## 2026-11-14 — Accounts/Categories table parity preparation
+
+- Verified Categories' shared Table structure, outer `rounded-xl border
+  bg-card` wrapper, and default shared row styling against the actual route and
+  shared UI component. AccountList uses the same primitives and sticky,
+  opaque physical-left Actions cells, but has a fixed `h-[68px]` row and no
+  matching outer wrapper on the Accounts route.
+- Added an SSR assertion against the account-only row-height override.
+  `node scripts/test-accounts.mjs` reports 125 pass / 1 intended failure.
+- No production source changed. Graphify stats command is unsupported and
+  graph freshness remains unverified. Handoff
+  `.agents/handoffs/v0.0.5-accounts-categories-table-parity.md` awaits explicit
+  approval; frontend typecheck/build and browser comparison were not run.
+
+## 2026-11-14 — Account table/profile polish preparation
+
+- Added focused SSR assertions for a five-column account table, physical-left
+  sticky actions, horizontal overflow, retained DropdownMenu trigger, secondary
+  ID Copy action, and missing optional values.
+- Red phase: `node scripts/test-accounts.mjs` reports 121 pass / 4 fail; all
+  failures are the expected absent table/profile behavior. No production code
+  changed.
+- Handoff `.agents/handoffs/v0.0.5-account-table-profile-polish.md` is
+  `AWAITING_APPROVAL`. Graphify stats is unavailable in the installed CLI and
+  graph freshness against HEAD is unverified. Typecheck, build, and browser
+  viewport behavior remain unverified.
+
+## 2026-11-14 — Account table/profile polish implementation
+
+- Implemented the My Accounts RTL table using existing table primitives,
+  scroll overflow, sticky physical-left Actions, account identity/avatar,
+  server/status columns, formatted last-connection timestamps, and the original
+  per-account DropdownMenu handlers.
+- Redesigned account details as a compact centered profile with Avatar, status,
+  server, compact details, masked phone, unavailable-value placeholders, and a
+  secondary account-ID Copy button. Added a small dependency-free shared Avatar
+  primitive because the UI package had none.
+- Updated dashboard account rows to use the shared Avatar, name, server label,
+  and status Badge without changing its compact layout.
+- `npm test` passes all 736 frontend tests; focused accounts tests (126) and
+  responsive tests (55), `npm run typecheck`, `npm run build`, Prettier check,
+  and `git diff --check` pass. No browser viewport verification was performed.
+- Handoff `.agents/handoffs/v0.0.5-account-table-profile-polish.md` is `DONE`.
+
+## 2026-11-14 — Account worker-process lifecycle slice
+
+- Added strict account worker CLI parsing and the worker-side `WorkerOptions` /
+  `RunWorker` identity branch. The account service is built only from trusted
+  `AccountIdentity`, and startup checks the configured server and manager
+  account/remote-user binding before opening the private RPC socket.
+- Made account supervisor retries idempotent for identical trusted metadata,
+  rejected conflicting metadata, closed account admission on `StopAll`, and
+  required an identity-aware readiness probe. Account startup/readiness metadata
+  mismatches fail closed rather than being treated as an ordinary socket retry.
+- Bound gotd account managers to their persisted account and remote user.
+  `Self` is checked before setting the account ready; a mismatch clears the
+  exposed user and prevents update-manager startup. Worker Health/Profile and
+  authorized operations also reject a ready transport whose user differs from
+  the account record.
+- Red evidence included worker tests accepting malformed session paths and
+  mismatched remote users, RPC accepting noncanonical IDs, and missing account
+  seams in CLI/runtime/gotd/supervisor. Focused supervisor/worker/RPC/CLI tests,
+  account `RunWorker` tests, focused gotd identity tests, relevant `-race`
+  tests, `go vet ./...`, `go build ./...`, and `git diff --check` pass.
+- `go test ./... -count=1` remains red in the lead-owned `cmd/telesync` socket
+  path test, gateway legacy/account fixtures, one gotd sticker readback test,
+  and three legacy runtime daemon health tests. The isolated sticker test also
+  fails; it does not touch the worker identity/send changes in this slice.
+- Lead-owned cmd code now has account material loading and CLI dispatch, but
+  daemon account restoration/Runner registration and login-time `Add` are not
+  wired. Its concrete socket prober is still socket-only and must implement the
+  account identity check before `RunAccounts` can start accounts. No live
+  Telegram/Cat, multi-daemon lease/fencing, or browser verification is claimed.
+
+## 2026-11-14 — Daemon lock and account session handoff
+
+- Wired the process-level lock beside `runtime.data_dir` before SQLite opens.
+  The daemon regression first failed because a second process could start,
+  then passed after the lock; it also verifies reacquisition after shutdown.
+- Added a login account-store adapter that reads the account-bound sealed
+  AccountBox, re-seals its session under the same account/key-version AAD into
+  SQLite, and only then completes the pending account. Its regression first
+  found DB session version/key version zero and no Runner-eligible account,
+  then passed with the adapter.
+- Focused tests for both changes pass. The adapter is not yet connected to the
+  daemon login service; account Runner startup/restore and runtime lifecycle
+  integration remain incomplete. Full Go tests are not claimed green.
+
+## 2026-11-14 — Gateway identity routing integration follow-up
+
+- Separated account/session identity, configured server key, and URL route
+  selector through gateway resource dispatch. This keeps account-scoped workers
+  and channel registrations isolated while durable channel destinations retain
+  their global server key and media/status links remain on the caller's route.
+- Added the account-scoped media URL regression and corrected its assertion to
+  the established `/telegram/...` form. Focused route/media/edit tests pass.
+- Rebuilt docs after the final gateway route changes. Verified `go build ./...`,
+  `go vet ./...`, apidocs tests, docsgen `--check`, and web `npm run typecheck`.
+- Re-ran the full Go suite: it remains failing in gateway, runtime, publishing,
+  and daemon tests. Failures include missing account-bound fixtures/workers,
+  background owner/account mismatches, account-unaware automation rows, and
+  unimplemented production account restoration. No compatibility fallback was
+  introduced. Live Telegram/Cat and browser checks were not performed.
+
+## 2026-11-14 — Account runtime/auth lifecycle blocker confirmed
+
+- Rechecked the account execution path before attempting more runtime wiring.
+  `supervisor.RunAccounts` launches `worker --account <id>`, but
+  `internal/cli/runtime.go` accepts only `--key`; `cmd/telesync.runWorkerProcess`
+  always builds a legacy configured-client profile. There is no account-aware
+  process loader that binds the DB record, custom server definition, sealed
+  `AccountBox`, and worker identity together.
+- Confirmed no `internal/gotdclient` account-auth adapter source exists. The
+  persisted login state machine needs a live MTProto client across phone-code
+  and 2FA requests. A sealed session needs a stable account ID before the
+  remote identity is confirmed, but the binding decision explicitly forbids a
+  provisional login/session identity. Did not invent an attempt-ID or
+  server-key session workaround.
+- Marked the handoff `BLOCKED` pending an owner-approved identity/lifecycle
+  decision. The full Go suite remains failing; prior focused/static/doc/web
+  results remain as recorded. No live Telegram/Cat or browser verification was
+  performed.
+
+## 2026-11-14 — R9 pending-account lifecycle resumed
+
+- The owner approved R9: allocate the permanent opaque account id at login
+  start, persist an owner/server-bound `connecting` row, keep it unroutable,
+  and complete that same row only from Telegram-confirmed authorization.
+- Changed `accountauth` to create pending accounts before MTProto, carry the
+  stable ID through authorization, and conditionally release incomplete rows
+  on failure/cancel/recovery. Changed `channelstore` to create, complete, and
+  release pending records without deleting completed accounts.
+- Added behavior coverage proving the attempt ID remains stable and the store
+  only promotes the row with server-confirmed remote identity. Fixed the
+  gateway regression URL to address a channel resource and verified explicit
+  pending-account routing returns unavailable rather than routing.
+- Verified `go test ./internal/accountauth ./internal/channelstore -count=1`
+  and three focused gateway account-routing tests pass. A full
+  `internal/gateway` run remains red across numerous ownership/authorization,
+  automation/publishing, and legacy fixture expectations; this run does not
+  establish whether those failures predate the current work.
+- Account-aware gotd login/session sealing and production account worker
+  startup/restoration remain unfinished. No live Telegram/Cat or browser
+  verification was performed.
+
+## 2026-11-14 — Continue approved v0.0.5 personal-account integration
+
+- User authorized continuing the named personal-accounts handoff despite its
+  former blocked status. Preserved the existing dirty worktree and recorded
+  focused agent evidence and unresolved seams in the handoff.
+- Verified focused work reported: migration/account persistence (A), accountauth
+  service security fixes (B), account worker/RPC regression coverage (C),
+  account ownership/login route fixes (D), and frontend account capability,
+  scoping and pagination changes (F). These are focused checks, not a full
+  release verification. Agent B could not safely implement the real gotd login
+  adapter because session identity, persisted code hash and terminal cleanup
+  contracts are incomplete.
+- Added account-routing context to the hand-written API overview and Telegram
+  component; docs generation remains pending route/integration completion.
+- Attempted the account API route tests while Agent E's staged-media changes
+  were in progress. Compilation failed on missing `Staging.OpenFor`, `ReadFor`,
+  and `ReconcileOwnedKeeping` interface methods. Recorded as integration in
+  progress, not a docs/test pass.
+- Agent E completed: bound job reopen/retry, actor/account-bound sends and
+  guarded staged reads, plus ownership-scoped cleanup that retains ambiguous
+  sidecars. Focused channelstore, staging and sending tests passed with Red
+  evidence. Orphan uploads without a send-operation record remain retained;
+  rerun the previously blocked integration/docs checks now that the interface
+  changes are complete.
+- Completed the edit-staging interface integration: editing cleanup/execution
+  now use owner/account-guarded file reads. Focused editing/sending/staging/
+  channelstore tests pass. Updated the docsgen probe with stable account-bound
+  fixtures, documented the safe personal-account listing example, generated and
+  embedded API docs, and verified `go test ./internal/apidocs -count=1` plus
+  docsgen `--check`.
+- Full `go test ./... -count=1` was attempted and failed across gateway,
+  runtime, publishing and daemon tests. Among the verified failures, account IDs
+  are used in fields/URLs that require server keys, and the production daemon
+  still does not start account workers. The suite is not green; no broad test
+  fixture migration or runtime fallback was applied.
+- `go build ./...`, `go vet ./...`, and `git diff --check` passed. The web panel
+  was rebuilt with `node web/scripts/build-panel.mjs` and 150 files embedded;
+  browser verification was not performed.
+- Still outstanding: production account-worker/auth startup wiring, adapter
+  lifecycle contracts, legacy configured-session quarantine, backend
+  `login_methods` advertisement, QR encoding without an existing dependency,
+  generated API docs, embedded panel refresh, and consolidated Go/docs/web
+  verification. No live Telegram/Cat behavior was tested; no commit, push or
+  deployment was made.
+
 ## 2026-11-11 — Implement floating chat footer and message actions
 
 - User approved `.agents/handoffs/v0.0.4-floating-message-composer-layout.md`.
@@ -2152,3 +2579,161 @@ commit.
 web suites (26 + 19 + 164 + 108 + 50 + 202 + 18 + 48). **Not verified:**
 anything against live Telegram, WordPress, an AI provider or an external
 webhook receiver; the panel in a browser.
+
+## 2026-11-14 — Media-only publishing and native stickers
+
+- Implemented live-source media-only publication safeguards: unknown media and
+  zero-byte transfers fail before send; supported captionless media with
+  unknown cached size does not require `attachment_id`.
+- Added native sticker classification and metadata propagation, including WebP,
+  TGS, WebM, emoji, animation/video, mask and mask coordinates. Outgoing MTProto
+  uploads use native sticker attributes and destination-compatible empty set
+  identity; missing native result confirmation maps to an unknown outcome.
+- Focused publishing, worker/RPC, apidocs, production build, docsgen check, and
+  frontend media tests passed where recorded. Full Go suite/vet and latest gotd
+  tests are blocked by unrelated in-progress account changes; frontend typecheck
+  is blocked by account-login UI errors. No authorized live Cat check occurred.
+  Details and remaining blockers are in the approved handoff.
+
+## 2026-11-14 — Shared automation claims preserve account ownership
+
+- Kept the queue as a shared claimant pool while requiring each claimed job's
+  owner/account pair to match a connected account. Claims preserve per-account
+  target ordering and skip ownerless, paused, and disconnected predecessors;
+  legacy jobs remain quarantined.
+- Added cross-account Runner coverage proving dispatch selection follows each
+  job's durable account owner, plus claim, retry, recovery, and
+  disconnect/resume regressions. Webhook retries now pass the delivery's owner
+  through reopen/fallback enqueue and refuse unbound deliveries.
+- Verified `go test ./internal/automation/queue ./internal/channelstore
+  ./internal/automation/publishing ./internal/automation/webhooks -count=1`,
+  targeted `gofmt`, and `git diff --check`. Production daemon Runner wiring and
+  full-suite verification remain outside this slice; no live Telegram/Cat run.
+
+## 2026-11-14 — Personal-account dashboard and My Accounts UI
+
+- Replaced the dashboard's global server-health display with statuses from the
+  authenticated user's personal account list; retained categories, channels,
+  WordPress, and administrator metrics. Empty-state CTA routes to the existing
+  accounts page (`/admin/accounts` under the panel basename).
+- Polished My Accounts' compact empty state, identity cards, status-aware action
+  policy, separate logout/removal confirmations, and RTL physical-left add
+  button.
+- Verified `node scripts/test-responsive.mjs` (55/55) and formatting. The
+  account suite currently cannot bundle because the concurrent login-wizard
+  edit no longer exports `MethodStep` and `WizardStepRail`; `npm run typecheck`
+  reports wizard prop/export mismatches. No wizard code was changed. The
+  backend endpoint's owner-safety and actual-status behavior remains an
+  integration dependency, not verified by these frontend tests.
+
+## 2026-11-14 — Gotd account-auth session slice
+
+- `accountauth.Service.Start` now starts the first phone-code/QR operation
+  before returning; the phone-code attempt reports `waiting_for_code` only
+  after the server accepts the request. Per-attempt auth adapters are cached
+  across HTTP requests, then closed on authorization or terminal cleanup.
+- Added the concrete `gotdclient.NewAccountAuthFactory` and account-bound
+  `AccountAuth` adapter using gotd v0.162.0. `sessionstore.AccountBox` stores
+  the session encrypted and keeps the phone-code hash in a separate encrypted
+  `.login` sidecar. The success path closes/flushes the temporary client before
+  calling `CompletePending`, which is where the lead-owned adapter persists the
+  sealed session for startup Runner discovery.
+- Verified focused accountauth/sessionstore tests, gotd account-auth fake-server
+  tests, accountauth/sessionstore race tests, gotdclient package build, focused
+  vet, gofmt, and diff checks. Full repository and full gotdclient-suite success
+  are not claimed; the wider gotdclient run includes an unrelated sticker
+  readback failure. No live Telegram/Cat test was performed.
+- Graphify has no installed `stats` command or available MCP `graph_stats`
+  resource, and the existing graph lacks the new account-auth files. Preserved
+  graph artifacts; relied on focused source/test verification for this slice.
+- Lead wiring remains: pass the factory as `accountauth.Config.MTProto`, provide
+  `newAccountSessionHandoff(...)` as `Accounts`, and after a code/password/QR
+  operation returns `StateAuthorized`, resolve a trusted `supervisor.AccountRef`
+  for `attempt.AccountID` and call `Supervisor.Add`. No `cmd/**` or `gateway/**`
+  files were edited in this slice.
+
+## 2026-11-14 — Personal-account login-start JSON contract
+
+- **Red:** new HTTP route regressions sent both the exact phone-number payload
+  and a browser-like request; each reproduced the reported `400` claiming the
+  body did not contain exactly one JSON object. The browser sends
+  `phone_number`, while the strict request type only recognized `phone`, so the
+  field/type decode error was being mislabeled as a trailing JSON value.
+- Updated the login request to recognize `phone_number`. The shared bounded
+  decoder now accepts surrounding whitespace, refuses empty/malformed,
+  non-object, extra/trailing JSON and invalid/unknown fields, and classifies
+  oversized bodies separately without echoing request data. The gateway derives
+  Telegram/custom network type from the selected enabled server and accepts an
+  optional legacy type only when it matches.
+- Focused login route and category/JSON decoder regressions pass, including
+  browser headers, missing fields, official/custom selection, matching and
+  mismatched legacy network types, no dispatch on invalid bodies, and method
+  errors. `go test ./internal/apidocs -count=1`, docsgen `--check`, `go vet
+  ./...`, `go build ./...`, and `git diff --check` pass.
+- `go test ./... -count=1` remains red in broad gateway account-ownership and
+  legacy fixture tests plus the gotd sticker readback test; focused login tests
+  pass. Generated docs include the request schema/manual contract; docsgen still
+  reports 24 unresolved entries, including the login route's probe/auth
+  inference. Its broad generated probe-fact changes were retained because the
+  worktree contains concurrent v0.0.5 API/probe changes.
+- No frontend changes, database reset, live daemon restart, browser check,
+  credential logging, or real login challenge was performed. No authorized test
+  phone was supplied; no commit or push was made.
+
+## 2026-11-14 — Account-scoped message operations frontend slice
+
+- Message send/edit/delete/status requests now address the explicit
+  `/telegram/accounts/{account_id}/...` routes and reject non-account values,
+  rather than treating a server key as an authenticated identity. Channel
+  Explorer write calls pass the local channel record's `account_id`; the server
+  key remains available for presentation/reaction behavior.
+- Red evidence: the focused message API assertions failed against the previous
+  server-key paths. Green: the direct bundled `channel-message-api.test.ts`
+  suite passes 4/4, and `git diff --check` passes for touched files.
+- The requested shared `TelegramAccountSelector` is not present in the current
+  worktree (only `AccountCombobox` with a different exported API exists); no
+  shared selector was modified. No Join dialog/form exists under the allowed
+  Explorer components, and its current trigger/route is excluded from this
+  slice. Consequently Create/Join account selection and manual publishing
+  destination-account selection remain unimplemented pending selector/Join
+  ownership coordination. `scripts/test-panel.mjs` was also run: 172/176 pass;
+  three API failures were the intended Red before implementation and one
+  unrelated account+search+category filter assertion remains failing.
+- No full web suite/typecheck, backend contract verification, browser, or live
+  Telegram check was run. The existing `graphify-out/graph.json` reports 11,333
+  nodes and 0 edges; it was preserved rather than rebuilt in the dirty tree.
+
+## 2026-11-14 — Account-scoped Explorer and publishing frontend follow-up
+
+- Create and Join use explicit connected personal accounts; Create and username
+  availability post/read through `/telegram/accounts/{account_id}/...`. Join
+  discovery and join no longer require a redundant server key. Account IDs are
+  never inferred from server filters.
+- Manual publishing loads personal accounts, selects the destination account
+  before its channels, uses that account's channels/copy route, and keeps the
+  source account identity/media URL independent when the destination changes.
+- Send/edit accepted and status DTOs now represent `destination.account_id` and
+  `target.account_id`, retaining optional server metadata as `server_key`.
+  Focused API tests assert decoded nested identity. Delete-result identity
+  typing remains pending Agent B's exact response nesting.
+- The Explorer no-account gate now distinguishes zero accounts from accounts
+  that are offline; cached rows remain rendered for the latter. Create/Join are
+  unavailable without a connected account. Account-specific discovery errors
+  cover disconnected, reconnecting, auth-required, unavailable-channel and
+  denied cases; no global server status was added.
+- `node scripts/test-publish.mjs`: 109/109 pass. `node scripts/test-panel.mjs`:
+  178/182 pass; four failures are existing stale channel-message fixtures and
+  footer assertions, outside this ownership. `npm run typecheck` remains blocked
+  by unrelated automation accountID fixture/type mismatches. `git diff --check`
+  passes. No browser or live Telegram verification was performed.
+
+## 2026-11-14 — Created-channel account filter navigation correction
+
+- Explorer navigation after successful Create now writes the created account ID
+  with `writeAccountSelection`, rather than reusing `server_key` as an account
+  filter. Existing query parameters are preserved and the dialog's `create`
+  flag is removed; the legacy create URL compatibility route was not changed.
+- Added a focused assertion for the exact account query value and absence of a
+  newly introduced server query. Panel runner includes that test; four unrelated
+  pre-existing channel/footer/detail failures remain. Typecheck and
+  `git diff --check` pass.

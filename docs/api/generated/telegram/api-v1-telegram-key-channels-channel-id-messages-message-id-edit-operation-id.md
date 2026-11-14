@@ -21,8 +21,8 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 | Caller | Request | Status | Shape |
 | --- | --- | --- | --- |
 | anonymous | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid` | 401 | `unauthorized` |
-| operator | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid` | 400 | `invalid_input` |
-| limited user | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid` | 400 | `invalid_input` |
+| operator | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid` | 403 | `forbidden` |
+| limited user | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid` | 404 | `account_not_owned` |
 | administrator | `GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid` | 400 | `invalid_input` |
 
 <details><summary>anonymous: GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid → 401</summary>
@@ -34,19 +34,19 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 </details>
 
-<details><summary>operator: GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid → 400</summary>
+<details><summary>operator: GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid → 403</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>limited user: GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid → 400</summary>
+<details><summary>limited user: GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid → 404</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"channel_id must be a positive Telegram channel id.","request_id":"docsgen"}}
+{"error":{"code":"account_not_owned","message":"No account of yours is available for this server.","request_id":"docsgen"}}
 
 ```
 

@@ -373,7 +373,7 @@ func (s *Store) CompleteWorkflowRun(ctx context.Context, runID int64, status, la
 	return nil
 }
 
-const publicationColumns = `id, workflow_run_id, destination_type, client_key, channel_id, site_id,
+const publicationColumns = `id, workflow_run_id, destination_type, client_key, channel_id, site_id, account_id,
 	status, remote_message_id, remote_post_id, remote_url, attempt_count,
 	last_error_code, last_error_message, created_at, completed_at`
 
@@ -385,9 +385,10 @@ func scanPublicationRow(scan func(dest ...any) error) (automation.WorkflowPublic
 		destType, status string
 		clientKey        string
 		createdAt        string
+		accountID        sql.NullString
 		completedAt      sql.NullString
 	)
-	err := scan(&pub.ID, &pub.WorkflowRunID, &destType, &clientKey, &pub.ChannelID, &pub.SiteID,
+	err := scan(&pub.ID, &pub.WorkflowRunID, &destType, &clientKey, &pub.ChannelID, &pub.SiteID, &accountID,
 		&status, &pub.RemoteMessageID, &pub.RemotePostID, &pub.RemoteURL, &pub.AttemptCount,
 		&pub.LastErrorCode, &pub.LastErrorMessage, &createdAt, &completedAt)
 	if err != nil {
@@ -395,6 +396,7 @@ func scanPublicationRow(scan func(dest ...any) error) (automation.WorkflowPublic
 	}
 	pub.DestinationType = destType
 	pub.ClientKey = clientKey
+	pub.AccountID = accountID.String
 	pub.Status = status
 	if completedAt.Valid {
 		t := parseTime(completedAt.String)
@@ -438,9 +440,10 @@ func (s *Store) EnsureWorkflowPublication(ctx context.Context, runID int64,
 
 	now := formatTime(s.now())
 	res, err := s.db.ExecContext(ctx, `INSERT INTO workflow_publications (
-	workflow_run_id, destination_type, client_key, channel_id, site_id, status, attempt_count, created_at)
-	VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+	workflow_run_id, destination_type, client_key, channel_id, site_id, account_id, status, attempt_count, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
 		runID, dest.DestinationType, strings.TrimSpace(dest.ClientKey), dest.ChannelID, dest.SiteID,
+		nullableText(dest.AccountID),
 		WorkflowPublicationPending, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -456,7 +459,8 @@ func (s *Store) EnsureWorkflowPublication(ctx context.Context, runID int64,
 	return automation.WorkflowPublication{
 		ID: id, WorkflowRunID: runID, DestinationType: dest.DestinationType,
 		ClientKey: strings.TrimSpace(dest.ClientKey), ChannelID: dest.ChannelID, SiteID: dest.SiteID,
-		Status: WorkflowPublicationPending, AttemptCount: 1,
+		AccountID: dest.AccountID,
+		Status:    WorkflowPublicationPending, AttemptCount: 1,
 	}, true, nil
 }
 
@@ -466,8 +470,10 @@ func (s *Store) workflowPublicationByIdentity(ctx context.Context, runID int64,
 
 	pub, gotRun, err := scanPublicationRow(s.db.QueryRowContext(ctx,
 		`SELECT `+publicationColumns+` FROM workflow_publications
-	WHERE workflow_run_id = ? AND destination_type = ? AND client_key = ? AND channel_id = ? AND site_id = ?`,
-		runID, dest.DestinationType, strings.TrimSpace(dest.ClientKey), dest.ChannelID, dest.SiteID).Scan)
+	WHERE workflow_run_id = ? AND destination_type = ? AND client_key = ? AND channel_id = ? AND site_id = ?
+	  AND account_id IS ?`,
+		runID, dest.DestinationType, strings.TrimSpace(dest.ClientKey), dest.ChannelID, dest.SiteID,
+		nullableText(dest.AccountID)).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return automation.WorkflowPublication{}, false, nil
 	}

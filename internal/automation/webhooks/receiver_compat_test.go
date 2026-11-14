@@ -201,6 +201,7 @@ func TestADeliveryIsRecordedAgainstTheReceiverThatAnsweredIt(t *testing.T) {
 		EventID:     event.ID,
 		Attempt:     1,
 		MaxAttempts: 5,
+		Owner:       automation.Owner{OwnerUserID: testOwnerUserID, AccountID: testAccountID},
 	}
 	if err := e.svc.Handler()(context.Background(), job); err != nil {
 		t.Fatalf("Handle: %v", err)

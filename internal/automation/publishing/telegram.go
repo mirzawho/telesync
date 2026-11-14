@@ -63,13 +63,20 @@ func (s *Service) PublishTelegram(ctx context.Context, a Actor, clientKey string
 		return TelegramResult{}, &Error{http.StatusBadRequest, CodeInvalidInput,
 			"destination.channel_id must be a positive Telegram channel id."}
 	}
-	destination, err := s.resolvePublishDestination(ctx, a, clientKey, destID)
+	accountID := strings.TrimSpace(req.Destination.AccountID)
+	if accountID == "" {
+		// Interactive callers carry the selected account in their authenticated
+		// actor. Workflow callers carry the destination's separately persisted
+		// account, which may differ from the source account.
+		accountID = strings.TrimSpace(a.AccountID)
+	}
+	destination, err := s.resolvePublishDestination(ctx, a, clientKey, accountID, destID)
 	if err != nil {
 		return TelegramResult{}, err
 	}
 
 	operation, err := s.beginPublish(ctx, a, req.IdempotencyKey,
-		clientKey+":"+req.Destination.ChannelID, requestHash(req))
+		accountID, accountID+":"+clientKey+":"+req.Destination.ChannelID, requestHash(req))
 	if err != nil {
 		return TelegramResult{}, err
 	}
@@ -139,6 +146,11 @@ func (s *Service) PublishTelegram(ctx context.Context, a Actor, clientKey string
 	result, sendErr := destination.SendMessage(ctx, send)
 	if sendErr != nil {
 		status, failure := classifySend(sendErr, send.Media != nil)
+		if send.Media != nil && send.Media.Kind == "sticker" && failure.Code == CodePublishUnsupported {
+			failure.Code = CodePublishStickerUnsupported
+			failure.Status = http.StatusUnprocessableEntity
+			failure.Message = messageFor(sendErr, failure.Code)
+		}
 		s.finishPublish(ctx, operation, status, "", failure.Code)
 		return TelegramResult{}, failure
 	}
@@ -170,7 +182,7 @@ func (s *Service) PublishTelegram(ctx context.Context, a Actor, clientKey string
 // destinationID identifies the target for the record: "client_key:channel_id"
 // for a Telegram destination, "wp:site_id" for a WordPress one. A nil operation
 // with a nil error means "no idempotency key, run it now".
-func (s *Service) beginPublish(ctx context.Context, a Actor, key, destinationID, hash string) (*channelstore.PublishOperation, error) {
+func (s *Service) beginPublish(ctx context.Context, a Actor, key, accountID, destinationID, hash string) (*channelstore.PublishOperation, error) {
 	if key == "" {
 		return nil, nil
 	}
@@ -184,6 +196,7 @@ func (s *Service) beginPublish(ctx context.Context, a Actor, key, destinationID,
 	}
 	op, created, err := s.Publishes.BeginPublishOperation(ctx, channelstore.PublishOperation{
 		UserID:          a.UserID,
+		AccountID:       accountID,
 		IdempotencyKey:  key,
 		RequestHash:     hash,
 		DestinationType: destType,

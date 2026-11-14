@@ -165,16 +165,31 @@ func TestAnInFlightAttemptIsNotReRunConcurrently(t *testing.T) {
 
 func TestTheIdempotencyKeyIsScopedToTheAccount(t *testing.T) {
 	store, user := publishStore(t)
-	other, err := store.CreateUser(context.Background(), "Second", "second", "$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA", true)
-	if err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
-	if _, _, err := store.BeginPublishOperation(ctx, publishOp("key-1", "hash-a", user)); err != nil {
-		t.Fatal(err)
+	accountA := mustAccount(t, store, newAccount(user, accountID("a"), "official", 8101))
+	accountB := mustAccount(t, store, newAccount(user, accountID("b"), "cat", 8102))
+	opA := publishOp("key-1", "hash-a", user)
+	opA.AccountID = accountA.ID
+	firstA, createdA, err := store.BeginPublishOperation(ctx, opA)
+	if err != nil || !createdA {
+		t.Fatalf("begin account A: created=%v err=%v", createdA, err)
 	}
-	if _, created, err := store.BeginPublishOperation(ctx, publishOp("key-1", "hash-b", other.ID)); err != nil || !created {
-		t.Fatalf("a second account must be free to use the same key: created=%v err=%v", created, err)
+	opB := publishOp("key-1", "hash-a", user)
+	opB.AccountID = accountB.ID
+	firstB, createdB, err := store.BeginPublishOperation(ctx, opB)
+	if err != nil || !createdB {
+		t.Fatalf("same user on another account must be free to use the same key: created=%v err=%v", createdB, err)
+	}
+	if firstA.ID == firstB.ID {
+		t.Fatalf("account A/B operations share row %d", firstA.ID)
+	}
+	if replayA, created, err := store.BeginPublishOperation(ctx, opA); err != nil || created || replayA.ID != firstA.ID {
+		t.Fatalf("retry on account A = %+v, created=%v err=%v; want A's row %d",
+			replayA, created, err, firstA.ID)
+	}
+	if replayB, created, err := store.BeginPublishOperation(ctx, opB); err != nil || created || replayB.ID != firstB.ID {
+		t.Fatalf("retry on account B = %+v, created=%v err=%v; want B's row %d",
+			replayB, created, err, firstB.ID)
 	}
 }
 

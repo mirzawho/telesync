@@ -53,7 +53,7 @@ func collectSink(dst *[]rpc.IngestMessage) IngestSinkFunc {
 // metadata and no media bytes.
 func TestANewChannelMessageBecomesOneBoundedObservation(t *testing.T) {
 	var got []rpc.IngestMessage
-	h := newUpdateHandler("official", "official", collectSink(&got), nil, nil)
+	h := newUpdateHandler("official", "acc_00000000000000000000000001", "official", collectSink(&got), nil, nil)
 
 	if err := h.Handle(context.Background(), batch(36, 123456789)); err != nil {
 		t.Fatalf("handle: %v", err)
@@ -115,7 +115,7 @@ func TestTheUpdateCallbackReturnsWithoutWaitingOnDelivery(t *testing.T) {
 		go func() { <-delivered }()
 		return rpc.IngestInserted, nil
 	})
-	h := newUpdateHandler("official", "official", sink, nil, nil)
+	h := newUpdateHandler("official", "acc_00000000000000000000000001", "official", sink, nil, nil)
 
 	if err := h.Handle(context.Background(), batch(36, 123456789)); err != nil {
 		t.Fatalf("handle: %v", err)
@@ -136,7 +136,7 @@ func TestTheUpdateCallbackReturnsWithoutWaitingOnDelivery(t *testing.T) {
 // updates are not the event the pipeline consumes and must not become one.
 func TestNonMessageUpdatesProduceNoObservation(t *testing.T) {
 	var got []rpc.IngestMessage
-	h := newUpdateHandler("official", "official", collectSink(&got), nil, nil)
+	h := newUpdateHandler("official", "acc_00000000000000000000000001", "official", collectSink(&got), nil, nil)
 
 	u := &tg.Updates{Updates: []tg.UpdateClass{
 		// A private message is not a channel message.
@@ -167,7 +167,7 @@ func TestEachNewChannelMessageInTheBatchIsAnObservation(t *testing.T) {
 		}},
 	}}
 	var got []rpc.IngestMessage
-	h := newUpdateHandler("official", "official", collectSink(&got), nil, nil)
+	h := newUpdateHandler("official", "acc_00000000000000000000000001", "official", collectSink(&got), nil, nil)
 	if err := h.Handle(context.Background(), u); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestAnUnstorableMessageIsReportedSoTheCounterCannotSkipIt(t *testing.T) {
 		}
 		return rpc.IngestInserted, nil
 	})
-	h := newUpdateHandler("official", "official", sink, nil, nil)
+	h := newUpdateHandler("official", "acc_00000000000000000000000001", "official", sink, nil, nil)
 
 	u := &tg.Updates{Updates: []tg.UpdateClass{
 		&tg.UpdateNewChannelMessage{Message: &tg.Message{
@@ -213,7 +213,7 @@ func TestTheUpdateStreamReachesTheDurableEventStoreOnce(t *testing.T) {
 	sink := IngestSinkFunc(func(ctx context.Context, msg rpc.IngestMessage) (rpc.IngestOutcome, error) {
 		return backend.Ingest(ctx, msg)
 	})
-	h := newUpdateHandler("official", "official", sink, time.Now, nil)
+	h := newUpdateHandler("official", "acc_00000000000000000000000001", "official", sink, time.Now, nil)
 
 	if err := h.Handle(context.Background(), batch(36, 123456789)); err != nil {
 		t.Fatalf("handle: %v", err)
@@ -256,9 +256,14 @@ func (d *dedupStore) InsertMessageEvent(_ context.Context, event automation.Mess
 	return true, nil
 }
 
-// managedResolver treats every channel under test as a managed source.
+// managedResolver treats every channel under test as a managed source of the
+// account that observed it.
 type managedResolver struct{}
 
-func (managedResolver) ManagedChannelFor(_ context.Context, _ string, channelID int64) (int64, bool, error) {
-	return channelID / 1000, true, nil
+func (managedResolver) ManagedChannelFor(_ context.Context, accountID, _ string, channelID int64) (events.ChannelRegistration, bool, error) {
+	return events.ChannelRegistration{
+		ManagedChannelID: channelID / 1000,
+		AccountID:        accountID,
+		OwnerUserID:      1,
+	}, true, nil
 }

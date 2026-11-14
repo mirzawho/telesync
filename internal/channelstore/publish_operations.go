@@ -2,9 +2,13 @@ package channelstore
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -31,8 +35,13 @@ const (
 //
 // It is not a publication history: it holds only what a retry needs.
 type PublishOperation struct {
-	ID              int64
-	UserID          int64
+	ID     int64
+	UserID int64
+	// AccountID is the user-owned account this publication runs under. It is
+	// what the background job is bound to, so a publish recorded for one user's
+	// account is never delivered through another's session. It is empty only on
+	// a row that predates account ownership.
+	AccountID       string
 	IdempotencyKey  string
 	RequestHash     string
 	DestinationType string // "telegram" or "wordpress"
@@ -61,7 +70,7 @@ func (s *Store) BeginPublishOperation(ctx context.Context, op PublishOperation) 
 	if op.IdempotencyKey == "" {
 		return PublishOperation{}, false, ErrInvalidPublishOperation
 	}
-	existing, found, err := s.GetPublishOperation(ctx, op.UserID, op.IdempotencyKey)
+	existing, found, err := s.GetPublishOperationForAccount(ctx, op.UserID, op.AccountID, op.IdempotencyKey)
 	if err != nil {
 		return PublishOperation{}, false, err
 	}
@@ -89,9 +98,9 @@ func (s *Store) BeginPublishOperation(ctx context.Context, op PublishOperation) 
 	now := s.now()
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO publish_operations (
-	user_id, idempotency_key, request_hash, destination_type, destination_id,
-	status, result, error_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, '', '', ?, ?)`,
-		op.UserID, op.IdempotencyKey, op.RequestHash, op.DestinationType, op.DestinationID,
+	user_id, account_id, idempotency_key, request_hash, destination_type, destination_id,
+	status, result, error_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)`,
+		op.UserID, nullableText(op.AccountID), op.IdempotencyKey, op.RequestHash, op.DestinationType, op.DestinationID,
 		string(PublishInFlight), formatTime(now), formatTime(now))
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -131,20 +140,76 @@ func (s *Store) FinishPublishOperation(ctx context.Context, id int64, status Pub
 	return nil
 }
 
-// GetPublishOperation returns the stored attempt for one account and key.
+// PublishIdempotencyKey derives the key that makes one publication one
+// publication.
+//
+// The owner and its account are part of the key, and that is the point. Two
+// users may legitimately copy the same remote message to the same destination,
+// and a key built from the message alone would make the second user's publish a
+// silent no-op — their content would never arrive and nothing would say why. A
+// key that names the owner makes each user's publish its own.
+//
+// The same owner asking twice for the same source and destination gets the same
+// key back, which is what makes a retry one publication rather than two.
+//
+// The key is a digest: it is bounded, and no source metadata lands in the
+// publisher's idempotency record.
+func (s *Store) PublishIdempotencyKey(_ context.Context, ownerUserID int64, accountID, kind, networkKey string, channelID, messageID int64, destinationID string) (string, error) {
+	if ownerUserID <= 0 || strings.TrimSpace(accountID) == "" {
+		// Work with no owning account is work nothing may execute, and it must
+		// not share a key with a real owner's publication.
+		return "", fmt.Errorf("%w: an idempotency key needs an owning account", ErrInvalidPublishOperation)
+	}
+	identity := strings.Join([]string{
+		kind,
+		strconv.FormatInt(ownerUserID, 10),
+		strings.TrimSpace(accountID),
+		networkKey,
+		strconv.FormatInt(channelID, 10),
+		strconv.FormatInt(messageID, 10),
+		destinationID,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(identity))
+	return "pub-v2-" + hex.EncodeToString(sum[:]), nil
+}
+
+// GetPublishOperation returns a legacy/unscoped attempt for one user and key.
+// Personal-account publication must use GetPublishOperationForAccount.
 func (s *Store) GetPublishOperation(ctx context.Context, userID int64, key string) (PublishOperation, bool, error) {
-	row := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, idempotency_key, request_hash, destination_type, destination_id,
+	unscoped := ""
+	return s.getPublishOperation(ctx, userID, &unscoped, key)
+}
+
+// GetPublishOperationForAccount returns one stored attempt within the named
+// account scope. An empty account ID selects legacy/unscoped operations only.
+func (s *Store) GetPublishOperationForAccount(ctx context.Context, userID int64, accountID, key string) (PublishOperation, bool, error) {
+	return s.getPublishOperation(ctx, userID, &accountID, key)
+}
+
+func (s *Store) getPublishOperation(ctx context.Context, userID int64, accountScope *string, key string) (PublishOperation, bool, error) {
+	query := `SELECT id, user_id, account_id, idempotency_key, request_hash, destination_type, destination_id,
 	status, result, error_code, created_at, updated_at
-	FROM publish_operations WHERE user_id = ? AND idempotency_key = ?`, userID, key)
+	FROM publish_operations WHERE user_id = ? AND idempotency_key = ?`
+	args := []any{userID, key}
+	if accountScope != nil {
+		query += ` AND account_id IS ?`
+		if strings.TrimSpace(*accountScope) == "" {
+			args = append(args, nil)
+		} else {
+			args = append(args, strings.TrimSpace(*accountScope))
+		}
+	}
+	row := s.db.QueryRowContext(ctx,
+		query, args...)
 	var (
 		out            PublishOperation
 		status         string
 		createdAt      string
 		updatedAt      string
 		destinationTyp string
+		accountID      sql.NullString
 	)
-	err := row.Scan(&out.ID, &out.UserID, &out.IdempotencyKey, &out.RequestHash, &destinationTyp,
+	err := row.Scan(&out.ID, &out.UserID, &accountID, &out.IdempotencyKey, &out.RequestHash, &destinationTyp,
 		&out.DestinationID, &status, &out.Result, &out.ErrorCode, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PublishOperation{}, false, nil
@@ -152,6 +217,7 @@ func (s *Store) GetPublishOperation(ctx context.Context, userID int64, key strin
 	if err != nil {
 		return PublishOperation{}, false, fmt.Errorf("channelstore: get publish operation: %w", err)
 	}
+	out.AccountID = accountID.String
 	out.DestinationType = destinationTyp
 	out.Status = PublishStatus(status)
 	out.CreatedAt = parseTime(createdAt)

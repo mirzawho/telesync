@@ -1795,8 +1795,8 @@
         "updated_at": "2026-10-25T10:00:00Z",
         "channel": {
          "id": 1,
-         "client_key": "doc-client",
-         "telegram_channel_id": 1,
+         "client_key": "official",
+         "telegram_channel_id": 1671633563,
          "title": "Documented channel",
          "username": ""
         }
@@ -2021,8 +2021,8 @@
         "updated_at": "2026-10-25T10:00:00Z",
         "channel": {
          "id": 1,
-         "client_key": "doc-client",
-         "telegram_channel_id": 1,
+         "client_key": "official",
+         "telegram_channel_id": 1671633563,
          "title": "Documented channel",
          "username": ""
         }
@@ -2146,8 +2146,8 @@
         "updated_at": "2026-10-25T10:00:00Z",
         "channel": {
          "id": 1,
-         "client_key": "doc-client",
-         "telegram_channel_id": 1,
+         "client_key": "official",
+         "telegram_channel_id": 1671633563,
          "title": "Documented channel",
          "username": ""
         }
@@ -3019,10 +3019,9 @@
    "status": 200,
    "credentials": [
     "authr.Allowed(kind, action, localID)  (access.go:visible)",
-    "authr.CanList(channelstore.KindChannel)  (local_channels.go:listLocalChannels)",
     "authr.CanList(kind)  (access.go:visible)"
    ],
-   "credential_count": 3,
+   "credential_count": 2,
    "probe": [
     {
      "caller": "anonymous",
@@ -3052,22 +3051,7 @@
      "json": true,
      "body": {
       "data": {
-       "channels": [
-        {
-         "id": 1,
-         "client_key": "doc-client",
-         "channel_id": 1,
-         "type": "channel",
-         "title": "Documented channel",
-         "avatar_available": true,
-         "avatar_url": "/api/v1/local/channels/1/avatar",
-         "membership_status": "member",
-         "participants_count": null,
-         "created_at": "",
-         "updated_at": "",
-         "last_synced_at": ""
-        }
-       ]
+       "channels": []
       },
       "meta": {
        "generated_at": "2026-10-25T10:00:00Z",
@@ -3075,8 +3059,8 @@
        "page": 1,
        "per_page": 20,
        "request_id": "docsgen",
-       "total": 1,
-       "total_pages": 1
+       "total": 0,
+       "total_pages": 0
       }
      }
     },
@@ -3116,17 +3100,31 @@
        "channels": [
         {
          "id": 1,
+         "client_key": "official",
+         "account_id": "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "channel_id": 1671633563,
+         "type": "channel",
+         "title": "Documented channel",
+         "avatar_available": false,
+         "membership_status": "member",
+         "participants_count": null,
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z",
+         "last_synced_at": "2026-10-25T10:00:00Z"
+        },
+        {
+         "id": 2,
          "client_key": "doc-client",
+         "account_id": "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
          "channel_id": 1,
          "type": "channel",
          "title": "Documented channel",
-         "avatar_available": true,
-         "avatar_url": "/api/v1/local/channels/1/avatar",
+         "avatar_available": false,
          "membership_status": "member",
          "participants_count": null,
-         "created_at": "",
-         "updated_at": "",
-         "last_synced_at": ""
+         "created_at": "2026-10-25T10:00:00Z",
+         "updated_at": "2026-10-25T10:00:00Z",
+         "last_synced_at": "2026-10-25T10:00:00Z"
         }
        ]
       },
@@ -3136,7 +3134,7 @@
        "page": 1,
        "per_page": 20,
        "request_id": "docsgen",
-       "total": 1,
+       "total": 2,
        "total_pages": 1
       }
      }
@@ -3227,43 +3225,6 @@
       }
      }
     }
-   ],
-   "example": [
-    {
-     "caller": "operator",
-     "request": "GET /api/v1/local/channels/1",
-     "status": 200,
-     "json": true,
-     "body": {
-      "data": {
-       "channel": {
-        "id": "1",
-        "type": "channel",
-        "title": "Documented channel",
-        "avatar_available": true,
-        "avatar_url": "/api/v1/local/channels/1/avatar",
-        "is_member": true,
-        "is_managed": true,
-        "membership_status": "member",
-        "permissions": {
-         "new": false,
-         "edit": false,
-         "delete": false,
-         "read": true
-        },
-        "verified": false,
-        "scam": false,
-        "fake": false,
-        "participants_count": null
-       },
-       "client_key": "doc-client"
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
-       "request_id": "docsgen"
-      }
-     }
-    }
    ]
   },
   {
@@ -3346,14 +3307,6 @@
        "request_id": "docsgen"
       }
      }
-    }
-   ],
-   "example": [
-    {
-     "caller": "operator",
-     "request": "GET /api/v1/local/channels/1/avatar",
-     "status": 200,
-     "json": false
     }
    ]
   },
@@ -3759,7 +3712,7 @@
       "data": {
        "stats": {
         "categories": 1,
-        "channels": 1,
+        "channels": 2,
         "wordpress_sites": 0,
         "administrators": 3
        }
@@ -3805,7 +3758,7 @@
       "data": {
        "stats": {
         "categories": 1,
-        "channels": 1,
+        "channels": 2,
         "wordpress_sites": 0,
         "administrators": 3
        }
@@ -3827,7 +3780,7 @@
       "data": {
        "stats": {
         "categories": 1,
-        "channels": 1,
+        "channels": 2,
         "wordpress_sites": 0,
         "administrators": 3
        }
@@ -5612,6 +5565,214 @@
    ]
   },
   {
+   "pattern": "/api/v1/me/telegram-accounts",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0,
+   "probe": [
+    {
+     "caller": "anonymous",
+     "request": "GET /api/v1/me/telegram-accounts",
+     "status": 401,
+     "code": "unauthorized",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"telesync\""
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "unauthorized",
+       "message": "A valid access token is required; log in at /api/v1/auth/login first.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/me/telegram-accounts",
+     "status": 403,
+     "code": "forbidden",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/me/telegram-accounts",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "accounts": [
+        {
+         "id": "acc_bbbbbbbbbbbbbbbbbbbbbbbb",
+         "server_key": "doc-client",
+         "network_type": "telegram",
+         "remote_user_id": 102,
+         "status": "connected",
+         "authorized_at": null,
+         "last_connected_at": null,
+         "channels": 0
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/me/telegram-accounts",
+     "status": 200,
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "data": {
+       "accounts": [
+        {
+         "id": "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "server_key": "official",
+         "network_type": "telegram",
+         "remote_user_id": 101,
+         "status": "connected",
+         "authorized_at": null,
+         "last_connected_at": null,
+         "channels": 2
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "administrator",
+     "request": "GET /api/v1/me/telegram-accounts",
+     "status": 200,
+     "json": true,
+     "body": {
+      "data": {
+       "accounts": [
+        {
+         "id": "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "server_key": "official",
+         "network_type": "telegram",
+         "remote_user_id": 101,
+         "status": "connected",
+         "authorized_at": null,
+         "last_connected_at": null,
+         "channels": 2
+        }
+       ]
+      },
+      "meta": {
+       "generated_at": "2026-10-25T10:00:00Z",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "pattern": "/api/v1/me/telegram-accounts/login/start",
+   "method": "POST",
+   "handler": "startLogin",
+   "file": "telegram_accounts.go",
+   "line": 0,
+   "response": "envelope{ Data: map[string]any{\"attempt\": loginAttemptViewOf(attempt)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "status_name": "StatusCreated",
+   "status": 201,
+   "request_type": "loginStartRequest",
+   "request_schema": "schemas/loginstartrequest.json",
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/me/telegram-accounts/login/{attempt_id}",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/me/telegram-accounts/login/{attempt_id}/cancel",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/me/telegram-accounts/login/{attempt_id}/code",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/me/telegram-accounts/login/{attempt_id}/password",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/me/telegram-accounts/{account_id}",
+   "method": "DELETE",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/me/telegram-accounts/{account_id}",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/me/telegram-accounts/{account_id}/disconnect",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/me/telegram-accounts/{account_id}/logout",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
    "pattern": "/api/v1/telegram",
    "method": "GET",
    "handler": "servers",
@@ -5658,6 +5819,7 @@
          "key": "official",
          "type": "official",
          "enabled": true,
+         "login_methods": null,
          "health_checkable": true,
          "state": "connected",
          "authorized": true,
@@ -5675,6 +5837,7 @@
          "key": "doc-client",
          "type": "official",
          "enabled": true,
+         "login_methods": null,
          "health_checkable": true,
          "state": "connected",
          "authorized": true,
@@ -5728,6 +5891,7 @@
          "key": "official",
          "type": "official",
          "enabled": true,
+         "login_methods": null,
          "health_checkable": true,
          "state": "connected",
          "authorized": true,
@@ -5745,6 +5909,7 @@
          "key": "doc-client",
          "type": "official",
          "enabled": true,
+         "login_methods": null,
          "health_checkable": true,
          "state": "connected",
          "authorized": true,
@@ -5780,6 +5945,7 @@
          "key": "official",
          "type": "official",
          "enabled": true,
+         "login_methods": null,
          "health_checkable": true,
          "state": "connected",
          "authorized": true,
@@ -5797,6 +5963,7 @@
          "key": "doc-client",
          "type": "official",
          "enabled": true,
+         "login_methods": null,
          "health_checkable": true,
          "state": "connected",
          "authorized": true,
@@ -5819,6 +5986,134 @@
      }
     }
    ]
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/find",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/username-availability",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}/avatar",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}/join",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}/messages",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}/messages/send",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}/messages/send/{operation_id}",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}/messages/{message_id}",
+   "method": "DELETE",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}/messages/{message_id}",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}/messages/{message_id}",
+   "method": "PUT",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}/messages/{message_id}/edit/{operation_id}",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/channels/{channel_id}/messages/{message_id}/media",
+   "method": "GET",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
+  },
+  {
+   "pattern": "/api/v1/telegram/accounts/{account_id}/messages/copy",
+   "method": "POST",
+   "handler": "",
+   "file": "",
+   "line": 0,
+   "credential_count": 0
   },
   {
    "pattern": "/api/v1/telegram/{key}/channels",
@@ -5856,42 +6151,6 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels",
-     "status": 200,
-     "headers": {
-      "Content-Type": "application/json; charset=utf-8"
-     },
-     "json": true,
-     "body": {
-      "data": {
-       "channels": [
-        {
-         "id": 1,
-         "title": "Documented channel",
-         "kind": "channel",
-         "has_avatar": false,
-         "last_message_id": 1,
-         "permissions": {
-          "new": false,
-          "edit": false,
-          "delete": false,
-          "read": true
-         }
-        }
-       ]
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
-       "has_more": false,
-       "page": 1,
-       "per_page": 20,
-       "request_id": "docsgen",
-       "total": 1
-      }
-     }
-    },
-    {
-     "caller": "limited user",
-     "request": "GET /api/v1/telegram/official/channels",
      "status": 403,
      "code": "forbidden",
      "headers": {
@@ -5902,6 +6161,23 @@
       "error": {
        "code": "forbidden",
        "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels",
+     "status": 404,
+     "code": "account_not_owned",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -5988,16 +6264,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/find",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "q is required",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6005,16 +6281,16 @@
     {
      "caller": "limited user",
      "request": "GET /api/v1/telegram/official/channels/find",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "q is required",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -6067,23 +6343,6 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/username-availability",
-     "status": 400,
-     "code": "invalid_input",
-     "headers": {
-      "Content-Type": "application/json; charset=utf-8"
-     },
-     "json": true,
-     "body": {
-      "error": {
-       "code": "invalid_input",
-       "message": "username is required",
-       "request_id": "docsgen"
-      }
-     }
-    },
-    {
-     "caller": "limited user",
-     "request": "GET /api/v1/telegram/official/channels/username-availability",
      "status": 403,
      "code": "forbidden",
      "headers": {
@@ -6094,6 +6353,23 @@
       "error": {
        "code": "forbidden",
        "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/channels/username-availability",
+     "status": 404,
+     "code": "account_not_owned",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -6123,7 +6399,7 @@
    "handler": "channel",
    "file": "channels.go",
    "line": 0,
-   "response": "envelope{ Data: map[string]any{\"channel\": s.channelViewOf(key, result.Channel, managed)}, Meta: metaFor(requestID, s.cfg.Now()), }",
+   "response": "envelope{ Data: map[string]any{\"channel\": s.channelViewOf(routeSelectorOf(r, key), result.Channel, managed)}, Meta: metaFor(requestID, s.cfg.Now()), }",
    "status_name": "StatusOK",
    "status": 200,
    "credentials": [
@@ -6155,16 +6431,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6172,16 +6448,16 @@
     {
      "caller": "limited user",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -6207,103 +6483,14 @@
    "example": [
     {
      "caller": "operator",
-     "request": "GET /api/v1/telegram/official/channels/find?q=%40telegram",
-     "status": 200,
+     "request": "GET /api/v1/telegram/official/channels/username-availability?username=example_channel",
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "channels": [
-        {
-         "id": "1",
-         "type": "channel",
-         "title": "Documented channel",
-         "avatar_available": true,
-         "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
-         "is_member": true,
-         "is_managed": true,
-         "membership_status": "member",
-         "permissions": {
-          "new": false,
-          "edit": false,
-          "delete": false,
-          "read": true
-         },
-         "verified": false,
-         "scam": false,
-         "fake": false,
-         "participants_count": null
-        }
-       ]
-      },
-      "meta": {
-       "count": 1
-      }
-     }
-    },
-    {
-     "caller": "operator",
-     "request": "GET /api/v1/telegram/official/channels/1671633563",
-     "status": 200,
-     "json": true,
-     "body": {
-      "data": {
-       "channel": {
-        "id": "1",
-        "type": "channel",
-        "title": "Documented channel",
-        "avatar_available": true,
-        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
-        "is_member": true,
-        "is_managed": true,
-        "membership_status": "member",
-        "permissions": {
-         "new": false,
-         "edit": false,
-         "delete": false,
-         "read": true
-        },
-        "verified": false,
-        "scam": false,
-        "fake": false,
-        "participants_count": null
-       }
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
-       "request_id": "docsgen"
-      }
-     }
-    },
-    {
-     "caller": "operator",
-     "request": "GET /api/v1/telegram/official/channels/%2BAbCdEf123456",
-     "status": 200,
-     "json": true,
-     "body": {
-      "data": {
-       "channel": {
-        "id": "1",
-        "type": "channel",
-        "title": "Documented channel",
-        "avatar_available": true,
-        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
-        "is_member": true,
-        "is_managed": false,
-        "membership_status": "member",
-        "permissions": {
-         "new": false,
-         "edit": false,
-         "delete": false,
-         "read": true
-        },
-        "verified": false,
-        "scam": false,
-        "fake": false,
-        "participants_count": null
-       }
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6311,68 +6498,27 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/find?q=%40telegram",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "channels": [
-        {
-         "id": "1",
-         "type": "channel",
-         "title": "Documented channel",
-         "avatar_available": true,
-         "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
-         "is_member": true,
-         "is_managed": true,
-         "membership_status": "member",
-         "permissions": {
-          "new": false,
-          "edit": false,
-          "delete": false,
-          "read": true
-         },
-         "verified": false,
-         "scam": false,
-         "fake": false,
-         "participants_count": null
-        }
-       ]
-      },
-      "meta": {
-       "count": 1
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
       }
      }
     },
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/1671633563",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "channel": {
-        "id": "1",
-        "type": "channel",
-        "title": "Documented channel",
-        "avatar_available": true,
-        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
-        "is_member": true,
-        "is_managed": true,
-        "membership_status": "member",
-        "permissions": {
-         "new": false,
-         "edit": false,
-         "delete": false,
-         "read": true
-        },
-        "verified": false,
-        "scam": false,
-        "fake": false,
-        "participants_count": null
-       }
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6380,33 +6526,55 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/%2BAbCdEf123456",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "channel": {
-        "id": "1",
-        "type": "channel",
-        "title": "Documented channel",
-        "avatar_available": true,
-        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
-        "is_member": true,
-        "is_managed": false,
-        "membership_status": "member",
-        "permissions": {
-         "new": false,
-         "edit": false,
-         "delete": false,
-         "read": true
-        },
-        "verified": false,
-        "scam": false,
-        "fake": false,
-        "participants_count": null
-       }
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/find?q=%40telegram",
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563",
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/%2BAbCdEf123456",
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6446,16 +6614,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/avatar",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "avatar needs a numeric channel_id; resolve the invite first.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6463,16 +6631,16 @@
     {
      "caller": "limited user",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/avatar",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "avatar needs a numeric channel_id; resolve the invite first.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -6499,14 +6667,30 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/1671633563/avatar",
-     "status": 200,
-     "json": false
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
     },
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/1671633563/avatar",
-     "status": 200,
-     "json": false
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
     }
    ]
   },
@@ -6545,16 +6729,16 @@
     {
      "caller": "operator",
      "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/join",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6562,16 +6746,16 @@
     {
      "caller": "limited user",
      "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/join",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -6598,34 +6782,13 @@
     {
      "caller": "operator",
      "request": "POST /api/v1/telegram/official/channels/1671633563/join",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "channel": {
-        "id": "1",
-        "type": "channel",
-        "title": "Documented channel",
-        "avatar_available": true,
-        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
-        "is_member": true,
-        "is_managed": true,
-        "membership_status": "member",
-        "permissions": {
-         "new": false,
-         "edit": false,
-         "delete": false,
-         "read": true
-        },
-        "verified": false,
-        "scam": false,
-        "fake": false,
-        "participants_count": null
-       },
-       "result": "already_managed"
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6633,34 +6796,13 @@
     {
      "caller": "operator",
      "request": "POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "channel": {
-        "id": "1",
-        "type": "channel",
-        "title": "Documented channel",
-        "avatar_available": true,
-        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
-        "is_member": true,
-        "is_managed": true,
-        "membership_status": "member",
-        "permissions": {
-         "new": false,
-         "edit": false,
-         "delete": false,
-         "read": true
-        },
-        "verified": false,
-        "scam": false,
-        "fake": false,
-        "participants_count": null
-       },
-       "result": "joined_and_added_to_management"
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6668,34 +6810,13 @@
     {
      "caller": "operator",
      "request": "POST /api/v1/telegram/official/channels/1671633563/join",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "channel": {
-        "id": "1",
-        "type": "channel",
-        "title": "Documented channel",
-        "avatar_available": true,
-        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
-        "is_member": true,
-        "is_managed": true,
-        "membership_status": "member",
-        "permissions": {
-         "new": false,
-         "edit": false,
-         "delete": false,
-         "read": true
-        },
-        "verified": false,
-        "scam": false,
-        "fake": false,
-        "participants_count": null
-       },
-       "result": "already_managed"
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6703,34 +6824,13 @@
     {
      "caller": "operator",
      "request": "POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "channel": {
-        "id": "1",
-        "type": "channel",
-        "title": "Documented channel",
-        "avatar_available": true,
-        "avatar_url": "/api/v1/telegram/official/channels/1/avatar",
-        "is_member": true,
-        "is_managed": true,
-        "membership_status": "member",
-        "permissions": {
-         "new": false,
-         "edit": false,
-         "delete": false,
-         "read": true
-        },
-        "verified": false,
-        "scam": false,
-        "fake": false,
-        "participants_count": null
-       },
-       "result": "joined_and_added_to_management"
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6773,16 +6873,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive integer.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6790,16 +6890,16 @@
     {
      "caller": "limited user",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive integer.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -6858,16 +6958,16 @@
     {
      "caller": "operator",
      "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send",
-     "status": 503,
-     "code": "send_queue_unavailable",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "send_queue_unavailable",
-       "message": "Direct message sending is not configured.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6875,16 +6975,16 @@
     {
      "caller": "limited user",
      "request": "POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send",
-     "status": 403,
-     "code": "publish_forbidden",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "publish_forbidden",
-       "message": "Sending a message needs the content.publish permission.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -6902,6 +7002,22 @@
       "error": {
        "code": "send_queue_unavailable",
        "message": "Direct message sending is not configured.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "POST /api/v1/telegram/official/channels/1671633563/messages/send",
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6944,16 +7060,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/send/invalid",
-     "status": 503,
-     "code": "send_queue_unavailable",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "send_queue_unavailable",
-       "message": "Direct message sending is not configured.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -6961,16 +7077,16 @@
     {
      "caller": "limited user",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/send/invalid",
-     "status": 503,
-     "code": "send_queue_unavailable",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "send_queue_unavailable",
-       "message": "Direct message sending is not configured.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -6988,6 +7104,22 @@
       "error": {
        "code": "send_queue_unavailable",
        "message": "Direct message sending is not configured.",
+       "request_id": "docsgen"
+      }
+     }
+    }
+   ],
+   "example": [
+    {
+     "caller": "operator",
+     "request": "GET /api/v1/telegram/official/channels/1671633563/messages/send/send_01EXAMPLE",
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7030,16 +7162,16 @@
     {
      "caller": "operator",
      "request": "DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive Telegram channel id.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7047,16 +7179,16 @@
     {
      "caller": "limited user",
      "request": "DELETE /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive Telegram channel id.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -7083,19 +7215,13 @@
     {
      "caller": "operator",
      "request": "DELETE /api/v1/telegram/official/channels/1671633563/messages/1233",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "deleted": true,
-       "connection": {
-        "client_key": "official"
-       },
-       "channel_id": "1671633563",
-       "message_id": 1233
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7138,16 +7264,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive integer.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7155,16 +7281,16 @@
     {
      "caller": "limited user",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive integer.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -7191,36 +7317,13 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/1671633563/messages/1233",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "messages": [
-        {
-         "id": 1,
-         "date": "2026-10-25T09:00:00Z",
-         "text": "Documented post",
-         "sender": {
-          "id": 1,
-          "name": "Documented",
-          "username": "documented"
-         },
-         "media": {
-          "id": "1:1",
-          "type": "photo",
-          "label": "photo",
-          "mime_type": "image/jpeg",
-          "size": 5,
-          "url": "/telegram/official/channels/1671633563/messages/1/media"
-         },
-         "views": null,
-         "reactions": [],
-         "entities": []
-        }
-       ]
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7228,36 +7331,13 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/1671633563/messages/1233",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "messages": [
-        {
-         "id": 1,
-         "date": "2026-10-25T09:00:00Z",
-         "text": "Documented post",
-         "sender": {
-          "id": 1,
-          "name": "Documented",
-          "username": "documented"
-         },
-         "media": {
-          "id": "1:1",
-          "type": "photo",
-          "label": "photo",
-          "mime_type": "image/jpeg",
-          "size": 5,
-          "url": "/telegram/official/channels/1671633563/messages/1/media"
-         },
-         "views": null,
-         "reactions": [],
-         "entities": []
-        }
-       ]
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7293,16 +7373,16 @@
     {
      "caller": "operator",
      "request": "PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive Telegram channel id.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7310,16 +7390,16 @@
     {
      "caller": "limited user",
      "request": "PUT /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive Telegram channel id.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -7372,16 +7452,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive Telegram channel id.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7389,16 +7469,16 @@
     {
      "caller": "limited user",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/edit/invalid",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive Telegram channel id.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -7480,16 +7560,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/media",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive integer.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7497,16 +7577,16 @@
     {
      "caller": "limited user",
      "request": "GET /api/v1/telegram/official/channels/not-a-channel-id/messages/not-a-message-id/media",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "channel_id must be a positive integer.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -7533,14 +7613,30 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/1671633563/messages/1233/media",
-     "status": 200,
-     "json": false
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
     },
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/channels/1671633563/messages/1233/media",
-     "status": 200,
-     "json": false
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
     }
    ]
   },
@@ -7573,16 +7669,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/custom_emoji/invalid",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "document_id must be a positive integer.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7590,16 +7686,16 @@
     {
      "caller": "limited user",
      "request": "GET /api/v1/telegram/official/custom_emoji/invalid",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "document_id must be a positive integer.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -7626,8 +7722,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/custom_emoji/5368324170671202286",
-     "status": 200,
-     "json": false
+     "status": 403,
+     "code": "forbidden",
+     "json": true,
+     "body": {
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
     }
    ]
   },
@@ -7663,26 +7767,16 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/health",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
-      "data": {
-       "authorized": true,
-       "key": "doc-client",
-       "pid": 1,
-       "rpc_ready": true,
-       "started_at": null,
-       "state": "connected",
-       "this_dc": 2,
-       "transport": "ready",
-       "type": "official",
-       "uptime_seconds": 0
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7690,26 +7784,16 @@
     {
      "caller": "limited user",
      "request": "GET /api/v1/telegram/official/health",
-     "status": 200,
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
-      "data": {
-       "authorized": true,
-       "key": "doc-client",
-       "pid": 1,
-       "rpc_ready": true,
-       "started_at": null,
-       "state": "connected",
-       "this_dc": 2,
-       "transport": "ready",
-       "type": "official",
-       "uptime_seconds": 0
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -7746,23 +7830,13 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/health",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "authorized": true,
-       "key": "doc-client",
-       "pid": 1,
-       "rpc_ready": true,
-       "started_at": null,
-       "state": "connected",
-       "this_dc": 2,
-       "transport": "ready",
-       "type": "official",
-       "uptime_seconds": 0
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7770,23 +7844,13 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/health",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "authorized": true,
-       "key": "doc-client",
-       "pid": 1,
-       "rpc_ready": true,
-       "started_at": null,
-       "state": "connected",
-       "this_dc": 2,
-       "transport": "ready",
-       "type": "official",
-       "uptime_seconds": 0
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7828,16 +7892,16 @@
     {
      "caller": "operator",
      "request": "POST /api/v1/telegram/official/messages/copy",
-     "status": 415,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "the body must be application/json.",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7845,16 +7909,16 @@
     {
      "caller": "limited user",
      "request": "POST /api/v1/telegram/official/messages/copy",
-     "status": 403,
-     "code": "publish_forbidden",
+     "status": 404,
+     "code": "account_not_owned",
      "headers": {
       "Content-Type": "application/json; charset=utf-8"
      },
      "json": true,
      "body": {
       "error": {
-       "code": "publish_forbidden",
-       "message": "Publishing a message needs the content.publish permission.",
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -7881,13 +7945,13 @@
     {
      "caller": "operator",
      "request": "POST /api/v1/telegram/official/messages/copy",
-     "status": 400,
-     "code": "invalid_input",
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
       "error": {
-       "code": "invalid_input",
-       "message": "an entity span falls outside content.text",
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -7930,34 +7994,6 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/profile",
-     "status": 200,
-     "headers": {
-      "Content-Type": "application/json; charset=utf-8"
-     },
-     "json": true,
-     "body": {
-      "data": {
-       "authorization_state": "authorized",
-       "authorized": true,
-       "key": "doc-client",
-       "this_dc": 2,
-       "type": "official",
-       "user": {
-        "first_name": "",
-        "id": 1,
-        "last_name": "",
-        "username": ""
-       }
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
-       "request_id": "docsgen"
-      }
-     }
-    },
-    {
-     "caller": "limited user",
-     "request": "GET /api/v1/telegram/official/profile",
      "status": 403,
      "code": "forbidden",
      "headers": {
@@ -7968,6 +8004,23 @@
       "error": {
        "code": "forbidden",
        "message": "You do not have permission to perform this action.",
+       "request_id": "docsgen"
+      }
+     }
+    },
+    {
+     "caller": "limited user",
+     "request": "GET /api/v1/telegram/official/profile",
+     "status": 404,
+     "code": "account_not_owned",
+     "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+     },
+     "json": true,
+     "body": {
+      "error": {
+       "code": "account_not_owned",
+       "message": "No account of yours is available for this server.",
        "request_id": "docsgen"
       }
      }
@@ -8005,24 +8058,13 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/profile",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "authorization_state": "authorized",
-       "authorized": true,
-       "key": "doc-client",
-       "this_dc": 2,
-       "type": "official",
-       "user": {
-        "first_name": "",
-        "id": 1,
-        "last_name": "",
-        "username": ""
-       }
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -8030,24 +8072,13 @@
     {
      "caller": "operator",
      "request": "GET /api/v1/telegram/official/profile",
-     "status": 200,
+     "status": 403,
+     "code": "forbidden",
      "json": true,
      "body": {
-      "data": {
-       "authorization_state": "authorized",
-       "authorized": true,
-       "key": "doc-client",
-       "this_dc": 2,
-       "type": "official",
-       "user": {
-        "first_name": "",
-        "id": 1,
-        "last_name": "",
-        "username": ""
-       }
-      },
-      "meta": {
-       "generated_at": "2026-10-25T10:00:00Z",
+      "error": {
+       "code": "forbidden",
+       "message": "You do not have permission to perform this action.",
        "request_id": "docsgen"
       }
      }
@@ -8061,13 +8092,14 @@
    "file": "docs.go",
    "line": 0,
    "credentials": [
-    "s.authenticate(r)  (gateway.go:serveTelegram)",
+    "s.authenticate(r)  (telegram_accounts.go:accountsResource)",
+    "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.accounts(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.changePassword(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.me(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.serveLocal(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(s.servers)  (gateway.go:serveAPI)"
    ],
-   "credential_count": 5,
+   "credential_count": 6,
    "probe": [
     {
      "caller": "anonymous",
@@ -8182,13 +8214,14 @@
    "file": "docs.go",
    "line": 0,
    "credentials": [
-    "s.authenticate(r)  (gateway.go:serveTelegram)",
+    "s.authenticate(r)  (telegram_accounts.go:accountsResource)",
+    "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.accounts(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.changePassword(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.me(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(func(w http.ResponseWriter, r *http.Request) { s.serveLocal(w, r, requestID) })  (gateway.go:serveAPI)",
     "s.requireAuth(s.servers)  (gateway.go:serveAPI)"
    ],
-   "credential_count": 5,
+   "credential_count": 6,
    "probe": [
     {
      "caller": "anonymous",
@@ -8423,6 +8456,36 @@
    "required": [
     "password",
     "username"
+   ]
+  },
+  "loginStartRequest": {
+   "go_type": "loginStartRequest",
+   "properties": {
+    "server_key": {
+     "$ref": "#/components/schemas/string",
+     "go_type": "string",
+     "type": "string"
+    },
+    "network_type": {
+     "$ref": "#/components/schemas/string",
+     "go_type": "string",
+     "type": "string"
+    },
+    "method": {
+     "$ref": "#/components/schemas/string",
+     "go_type": "string",
+     "type": "string"
+    },
+    "phone_number": {
+     "$ref": "#/components/schemas/string",
+     "go_type": "string",
+     "type": "string"
+    }
+   },
+   "required": [
+    "method",
+    "phone_number",
+    "server_key"
    ]
   },
   "permissionsRequest": {
@@ -8801,7 +8864,7 @@
    "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
    "evidence": [
     "health (gateway.go)",
-    "probe: anonymous → unauthorized, operator → 200, limited user → 200, administrator → 200"
+    "probe: anonymous → unauthorized, operator → forbidden, limited user → account_not_owned, administrator → 200"
    ]
   },
   {
@@ -8862,6 +8925,14 @@
    "what": "The success body could not be named from the source (the handler writes more than one shape, or none).",
    "evidence": [
     "createWordPressSite (wordpress.go)"
+   ]
+  },
+  {
+   "route": "POST /api/v1/me/telegram-accounts/login/start",
+   "what": "No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).",
+   "evidence": [
+    "startLogin (telegram_accounts.go)",
+    "probe: "
    ]
   },
   {

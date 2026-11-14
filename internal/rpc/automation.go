@@ -48,7 +48,13 @@ const MaxIngestReactions = 64
 // reports and read later through the authorized media pipeline. Keeping bytes off
 // this route is what makes ingestion cheap and bounded on the update path.
 type IngestMessage struct {
-	// ClientKey is the connection that observed the message.
+	// AccountID is the opaque id of the user-owned account that observed the
+	// message. It is the identity the event belongs to; a caller-supplied value
+	// is never an authorization decision.
+	AccountID string `json:"account_id,omitempty"`
+	// ClientKey is the connection that observed the message. On the account
+	// path it is the account id too; it is kept separate so the legacy
+	// configured-client path still names its connection.
 	ClientKey string `json:"client_key"`
 	// NetworkKey is the network the connection belongs to. Two connections on
 	// one network describe one logical message; a different network is a
@@ -125,8 +131,12 @@ const (
 // at.
 type StateCall struct {
 	Method string `json:"method"`
+	// AccountID scopes the state to one user-owned account. Two accounts on one
+	// server definition never share a counter.
+	AccountID string `json:"account_id,omitempty"`
 	// ClientKey scopes the state to one connection. Several independent
-	// connections run at once and their counters must never be confused.
+	// connections run at once and their counters must never be confused. On the
+	// account path it is the account id.
 	ClientKey string `json:"client_key"`
 	// UserID is the account whose update state this is.
 	UserID int64 `json:"user_id"`

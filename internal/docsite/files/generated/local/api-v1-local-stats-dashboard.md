@@ -53,7 +53,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>operator: GET /api/v1/local/stats/dashboard → 200</summary>
 
 ```json
-{"data":{"stats":{"categories":1,"channels":1,"wordpress_sites":0,"administrators":3}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"stats":{"categories":1,"channels":2,"wordpress_sites":0,"administrators":3}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -71,7 +71,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>administrator: GET /api/v1/local/stats/dashboard → 200</summary>
 
 ```json
-{"data":{"stats":{"categories":1,"channels":1,"wordpress_sites":0,"administrators":3}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"stats":{"categories":1,"channels":2,"wordpress_sites":0,"administrators":3}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -84,7 +84,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>GET /api/v1/local/stats/dashboard → 200</summary>
 
 ```json
-{"data":{"stats":{"categories":1,"channels":1,"wordpress_sites":0,"administrators":3}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"stats":{"categories":1,"channels":2,"wordpress_sites":0,"administrators":3}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 

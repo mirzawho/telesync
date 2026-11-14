@@ -54,6 +54,12 @@ const (
 // configuration does not say otherwise.
 const DefaultTokenTTL = time.Hour
 
+// DefaultSessionKeyEnv is the variable that holds the AES-256 key sealing every
+// user-owned account's MTProto session, unless the `accounts` block names a
+// different one. It is its own key, never the WordPress key: rotating a site
+// credential must not disturb a stored Telegram authorization.
+const DefaultSessionKeyEnv = "TELESYNC_SESSION_ENCRYPTION_KEY"
+
 // MinJWTSecretLen is the shortest HS256 key accepted (the hash length).
 const MinJWTSecretLen = 32
 
@@ -159,6 +165,46 @@ func (w WordPressConfig) Encrypter() (*secrets.Encrypter, error) {
 	return secrets.NewEncrypter(w.Key)
 }
 
+// AccountsConfig is how user-owned Telegram/Cat accounts keep their MTProto
+// sessions.
+//
+// An authorized session is a credential: it grants access to someone's Telegram
+// account without a fresh login code, so it is sealed at rest with the same
+// AES-256-GCM construction WordPress application passwords use, and the key
+// lives outside the database. The two keys are deliberately separate — a site
+// credential and a Telegram session are different secrets and rotating one must
+// not disturb the other.
+type AccountsConfig struct {
+	// SessionKeyEnv is the name of the variable holding the AES-256 key.
+	SessionKeyEnv string
+	// SessionKeyFile is the file holding the key, resolved against the
+	// configuration's directory. It is the form a panel deployment uses, so the
+	// daemon and a re-run of `config validate` read the same key.
+	SessionKeyFile string
+	// SessionKey is the resolved 32-byte key. It is never printed or marshalled.
+	SessionKey []byte `json:"-"`
+	// SessionKeyInFile is true when the key came from accounts.session_encryption_key.
+	SessionKeyInFile bool
+}
+
+// Encrypter is the session seal for user-owned accounts.
+//
+// It fails when no key is configured. That is deliberate and is the production
+// safety rule: an authorized Telegram session lets anyone who holds it act as
+// its owner, so there is no such thing as a session stored in the clear. A
+// deployment that starts without a key must refuse to start rather than fall
+// back to an ephemeral one — a fresh key at every boot would silently make
+// every already-stored session unreadable, which looks like a clean install and
+// loses real authorizations.
+func (a AccountsConfig) Encrypter() (*secrets.Encrypter, error) {
+	if len(a.SessionKey) == 0 {
+		return nil, fmt.Errorf("%w: set accounts.session_encryption_key_env (or accounts.session_encryption_key) in the configuration, "+
+			"or TELESYNC_SESSION_ENCRYPTION_KEY (generate one with: openssl rand -base64 %d)",
+			secrets.ErrKeyNotSet, secrets.KeySize)
+	}
+	return secrets.NewEncrypter(a.SessionKey)
+}
+
 // RuntimeConfig holds process-supervision settings plus the two private
 // directories the daemon owns: the local channel database and the avatar cache.
 type RuntimeConfig struct {
@@ -218,8 +264,10 @@ type Client struct {
 
 // Config is the whole configuration file.
 type Config struct {
-	API     APIConfig
-	Runtime RuntimeConfig
+	API APIConfig
+	// Accounts is how user-owned Telegram/Cat accounts seal their sessions.
+	Accounts AccountsConfig
+	Runtime  RuntimeConfig
 	// Automation is the background automation subsystem: event ingestion, the
 	// durable job queue, webhooks, workflows and AI polishing.
 	Automation AutomationConfig
@@ -337,10 +385,20 @@ func (c Config) Describe() []string {
 
 type rawConfig struct {
 	API        rawAPI        `json:"api"`
+	Accounts   rawAccounts   `json:"accounts"`
 	Runtime    rawRuntime    `json:"runtime"`
 	Automation rawAutomation `json:"automation"`
 	Send       rawSend       `json:"send"`
 	Clients    []rawClient   `json:"clients"`
+}
+
+// rawAccounts is the `accounts` block. The key mirrors api.wordpress exactly,
+// because the two secrets are sealed the same way and an operator who already
+// configured one should recognise the other.
+type rawAccounts struct {
+	SessionEncryptionKeyEnv  string  `json:"session_encryption_key_env"`
+	SessionEncryptionKeyPath string  `json:"session_encryption_key_path"`
+	SessionEncryptionKey     *string `json:"session_encryption_key"`
 }
 
 type rawAPI struct {
@@ -582,6 +640,59 @@ func build(raw rawConfig, baseDir string, lookup func(string) string) (Config, e
 			fail("api.wordpress: %v", err)
 		} else {
 			cfg.API.WordPress.Key = key
+		}
+	}
+
+	// --- Accounts: the session seal ---
+	//
+	// TELESYNC_SESSION_ENCRYPTION_KEY is the deployment-level override; the
+	// `accounts` block is the file-level form, so a panel deployment and a
+	// re-run of `config validate` agree on which key seals sessions. The
+	// environment wins when it says anything, matching how
+	// TELESYNC_WORDPRESS_KEY behaves.
+	cfg.Accounts.SessionKeyEnv = DefaultSessionKeyEnv
+	if raw.Accounts.SessionEncryptionKeyEnv != "" {
+		cfg.Accounts.SessionKeyEnv = raw.Accounts.SessionEncryptionKeyEnv
+	}
+	if env := lookup("TELESYNC_SESSION_ENCRYPTION_KEY"); strings.TrimSpace(env) != "" {
+		if raw.Accounts.SessionEncryptionKeyPath != "" || raw.Accounts.SessionEncryptionKey != nil {
+			fail("accounts: TELESYNC_SESSION_ENCRYPTION_KEY is set and the configuration also gives " +
+				"session_encryption_key_path or session_encryption_key; set only one")
+		}
+		key, err := secrets.ParseKey(env)
+		if err != nil {
+			fail("TELESYNC_SESSION_ENCRYPTION_KEY: %v", err)
+		}
+		cfg.Accounts.SessionKey = key
+	} else {
+		switch {
+		case raw.Accounts.SessionEncryptionKeyPath != "" && raw.Accounts.SessionEncryptionKey != nil:
+			fail("accounts: set only one of session_encryption_key_path or session_encryption_key, not both")
+		case raw.Accounts.SessionEncryptionKeyPath != "":
+			cfg.Accounts.SessionKeyFile = resolvePath(baseDir, raw.Accounts.SessionEncryptionKeyPath, raw.Accounts.SessionEncryptionKeyPath)
+			if key, err := keyFromFile(cfg.Accounts.SessionKeyFile); err != nil {
+				fail("accounts: %v", err)
+			} else {
+				cfg.Accounts.SessionKey = key
+			}
+		case raw.Accounts.SessionEncryptionKey != nil:
+			lit := *raw.Accounts.SessionEncryptionKey
+			if strings.TrimSpace(lit) == "" {
+				fail("accounts.session_encryption_key is empty; give it a base64 %d-byte key (openssl rand -base64 %d)",
+					secrets.KeySize, secrets.KeySize)
+			} else if key, err := secrets.ParseKey(lit); err != nil {
+				fail("accounts.session_encryption_key is not a valid key: %v", err)
+			} else {
+				cfg.Accounts.SessionKey = key
+				cfg.Accounts.SessionKeyInFile = true
+			}
+		case cfg.Accounts.SessionKeyEnv != "":
+			// Absent everywhere. This is not a startup failure on its own — a
+			// deployment that connects no personal account has no session to
+			// seal, and refusing to boot would break every existing install on
+			// upgrade. Encrypter() is what refuses, at the moment a session
+			// would actually be written. That keeps the failure where it
+			// belongs and impossible to miss.
 		}
 	}
 

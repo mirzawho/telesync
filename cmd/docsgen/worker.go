@@ -18,14 +18,11 @@ import (
 // asserts on these values; they exist so a route that reads Telegram answers
 // 200 with a body instead of failing.
 
-type workerRegistry struct{}
+type workerRegistry map[string]gateway.Worker
 
-func (workerRegistry) Worker(key string) (gateway.Worker, bool) {
-	switch key {
-	case "doc-client", "official":
-		return documentedWorker{}, true
-	}
-	return nil, false
+func (workers workerRegistry) Worker(key string) (gateway.Worker, bool) {
+	worker, ok := workers[key]
+	return worker, ok
 }
 
 type documentedWorker struct{}

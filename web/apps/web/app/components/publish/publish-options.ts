@@ -7,7 +7,7 @@
 // account may post to, a term list already the selected site's own — so the
 // workspace below never reasons about permissions or pagination again.
 
-import type { TelegramServer } from "@/lib/types"
+import type { TelegramAccount, TelegramServer } from "@/lib/types"
 
 export type ServerOption = TelegramServer
 
@@ -42,6 +42,7 @@ export interface TermOption {
 export type OptionList = "servers" | "channels" | "sites" | "categories" | "tags"
 
 export interface PublishingOptions {
+  accounts: TelegramAccount[]
   servers: ServerOption[]
   channels: ChannelOption[]
   sites: SiteOption[]
@@ -52,6 +53,7 @@ export interface PublishingOptions {
 }
 
 export const emptyOptions: PublishingOptions = {
+  accounts: [],
   servers: [],
   channels: [],
   sites: [],

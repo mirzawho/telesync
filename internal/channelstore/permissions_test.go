@@ -188,9 +188,12 @@ func TestDeletingACategoryRemovesItsAssignmentsAndKeepsChannels(t *testing.T) {
 	ctx := context.Background()
 	store := open(t)
 	u := mustUser(t, store, "example", true)
-	ch, _ := store.Upsert(ctx, channel("official", 1001))
+	account := categoryTestAccount(t, store, "official", "acc_permission_category")
+	input := channel("official", 1001)
+	input.AccountID = account.ID
+	ch, _ := store.UpsertFor(ctx, account.ID, input)
 	cat, _ := store.CreateCategory(ctx, "News", "")
-	if _, err := store.AssignChannel(ctx, "official", "1001", cat.ID); err != nil {
+	if _, err := store.AssignChannel(ctx, account.ID, "1001", cat.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.ReplacePermissions(ctx, u.ID, channelstore.PermissionSet{

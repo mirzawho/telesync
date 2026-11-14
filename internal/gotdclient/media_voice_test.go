@@ -208,9 +208,10 @@ func TestRoundVideoRemainsDistinct(t *testing.T) {
 
 // capturedSend is the media request the fake destination actually received.
 type capturedSend struct {
-	mu      sync.Mutex
-	request tg.MessagesSendMediaRequest
-	got     bool
+	mu              sync.Mutex
+	request         tg.MessagesSendMediaRequest
+	got             bool
+	stickerReadback bool
 }
 
 func (c *capturedSend) take() (tg.MessagesSendMediaRequest, bool) {
@@ -237,14 +238,38 @@ func sendServer(t *testing.T, capture *capturedSend) func(*tgtest.Dispatcher) {
 			capture.mu.Unlock()
 			return server.SendResult(req, &tg.UpdateShortSentMessage{ID: 4321, Date: 1700000000})
 		})
+		if capture.stickerReadback {
+			d.HandleFunc(tg.MessagesGetHistoryRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+				var uploaded *tg.InputMediaUploadedDocument
+				sent, _ := capture.take()
+				if media, ok := sent.Media.(*tg.InputMediaUploadedDocument); ok {
+					uploaded = media
+				}
+				if uploaded == nil {
+					return server.SendResult(req, &tg.MessagesChannelMessages{})
+				}
+				message := &tg.Message{
+					ID: 4321,
+					Media: &tg.MessageMediaDocument{Document: &tg.Document{
+						ID: 99, AccessHash: 100, MimeType: uploaded.MimeType,
+						Attributes: uploaded.Attributes,
+					}},
+				}
+				return server.SendResult(req, &tg.MessagesChannelMessages{
+					Messages: []tg.MessageClass{message},
+					Chats:    []tg.ChatClass{&tg.Channel{ID: 500, AccessHash: 900, Title: "destination"}},
+				})
+			})
+		}
 	}
 }
 
 // sendThrough posts one attachment to the fake destination and returns the media
 // request that arrived there.
-func sendThrough(t *testing.T, media *tgapi.SendMedia) tg.InputMediaClass {
+func sendThrough(t *testing.T, media *tgapi.SendMedia, stickerReadback ...bool) tg.InputMediaClass {
 	t.Helper()
-	capture := &capturedSend{}
+	readback := len(stickerReadback) > 0 && stickerReadback[0]
+	capture := &capturedSend{stickerReadback: readback}
 	self := &tg.User{ID: 1, Username: "me"}
 	l, key := startPanelServer(t, self, &panelServer{}, sendServer(t, capture))
 	m := managerFor(t, l, key)
@@ -257,13 +282,54 @@ func sendThrough(t *testing.T, media *tgapi.SendMedia) tg.InputMediaClass {
 		Text:  "",
 		Media: media,
 	}); err != nil {
-		t.Fatalf("SendMessage: %v", err)
+		if media.Kind != "sticker" || readback || err != tgapi.ErrSendOutcomeUnknown {
+			t.Fatalf("SendMessage: %v", err)
+		}
 	}
 	request, ok := capture.take()
 	if !ok {
 		t.Fatal("the destination received no media request")
 	}
 	return request.Media
+}
+
+func TestSendStickerCarriesNativeAttributesAndVerifiesDestinationReadback(t *testing.T) {
+	input := sendThrough(t, &tgapi.SendMedia{
+		Kind: "sticker", MimeType: "video/webm", Data: []byte("original webm"),
+		StickerEmoji: "🔥", StickerVideo: true, Width: 512, Height: 512, Duration: 2,
+	}, true)
+	doc, ok := input.(*tg.InputMediaUploadedDocument)
+	if !ok {
+		t.Fatalf("media = %T, want uploaded document", input)
+	}
+	if doc.ForceFile || doc.MimeType != "video/webm" {
+		t.Fatalf("uploaded document = %#v; sticker must preserve format and native semantics", doc)
+	}
+	var sticker *tg.DocumentAttributeSticker
+	var video *tg.DocumentAttributeVideo
+	for _, attr := range doc.Attributes {
+		switch attr := attr.(type) {
+		case *tg.DocumentAttributeSticker:
+			sticker = attr
+		case *tg.DocumentAttributeVideo:
+			video = attr
+		}
+	}
+	if sticker == nil || sticker.Alt != "🔥" {
+		t.Fatalf("sticker attribute = %#v, want native sticker with source emoji", sticker)
+	}
+	if _, ok := sticker.Stickerset.(*tg.InputStickerSetEmpty); !ok {
+		t.Fatalf("sticker set = %T, want destination-compatible empty set (never source set identity)", sticker.Stickerset)
+	}
+	if video == nil || video.W != 512 || video.H != 512 || video.Duration != 2 {
+		t.Fatalf("video sticker attribute = %#v", video)
+	}
+}
+
+func TestSendStickerWithoutNativeDestinationReadbackIsUnknown(t *testing.T) {
+	_ = sendThrough(t, &tgapi.SendMedia{
+		Kind: "sticker", MimeType: "image/webp", Data: []byte("original webp"),
+	}, false)
 }
 
 // Test E. The outgoing MTProto request for a recording carries the voice flag,

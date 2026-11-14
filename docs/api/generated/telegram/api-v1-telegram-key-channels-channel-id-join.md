@@ -28,8 +28,8 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 | Caller | Request | Status | Shape |
 | --- | --- | --- | --- |
 | anonymous | `POST /api/v1/telegram/official/channels/not-a-channel-id/join` | 401 | `unauthorized` |
-| operator | `POST /api/v1/telegram/official/channels/not-a-channel-id/join` | 400 | `invalid_input` |
-| limited user | `POST /api/v1/telegram/official/channels/not-a-channel-id/join` | 400 | `invalid_input` |
+| operator | `POST /api/v1/telegram/official/channels/not-a-channel-id/join` | 403 | `forbidden` |
+| limited user | `POST /api/v1/telegram/official/channels/not-a-channel-id/join` | 404 | `account_not_owned` |
 | administrator | `POST /api/v1/telegram/official/channels/not-a-channel-id/join` | 400 | `invalid_input` |
 
 <details><summary>anonymous: POST /api/v1/telegram/official/channels/not-a-channel-id/join → 401</summary>
@@ -41,19 +41,19 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 </details>
 
-<details><summary>operator: POST /api/v1/telegram/official/channels/not-a-channel-id/join → 400</summary>
+<details><summary>operator: POST /api/v1/telegram/official/channels/not-a-channel-id/join → 403</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>limited user: POST /api/v1/telegram/official/channels/not-a-channel-id/join → 400</summary>
+<details><summary>limited user: POST /api/v1/telegram/official/channels/not-a-channel-id/join → 404</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"channel_id must be a decimal channel id or an invite hash such as +AbCdEf123456.","request_id":"docsgen"}}
+{"error":{"code":"account_not_owned","message":"No account of yours is available for this server.","request_id":"docsgen"}}
 
 ```
 
@@ -70,42 +70,42 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 ### Responses captured from the documentation examples
 
-- `POST /api/v1/telegram/official/channels/1671633563/join` as operator → `200`
-- `POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join` as operator → `200`
-- `POST /api/v1/telegram/official/channels/1671633563/join` as operator → `200`
-- `POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join` as operator → `200`
+- `POST /api/v1/telegram/official/channels/1671633563/join` as operator → `403`
+- `POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join` as operator → `403`
+- `POST /api/v1/telegram/official/channels/1671633563/join` as operator → `403`
+- `POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join` as operator → `403`
 
-<details><summary>POST /api/v1/telegram/official/channels/1671633563/join → 200</summary>
+<details><summary>POST /api/v1/telegram/official/channels/1671633563/join → 403</summary>
 
 ```json
-{"data":{"channel":{"id":"1","type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/telegram/official/channels/1/avatar","is_member":true,"is_managed":true,"membership_status":"member","permissions":{"new":false,"edit":false,"delete":false,"read":true},"verified":false,"scam":false,"fake":false,"participants_count":null},"result":"already_managed"},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join → 200</summary>
+<details><summary>POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join → 403</summary>
 
 ```json
-{"data":{"channel":{"id":"1","type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/telegram/official/channels/1/avatar","is_member":true,"is_managed":true,"membership_status":"member","permissions":{"new":false,"edit":false,"delete":false,"read":true},"verified":false,"scam":false,"fake":false,"participants_count":null},"result":"joined_and_added_to_management"},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>POST /api/v1/telegram/official/channels/1671633563/join → 200</summary>
+<details><summary>POST /api/v1/telegram/official/channels/1671633563/join → 403</summary>
 
 ```json
-{"data":{"channel":{"id":"1","type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/telegram/official/channels/1/avatar","is_member":true,"is_managed":true,"membership_status":"member","permissions":{"new":false,"edit":false,"delete":false,"read":true},"verified":false,"scam":false,"fake":false,"participants_count":null},"result":"already_managed"},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join → 200</summary>
+<details><summary>POST /api/v1/telegram/official/channels/%2BAbCdEf123456/join → 403</summary>
 
 ```json
-{"data":{"channel":{"id":"1","type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/telegram/official/channels/1/avatar","is_member":true,"is_managed":true,"membership_status":"member","permissions":{"new":false,"edit":false,"delete":false,"read":true},"verified":false,"scam":false,"fake":false,"participants_count":null},"result":"joined_and_added_to_management"},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 

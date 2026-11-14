@@ -2,6 +2,8 @@ package events_test
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,21 +32,57 @@ func (d *dedupStore) InsertMessageEvent(_ context.Context, event automation.Mess
 }
 
 // resolver decides which channels this installation manages.
+//
+// It is keyed by (account, remote channel) and not by the remote channel alone,
+// which is the whole point of the account-scoped lookup: two users may
+// independently subscribe to the same remote channel and each observation must
+// resolve to the row belonging to the account that saw it.
 type resolver struct {
-	managed map[int64]bool
+	managed map[string]bool
+	// rows maps an account's registration to the local row and its owner.
+	rows map[string]events.ChannelRegistration
 }
 
-func (r resolver) ManagedChannelFor(_ context.Context, _ string, telegramChannelID int64) (int64, bool, error) {
-	if r.managed[telegramChannelID] {
-		// A deterministic local id, standing in for the managed_channels row.
-		return telegramChannelID / 1000, true, nil
+// key is the account-scoped registration identity.
+func key(accountID string, telegramChannelID int64) string {
+	return accountID + "/" + strconv.FormatInt(telegramChannelID, 10)
+}
+
+func (r resolver) ManagedChannelFor(_ context.Context, accountID, _ string, telegramChannelID int64) (events.ChannelRegistration, bool, error) {
+	k := key(accountID, telegramChannelID)
+	if !r.managed[k] {
+		return events.ChannelRegistration{}, false, nil
 	}
-	return 0, false, nil
+	if reg, ok := r.rows[k]; ok {
+		return reg, true, nil
+	}
+	// A deterministic local id, standing in for the managed_channels row.
+	return events.ChannelRegistration{
+		ManagedChannelID: telegramChannelID / 1000,
+		AccountID:        accountID,
+		OwnerUserID:      ownerOf(accountID),
+	}, true, nil
+}
+
+// ownerOf is a stand-in for the account's owner, so a job scheduled from an
+// observation is bound to somebody.
+func ownerOf(accountID string) int64 {
+	if strings.HasPrefix(accountID, "acc_b") {
+		return 200
+	}
+	return 100
 }
 
 func obs(clientKey, networkKey string, channelID int64, messageID int) events.Observation {
+	return obsFor("acc_a", clientKey, networkKey, channelID, messageID)
+}
+
+// obsFor is obs for one named account: the account is what scopes the event
+// identity, so two accounts observing the same remote message are two events.
+func obsFor(accountID, clientKey, networkKey string, channelID int64, messageID int) events.Observation {
 	return events.Observation{
 		ClientKey:         clientKey,
+		AccountID:         accountID,
 		NetworkKey:        networkKey,
 		TelegramChannelID: channelID,
 		Message: rpc.Message{
@@ -70,7 +108,64 @@ func ingest(t *testing.T) (*events.Ingestor, *dedupStore, resolver) {
 	t.Helper()
 	store := newDedupStore()
 	ing := events.NewIngestor(store, nil, nil, nil, nil)
-	return ing, store, resolver{managed: map[int64]bool{123456789: true}}
+	return ing, store, resolver{managed: map[string]bool{key("acc_a", 123456789): true}}
+}
+
+// Two users may independently subscribe to the same remote channel. Each must
+// get its own event: the old deduplication compared messages without an account
+// and would have dropped the second user's copy, silently starving their
+// automation of everything after the first.
+func TestTwoAccountsObservingOneRemoteChannelEachGetTheirOwnEvent(t *testing.T) {
+	store := newDedupStore()
+	ing := events.NewIngestor(store, nil, nil, nil, nil)
+	res := resolver{managed: map[string]bool{
+		key("acc_a", 123456789): true,
+		key("acc_b", 123456789): true,
+	}}
+
+	ctx := context.Background()
+	if _, _, err := ing.Observe(ctx, res, obsFor("acc_a", "official", "official", 123456789, 36)); err != nil {
+		t.Fatalf("first account: %v", err)
+	}
+	outcome, managed, err := ing.Observe(ctx, res, obsFor("acc_b", "official", "official", 123456789, 36))
+	if err != nil {
+		t.Fatalf("second account: %v", err)
+	}
+	if !managed {
+		t.Fatal("the second account's registration resolved unmanaged")
+	}
+	if outcome == events.OutcomeDuplicate {
+		t.Fatal("the second account's event was suppressed as a duplicate of the first account's")
+	}
+	if len(store.got) != 2 {
+		t.Fatalf("stored %d events, want 2 — one per account", len(store.got))
+	}
+	if store.got[0].AccountID == store.got[1].AccountID {
+		t.Fatalf("both events are bound to %q; they must be distinct accounts", store.got[0].AccountID)
+	}
+}
+
+// The same account seeing the same message twice is still one event. Account
+// scoping must widen the dedup key, not remove it — otherwise a reconnect
+// would replay every message into the automations.
+func TestOneAccountSeeingTheSameMessageTwiceIsStillOneEvent(t *testing.T) {
+	store := newDedupStore()
+	ing := events.NewIngestor(store, nil, nil, nil, nil)
+	res := resolver{managed: map[string]bool{key("acc_a", 123456789): true}}
+
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		outcome, _, err := ing.Observe(ctx, res, obsFor("acc_a", "official", "official", 123456789, 36))
+		if err != nil {
+			t.Fatalf("observe %d: %v", i, err)
+		}
+		if i > 0 && outcome != events.OutcomeDuplicate {
+			t.Fatalf("observe %d outcome = %q, want %q", i, outcome, events.OutcomeDuplicate)
+		}
+	}
+	if len(store.got) != 1 {
+		t.Fatalf("stored %d events, want 1", len(store.got))
+	}
 }
 
 // A message in a managed source channel becomes exactly one durable event.

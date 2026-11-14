@@ -168,6 +168,14 @@ type actor struct {
 	auth *channelstore.Authorizer
 	// permissionSet is nil for a caller without an account.
 	permissionSet *channelstore.PermissionSet
+	// accountID is the Telegram account this request acts as. It is resolved
+	// by the authorization pipeline and is empty for a caller that named none:
+	// the operator token, and a request before its account is resolved.
+	accountID string
+	// routeSelector preserves the public path identity. Legacy paths use the
+	// server key; explicit account paths use "accounts/{account_id}". It is
+	// never used for ownership, worker routing or persisted server identity.
+	routeSelector string
 }
 
 // principalKey is the context key carrying the actor.

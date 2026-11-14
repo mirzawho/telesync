@@ -46,6 +46,9 @@ func validateWorkflowDestinations(dests []automation.WorkflowDestination) (enabl
 			if strings.TrimSpace(d.ClientKey) == "" {
 				return 0, fmt.Errorf("%w: %s must name a client_key", ErrInvalidWorkflow, where)
 			}
+			if strings.TrimSpace(d.AccountID) == "" {
+				return 0, fmt.Errorf("%w: %s must name an account_id", ErrInvalidWorkflow, where)
+			}
 			if d.ChannelID == 0 {
 				return 0, fmt.Errorf("%w: %s must name a channel_id", ErrInvalidWorkflow, where)
 			}
@@ -97,7 +100,8 @@ func decodeOptions(raw string) map[string]any {
 }
 
 const workflowColumns = `w.id, w.managed_channel_id, w.enabled, w.ai_enabled, w.ai_prompt,
-	w.ai_send_images, w.ai_publish_on_failure, w.config_revision, w.created_at, w.updated_at`
+	w.ai_send_images, w.ai_publish_on_failure, w.config_revision, w.created_at, w.updated_at,
+	COALESCE(w.owner_user_id, 0), COALESCE(w.account_id, '')`
 
 // scanWorkflowRow reads one workflow row. Destinations are read separately.
 func scanWorkflowRow(scan func(dest ...any) error) (automation.Workflow, error) {
@@ -108,7 +112,8 @@ func scanWorkflowRow(scan func(dest ...any) error) (automation.Workflow, error) 
 		createdAt, updatedAt      string
 	)
 	if err := scan(&out.ID, &out.ManagedChannelID, &enabled, &aiEnabled, &out.AIPrompt,
-		&sendImages, &publishOnFail, &out.ConfigRevision, &createdAt, &updatedAt); err != nil {
+		&sendImages, &publishOnFail, &out.ConfigRevision, &createdAt, &updatedAt,
+		&out.OwnerUserID, &out.AccountID); err != nil {
 		return automation.Workflow{}, err
 	}
 	out.Enabled = enabled != 0
@@ -122,9 +127,10 @@ func scanWorkflowRow(scan func(dest ...any) error) (automation.Workflow, error) 
 
 // destinationsOf reads one workflow's targets in their configured order.
 func (s *Store) destinationsOf(ctx context.Context, workflowID int64) ([]automation.WorkflowDestination, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, workflow_id, destination_type, client_key, channel_id,
-	site_id, options, position, enabled FROM workflow_destinations
-	WHERE workflow_id = ? ORDER BY position, id`, workflowID)
+	rows, err := s.db.QueryContext(ctx, `SELECT d.id, d.workflow_id, d.destination_type, d.client_key,
+	d.channel_id, d.site_id, d.account_id, d.options, d.position, d.enabled
+	FROM workflow_destinations d
+	WHERE d.workflow_id = ? ORDER BY d.position, d.id`, workflowID)
 	if err != nil {
 		return nil, fmt.Errorf("channelstore: read workflow destinations: %w", err)
 	}
@@ -133,18 +139,20 @@ func (s *Store) destinationsOf(ctx context.Context, workflowID int64) ([]automat
 	out := []automation.WorkflowDestination{}
 	for rows.Next() {
 		var (
-			d        automation.WorkflowDestination
-			options  string
-			enabled  int
-			clientK  string
-			destType string
+			d         automation.WorkflowDestination
+			options   string
+			enabled   int
+			clientK   string
+			destType  string
+			accountID sql.NullString
 		)
 		if err := rows.Scan(&d.ID, &d.WorkflowID, &destType, &clientK, &d.ChannelID,
-			&d.SiteID, &options, &d.Position, &enabled); err != nil {
+			&d.SiteID, &accountID, &options, &d.Position, &enabled); err != nil {
 			return nil, fmt.Errorf("channelstore: read workflow destination: %w", err)
 		}
 		d.DestinationType = destType
 		d.ClientKey = clientK
+		d.AccountID = accountID.String
 		d.Options = decodeOptions(options)
 		d.Enabled = enabled != 0
 		out = append(out, d)
@@ -192,14 +200,59 @@ func (s *Store) CreateWorkflow(ctx context.Context, in automation.WorkflowInput)
 			"before it can be enabled", ErrInvalidWorkflow)
 	}
 
-	var source int
+	// The source channel's registration is the authority on which account a
+	// workflow runs under. It is read here rather than taken from the request:
+	// a workflow is one per user-owned managed channel registration, and a
+	// caller who could name the account would be able to publish as somebody
+	// else's Telegram identity. An account id the caller did supply is treated
+	// as a claim and checked against the registration, never believed.
+	var sourceOwner sql.NullInt64
+	var sourceAccount string
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM managed_channels WHERE id = ?`, in.ManagedChannelID).Scan(&source); err != nil {
+		`SELECT COALESCE(a.owner_user_id, 0), COALESCE(mc.account_id, '')
+		 FROM managed_channels mc
+		 LEFT JOIN telegram_accounts a ON a.id = mc.account_id
+		 WHERE mc.id = ?`, in.ManagedChannelID).Scan(&sourceOwner, &sourceAccount); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return automation.Workflow{}, fmt.Errorf("%w: no managed channel has id %d",
+				ErrInvalidWorkflow, in.ManagedChannelID)
+		}
 		return automation.Workflow{}, fmt.Errorf("channelstore: check workflow source: %w", err)
 	}
-	if source == 0 {
-		return automation.Workflow{}, fmt.Errorf("%w: no managed channel has id %d",
-			ErrInvalidWorkflow, in.ManagedChannelID)
+	if sourceAccount == "" {
+		// A channel nobody owns is a legacy registration. There is no session
+		// a workflow may legitimately publish through, so it stays unwritten
+		// rather than being attached to whichever account happens to exist.
+		return automation.Workflow{}, fmt.Errorf(
+			"%w: that channel is not registered under a personal account", ErrInvalidWorkflow)
+	}
+	if in.AccountID != "" && in.AccountID != sourceAccount {
+		// The channel is registered under a different account. Refusing is what
+		// keeps one user's workflow from being attached to another's channel.
+		return automation.Workflow{}, fmt.Errorf(
+			"%w: that channel is not registered under this account", ErrInvalidWorkflow)
+	}
+	in.AccountID = sourceAccount
+	if in.CreatedBy > 0 && sourceOwner.Int64 != 0 && sourceOwner.Int64 != in.CreatedBy {
+		return automation.Workflow{}, fmt.Errorf(
+			"%w: that channel belongs to another account", ErrInvalidWorkflow)
+	}
+	ownerUserID := in.CreatedBy
+	if sourceOwner.Int64 != 0 {
+		ownerUserID = sourceOwner.Int64
+	}
+
+	// Every Telegram destination must be one this same user owns, on an account
+	// they hold. A workflow may publish across two of its owner's accounts, and
+	// never to an account belonging to somebody else: a destination is the one
+	// place a background run picks up a Telegram identity that is not its own.
+	for _, d := range in.Destinations {
+		if d.DestinationType != string(automation.DestinationTelegram) {
+			continue
+		}
+		if err := s.requireOwnedDestination(ctx, ownerUserID, d); err != nil {
+			return automation.Workflow{}, err
+		}
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -211,10 +264,12 @@ func (s *Store) CreateWorkflow(ctx context.Context, in automation.WorkflowInput)
 	now := s.now()
 	res, err := tx.ExecContext(ctx, `INSERT INTO workflows (
 	managed_channel_id, enabled, ai_enabled, ai_prompt, ai_send_images, ai_publish_on_failure,
-	config_revision, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+	config_revision, created_by, created_at, updated_at, owner_user_id, account_id)
+	VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
 		in.ManagedChannelID, boolInt(in.Enabled), boolInt(in.AIEnabled), in.AIPrompt,
 		boolInt(in.AISendImages), boolInt(in.AIPublishOnFailure), nullableUserID(in.CreatedBy),
-		formatTime(now), formatTime(now))
+		formatTime(now), formatTime(now),
+		nullableOwnerID(ownerUserID), nullableText(in.AccountID))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return automation.Workflow{}, ErrWorkflowExists
@@ -232,6 +287,52 @@ func (s *Store) CreateWorkflow(ctx context.Context, in automation.WorkflowInput)
 		return automation.Workflow{}, fmt.Errorf("channelstore: create workflow: %w", err)
 	}
 	return s.getWorkflowOrReport(ctx, id)
+}
+
+// requireOwnedDestination refuses an unresolved, unregistered, or foreign
+// Telegram destination. AccountID is an explicit claim and must match the exact
+// managed registration; server key and channel alone never select an account.
+func (s *Store) requireOwnedDestination(ctx context.Context, ownerUserID int64,
+	d automation.WorkflowDestination) error {
+
+	if ownerUserID <= 0 || strings.TrimSpace(d.AccountID) == "" {
+		return fmt.Errorf("%w: the Telegram destination needs an explicit owned account", ErrInvalidWorkflow)
+	}
+	var destOwner sql.NullInt64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT a.owner_user_id
+		 FROM managed_channels mc
+		 JOIN telegram_accounts a ON a.id = mc.account_id
+		 WHERE mc.client_key = ? AND mc.channel_id = ? AND mc.account_id = ?`,
+		d.ClientKey, d.ChannelID, d.AccountID).Scan(&destOwner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: the selected account does not own a registered destination", ErrInvalidWorkflow)
+	}
+	if err != nil {
+		return fmt.Errorf("channelstore: check workflow destination: %w", err)
+	}
+	if !destOwner.Valid || destOwner.Int64 != ownerUserID {
+		return fmt.Errorf("%w: that destination belongs to another account", ErrInvalidWorkflow)
+	}
+	return nil
+}
+
+// AccountOwner resolves the owner of one exact account identity. A missing,
+// quarantined, or ownerless legacy account is not a personal destination.
+func (s *Store) AccountOwner(ctx context.Context, accountID string) (int64, bool, error) {
+	if strings.TrimSpace(accountID) == "" {
+		return 0, false, nil
+	}
+	var owner sql.NullInt64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT owner_user_id FROM telegram_accounts WHERE id = ?`, accountID).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !owner.Valid) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("channelstore: resolve account owner: %w", err)
+	}
+	return owner.Int64, true, nil
 }
 
 // replaceWorkflowDestinations writes one workflow's whole target list.
@@ -256,9 +357,10 @@ func replaceWorkflowDestinations(ctx context.Context, tx *sql.Tx, workflowID int
 			position = i
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO workflow_destinations (
-	workflow_id, destination_type, client_key, channel_id, site_id, options, position, enabled,
-	created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	workflow_id, destination_type, client_key, channel_id, site_id, account_id, options, position, enabled,
+	created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			workflowID, d.DestinationType, strings.TrimSpace(d.ClientKey), d.ChannelID, d.SiteID,
+			nullableText(d.AccountID),
 			options, position, boolInt(d.Enabled), formatTime(now), formatTime(now)); err != nil {
 			return fmt.Errorf("channelstore: store workflow destination: %w", err)
 		}
@@ -282,6 +384,30 @@ func (s *Store) UpdateWorkflow(ctx context.Context, id int64, in automation.Work
 	if in.Enabled && enabled == 0 {
 		return automation.Workflow{}, false, fmt.Errorf("%w: a workflow needs at least one enabled destination "+
 			"before it can be enabled", ErrInvalidWorkflow)
+	}
+
+	// The ownership binding is read, checked and never rewritten. An update
+	// changes what a run does and never who it runs as: moving a workflow onto
+	// another account's channel would hand one user's automation another's
+	// Telegram identity.
+	existing, found, err := s.GetWorkflow(ctx, id)
+	if err != nil {
+		return automation.Workflow{}, false, err
+	}
+	if !found {
+		return automation.Workflow{}, false, ErrWorkflowNotFound
+	}
+	if in.AccountID != "" && in.AccountID != existing.AccountID {
+		return automation.Workflow{}, false, fmt.Errorf(
+			"%w: a workflow's account cannot be reassigned", ErrInvalidWorkflow)
+	}
+	for _, d := range in.Destinations {
+		if d.DestinationType != string(automation.DestinationTelegram) {
+			continue
+		}
+		if err := s.requireOwnedDestination(ctx, existing.OwnerUserID, d); err != nil {
+			return automation.Workflow{}, false, err
+		}
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -414,6 +540,12 @@ func (s *Store) WorkflowAuthor(ctx context.Context, workflowID int64) (int64, bo
 func (s *Store) ListWorkflows(ctx context.Context, opts automation.WorkflowListOptions) (automation.WorkflowPage, error) {
 	conds := []string{"1 = 1"}
 	args := []any{}
+	// A workflow collection is one tenant's. Scoping before the page is cut is
+	// what keeps the total honest and keeps one page from being everybody's.
+	if opts.OwnerUserID > 0 {
+		conds = append(conds, "w.owner_user_id = ?")
+		args = append(args, opts.OwnerUserID)
+	}
 	if opts.Enabled != nil {
 		conds = append(conds, "w.enabled = ?")
 		args = append(args, boolInt(*opts.Enabled))

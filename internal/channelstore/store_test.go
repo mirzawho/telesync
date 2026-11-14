@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/channelstore"
 )
 
@@ -22,6 +23,20 @@ func open(t *testing.T, mutate ...func(*channelstore.Options)) *channelstore.Sto
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+
+	// Every automation row carries an owner now, so the shared fixture carries
+	// one too: an event or a job with no owning account is refused at the door
+	// rather than run as somebody else. Tests that need two owners build their
+	// own and overwrite defaultOwner.
+	user, err := store.CreateUser(context.Background(), "Fixture Owner", "fixture-owner",
+		"not-a-password-hash", true)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	defaultOwner = automation.Owner{
+		OwnerUserID: user.ID,
+		AccountID:   ownerAccount(t, store, user.ID, "official", channelstore.NetworkTelegram, 1),
+	}
 	return store
 }
 

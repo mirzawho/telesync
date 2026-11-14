@@ -38,6 +38,7 @@ test("local detail maps local channel 2 to cat/remote 98 and enables granted mes
         JSON.stringify({
           data: {
             client_key: "cat",
+            account_id: "acc_test",
             channel: {
               id: "98",
               type: "channel",
@@ -67,6 +68,7 @@ test("local detail maps local channel 2 to cat/remote 98 and enables granted mes
   const lookup = (
     loaded as {
       lookup: { state: string; channel: ChannelDetail; clientKey: string }
+        & { accountId: string }
     }
   ).lookup
   assert.equal(lookup.state, "ok")
@@ -85,6 +87,7 @@ test("local detail maps local channel 2 to cat/remote 98 and enables granted mes
       channel={lookup.channel as ChannelDetail}
       channelId={2}
       client={lookup.clientKey}
+      accountId={lookup.accountId}
     />
   )
   assert.match(

@@ -17,7 +17,13 @@ func TestChannelCreationIdempotencyReplaysSamePayloadAndRejectsKeyReuse(t *testi
 	defer store.Close()
 	ctx := context.Background()
 
-	first, created, err := store.BeginChannelCreation(ctx, 12, "the-cat", "request-1", "fingerprint-a", `{"title":"News"}`)
+	// The operation is recorded against an account, so one must exist. The
+	// subject here is idempotency, not ownership, but the binding is real
+	// rather than a bare number the schema would have to tolerate.
+	user := createUser(t, store, "creator")
+	acc := ownerAccount(t, store, user.ID, "the-cat", channelstore.NetworkCustom, 1)
+
+	first, created, err := store.BeginChannelCreation(ctx, user.ID, acc, "the-cat", "request-1", "fingerprint-a", `{"title":"News"}`)
 	if err != nil || !created {
 		t.Fatalf("first BeginChannelCreation = (%+v, %v, %v), want new operation", first, created, err)
 	}
@@ -25,12 +31,12 @@ func TestChannelCreationIdempotencyReplaysSamePayloadAndRejectsKeyReuse(t *testi
 		t.Fatalf("initial status = %q", first.Status)
 	}
 
-	replay, created, err := store.BeginChannelCreation(ctx, 12, "the-cat", "request-1", "fingerprint-a", `{"title":"News"}`)
+	replay, created, err := store.BeginChannelCreation(ctx, user.ID, acc, "the-cat", "request-1", "fingerprint-a", `{"title":"News"}`)
 	if err != nil || created || replay.ID != first.ID {
 		t.Fatalf("identical retry = (%+v, %v, %v), want existing operation", replay, created, err)
 	}
 
-	_, _, err = store.BeginChannelCreation(ctx, 12, "the-cat", "request-1", "fingerprint-b", `{"title":"Other"}`)
+	_, _, err = store.BeginChannelCreation(ctx, user.ID, acc, "the-cat", "request-1", "fingerprint-b", `{"title":"Other"}`)
 	if !errors.Is(err, channelstore.ErrChannelCreationIdempotencyConflict) {
 		t.Fatalf("different payload error = %v, want idempotency conflict", err)
 	}
@@ -44,7 +50,10 @@ func TestChannelCreationOperationPersistsRemoteIdentityAndPartialSteps(t *testin
 	defer store.Close()
 	ctx := context.Background()
 
-	op, _, err := store.BeginChannelCreation(ctx, 0, "official", "request-2", "fingerprint", `{"title":"News"}`)
+	user := createUser(t, store, "creator")
+	acc := ownerAccount(t, store, user.ID, "official", channelstore.NetworkTelegram, 2)
+
+	op, _, err := store.BeginChannelCreation(ctx, user.ID, acc, "official", "request-2", "fingerprint", `{"title":"News"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +68,7 @@ func TestChannelCreationOperationPersistsRemoteIdentityAndPartialSteps(t *testin
 		t.Fatal(err)
 	}
 
-	got, ok, err := store.GetChannelCreation(ctx, 0, "official", "request-2")
+	got, ok, err := store.GetChannelCreation(ctx, user.ID, "official", "request-2")
 	if err != nil || !ok {
 		t.Fatalf("GetChannelCreation = (%+v, %v, %v)", got, ok, err)
 	}

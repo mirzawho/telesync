@@ -52,6 +52,17 @@ func (s *Service) Handle(ctx context.Context, job automation.Job) error {
 			Retryable: false,
 		}
 	}
+	if !job.Owner.Bound() || wh.OwnerUserID != job.Owner.OwnerUserID ||
+		wh.AccountID == "" || wh.AccountID != job.Owner.AccountID {
+		// A queue row is the durable execution binding. Never recover an
+		// unresolved legacy webhook, or a mismatched row, by selecting the
+		// webhook's creator or a server-level client.
+		return &automation.JobError{
+			Code:      "automation_owner_mismatch",
+			Message:   "The queued delivery does not match its persisted owner and account.",
+			Retryable: false,
+		}
+	}
 
 	delivery, err := s.ensureDelivery(ctx, job)
 	if err != nil {
@@ -117,10 +128,16 @@ func (s *Service) ensureDelivery(ctx context.Context, job automation.Job) (autom
 	if found {
 		return delivery, nil
 	}
+	// The delivery inherits the job's owner binding. A delivery row with no
+	// owner is one nothing may retry and nothing may read the history of, so it
+	// is bound here at the moment it exists rather than left for someone to
+	// discover later.
 	created, err := s.store.CreateWebhookDelivery(ctx, automation.WebhookDelivery{
-		WebhookID: job.TargetID,
-		EventID:   job.EventID,
-		Status:    StatusPending,
+		WebhookID:   job.TargetID,
+		EventID:     job.EventID,
+		OwnerUserID: job.Owner.OwnerUserID,
+		AccountID:   job.Owner.AccountID,
+		Status:      StatusPending,
 	})
 	switch {
 	case err == nil:

@@ -11,7 +11,11 @@ import {
 import * as React from "react"
 
 import { ChannelAvatar } from "@/components/channel-avatar"
-import type { ChannelDetail } from "@/lib/types"
+import { AccountIcon, AccountStatusBadge } from "@/components/accounts/account-list"
+import { getMyAccount } from "@/lib/account-api"
+import { accountTitle, serverLabel } from "@/lib/telegram-account"
+import type { ChannelDetail, TelegramAccount } from "@/lib/types"
+import { ApiError } from "@/lib/api"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@workspace/ui/components/accordion"
 import { Button } from "@workspace/ui/components/button"
 import { Dialog, DialogContent, DialogTitle } from "@workspace/ui/components/dialog"
@@ -28,15 +32,25 @@ export interface ChannelInformationDialogProps {
   clientKey: string
   telegramChannelId: string
   localChannelId: number
+  // accountId is the account this channel is reached through, read from the
+  // channel's own record. It is the identity whose capabilities the dialog
+  // reports — two readers of one channel may legitimately see different rights,
+  // because the rights are that account's, not the channel's.
+  accountId?: string
   onOpenChange: (open: boolean) => void
   onView: () => void
   onEditCategories: () => void
   onDelete: () => void
-  fetchDetail: (clientKey: string, telegramChannelId: string, signal: AbortSignal) => Promise<ChannelDetail>
+  fetchDetail: (accountID: string, telegramChannelId: string, signal: AbortSignal) => Promise<ChannelDetail>
+  // fetchAccount reads the account that acts for this channel, so the dialog
+  // can name it. An omitted or failing fetch leaves the account unnamed rather
+  // than guessing which one it was.
+  fetchAccount?: (accountID: string, signal: AbortSignal) => Promise<TelegramAccount>
+  token?: string
 }
 
-export function channelRequestKey(clientKey: string, telegramChannelId: string) {
-  return JSON.stringify([clientKey, telegramChannelId])
+export function channelRequestKey(accountID: string, telegramChannelId: string) {
+  return JSON.stringify([accountID, telegramChannelId])
 }
 
 export function channelMessagePath(localChannelId: number, search: string) {
@@ -93,6 +107,7 @@ export function ChannelInformationError({ message, onClose }: { message: string;
 export function ChannelInformationProfile({
   detail,
   localChannelId,
+  account,
   onCopyId,
   onView,
   onEditCategories,
@@ -100,6 +115,10 @@ export function ChannelInformationProfile({
 }: {
   detail: ChannelDetail
   localChannelId: number
+  // account is the account this channel is reached through, when it is known.
+  // It is shown above the capabilities so a reader reads them as one account's
+  // rights rather than as the channel's own.
+  account?: TelegramAccount | null
   onCopyId: () => void
   onView?: () => void
   onEditCategories?: () => void
@@ -188,9 +207,22 @@ export function ChannelInformationProfile({
                 <Metadata label="نوع کانال">{channelTypeLabel(detail.type)}</Metadata>
                 <Metadata label="وضعیت عضویت">{membershipLabel(detail.membership_status)} · {detail.is_member ? "عضو هستید" : "عضو نیستید"}</Metadata>
                 <Metadata label="وضعیت مدیریت">{detail.is_managed ? "مدیریت‌شده" : "مدیریت‌نشده"}</Metadata>
+                {/* The account is named before its rights, so "what can I do
+                    here" is read as what this account can do here. Two readers
+                    of one channel may see different answers and both are
+                    correct — the capabilities are the account's MTProto rights. */}
+                {account && (
+                  <Metadata label="حساب متصل">
+                    <AccountSummary account={account} />
+                  </Metadata>
+                )}
                 {detail.permissions && (
                   <div>
-                    <dt className="mb-1.5 text-xs text-muted-foreground">دسترسی‌ها</dt>
+                    <dt className="mb-1.5 text-xs text-muted-foreground">
+                      {account
+                        ? `دسترسی‌های ${accountTitle(account)}`
+                        : "دسترسی‌ها"}
+                    </dt>
                     <dd className="flex flex-wrap gap-1.5">
                       {detail.permissions.read && <Permission>مشاهده پیام</Permission>}
                       {detail.permissions.new && <Permission>ارسال پیام</Permission>}
@@ -205,6 +237,24 @@ export function ChannelInformationProfile({
         </Accordion>
       </div>
     </div>
+  )
+}
+
+// AccountSummary is the account a channel is reached through: its icon, its
+// name and its connection state. It carries no credential and no full phone
+// number — the record has neither.
+function AccountSummary({ account }: { account: TelegramAccount }) {
+  return (
+    <span data-slot="channel-account" className="flex min-w-0 items-center gap-2">
+      <AccountIcon account={account} className="size-7" />
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate text-sm">{accountTitle(account)}</span>
+        <span className="text-muted-foreground truncate text-xs">
+          {serverLabel(account.server_key, account.network_type)}
+        </span>
+      </span>
+      <AccountStatusBadge account={account} />
+    </span>
   )
 }
 
@@ -234,16 +284,24 @@ export function ChannelInformationDialog({
   clientKey,
   telegramChannelId,
   localChannelId,
+  accountId,
   onOpenChange,
   onView,
   onEditCategories,
   onDelete,
   fetchDetail,
+  fetchAccount,
+  token,
 }: ChannelInformationDialogProps) {
   const { toast } = useToast()
-  const requestKey = channelRequestKey(clientKey, telegramChannelId)
+  const requestKey = channelRequestKey(accountId ?? "", telegramChannelId)
   const [loaded, setLoaded] = React.useState<{ key: string; detail: ChannelDetail } | null>(null)
   const [failure, setFailure] = React.useState<{ key: string; message: string } | null>(null)
+  // The account this channel is reached through. It is fetched by its opaque
+  // id from the reader's own account listing and is shown so the capabilities
+  // below can be read as *this account's* rights — which is what they are. Two
+  // readers of one channel may see different answers, and both are right.
+  const [account, setAccount] = React.useState<TelegramAccount | null>(null)
   const currentDetail = currentChannelDetail(open, requestKey, loaded)
   const currentError = open && failure?.key === requestKey ? failure.message : null
 
@@ -255,11 +313,30 @@ export function ChannelInformationDialog({
     }
     const controller = new AbortController()
     setFailure(null)
-    fetchDetail(clientKey, telegramChannelId, controller.signal)
+    if (!accountId) {
+      setFailure({ key: requestKey, message: "حساب این کانال مشخص نیست." })
+      return () => controller.abort()
+    }
+    fetchDetail(accountId, telegramChannelId, controller.signal)
       .then((result) => { if (!controller.signal.aborted) setLoaded({ key: requestKey, detail: result }) })
       .catch(() => { if (!controller.signal.aborted) setFailure({ key: requestKey, message: "دریافت اطلاعات کانال ناموفق بود." }) })
     return () => controller.abort()
-  }, [fetchDetail, open, requestKey, clientKey, telegramChannelId])
+  }, [fetchDetail, open, requestKey, clientKey, accountId, telegramChannelId])
+
+  React.useEffect(() => {
+    if (!open) {
+      setAccount(null)
+      return
+    }
+    // Without a fetcher or without an account id there is nothing to say about
+    // the account, and the dialog says nothing rather than inventing one.
+    if (!fetchAccount || !accountId) return
+    const controller = new AbortController()
+    fetchAccount(accountId, controller.signal)
+      .then((result) => { if (!controller.signal.aborted) setAccount(result) })
+      .catch(() => undefined)
+    return () => controller.abort()
+  }, [open, accountId, fetchAccount])
 
   const copyId = async () => {
     if (!currentDetail) return
@@ -279,6 +356,7 @@ export function ChannelInformationDialog({
         {currentDetail && <ChannelInformationProfile
           detail={currentDetail}
           localChannelId={localChannelId}
+          account={account}
           onCopyId={copyId}
           onView={currentDetail.permissions?.read ? onView : undefined}
           onEditCategories={onEditCategories}

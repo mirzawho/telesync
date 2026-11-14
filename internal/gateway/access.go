@@ -55,8 +55,25 @@ func visible(authr *channelstore.Authorizer, kind channelstore.ResourceKind, act
 // channel. A result with no record keeps localID 0: it carries no assignment,
 // so only the global view admits it.
 func (s *Server) resolveTargets(ctx context.Context, key string, telegramIDs []int64) (map[int64]int64, error) {
+	if len(telegramIDs) == 0 {
+		return map[int64]int64{}, nil
+	}
+	// A request that named an account resolves only that account's
+	// registrations: a channel another account registered is not visible here,
+	// so it carries no local id and only an explicit grant could admit it.
+	if scoped, ok := ctx.Value(scopedStoreKey{}).(resolvedChannelStore); ok {
+		out := make(map[int64]int64, len(telegramIDs))
+		for _, id := range telegramIDs {
+			if row, found, err := scoped.Get(ctx, key, id); err != nil {
+				return map[int64]int64{}, err
+			} else if found {
+				out[id] = row.ID
+			}
+		}
+		return out, nil
+	}
 	store, ok := s.cfg.Channels.(TargetsByTelegramID)
-	if s.cfg.Channels == nil || !ok || len(telegramIDs) == 0 {
+	if s.cfg.Channels == nil || !ok {
 		return map[int64]int64{}, nil
 	}
 	return store.LocalIDsByChannelID(ctx, key, telegramIDs)
@@ -76,7 +93,7 @@ func (s *Server) targetOf(ctx context.Context, key string, telegramID int64) (ch
 	if s.cfg.Channels == nil || telegramID <= 0 {
 		return t, nil
 	}
-	row, ok, err := s.cfg.Channels.Get(ctx, key, telegramID)
+	row, ok, err := s.storeFor(ctx).Get(ctx, key, telegramID)
 	if err != nil {
 		return t, err
 	}

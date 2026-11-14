@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/automation/publishing"
 	"github.com/mirza/telesync/internal/automation/workflows"
@@ -197,21 +198,57 @@ func newEnv(t *testing.T, mutate ...func(*automation.WorkflowInput)) *env {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	channel, err := store.Upsert(ctx, channelstore.Channel{
+	// A workflow is one per user-owned channel registration and publishes
+	// through that account, so the fixture creates one rather than leaving the
+	// binding for someone else to fill in.
+	accID, err := accountid.New()
+	if err != nil {
+		t.Fatalf("accountid: %v", err)
+	}
+	if _, err := store.Create(ctx, channelstore.Account{
+		ID: accID, OwnerUserID: user.ID, ServerKey: "source",
+		NetworkType: channelstore.NetworkTelegram, RemoteUserID: 1,
+		Status: channelstore.AccountStatusConnected,
+	}); err != nil {
+		t.Fatalf("Create account: %v", err)
+	}
+	destinationAccounts := make(map[string]string, 2)
+	for index, key := range []string{"dest-a", "dest-b"} {
+		id, err := accountid.New()
+		if err != nil {
+			t.Fatalf("destination account id: %v", err)
+		}
+		if _, err := store.Create(ctx, channelstore.Account{
+			ID: id, OwnerUserID: user.ID, ServerKey: key,
+			NetworkType: channelstore.NetworkTelegram, RemoteUserID: int64(index + 2),
+			Status: channelstore.AccountStatusConnected,
+		}); err != nil {
+			t.Fatalf("Create destination account: %v", err)
+		}
+		if _, err := store.UpsertFor(ctx, id, channelstore.Channel{
+			ClientKey: key, ChannelID: int64(111 + index*111), PeerType: channelstore.PeerChannel,
+			Title: "Destination", MembershipStatus: channelstore.StatusMember,
+		}); err != nil {
+			t.Fatalf("register destination channel: %v", err)
+		}
+		destinationAccounts[key] = id
+	}
+	channel, err := store.UpsertFor(ctx, accID, channelstore.Channel{
 		ClientKey: "source", ChannelID: 555, PeerType: channelstore.PeerChannel,
 		Title: "Source", MembershipStatus: channelstore.StatusMember,
 	})
 	if err != nil {
-		t.Fatalf("Upsert: %v", err)
+		t.Fatalf("UpsertFor: %v", err)
 	}
 
 	in := automation.WorkflowInput{
 		ManagedChannelID: channel.ID,
+		AccountID:        accID,
 		CreatedBy:        user.ID,
 		Enabled:          true,
 		Destinations: []automation.WorkflowDestination{
-			{DestinationType: string(automation.DestinationTelegram), ClientKey: "dest-a", ChannelID: 111, Enabled: true},
-			{DestinationType: string(automation.DestinationTelegram), ClientKey: "dest-b", ChannelID: 222, Enabled: true},
+			{DestinationType: string(automation.DestinationTelegram), ClientKey: "dest-a", ChannelID: 111, AccountID: destinationAccounts["dest-a"], Enabled: true},
+			{DestinationType: string(automation.DestinationTelegram), ClientKey: "dest-b", ChannelID: 222, AccountID: destinationAccounts["dest-b"], Enabled: true},
 		},
 	}
 	for _, fn := range mutate {
@@ -224,7 +261,7 @@ func newEnv(t *testing.T, mutate ...func(*automation.WorkflowInput)) *env {
 
 	e := &env{
 		t: t, store: store, user: user, channel: channel, workflow: workflow,
-		eventID: insertEvent(t, store, channel.ID, 9, "hello #news", nil),
+		eventID: insertEvent(t, store, channel.ID, accID, user.ID, 9, "hello #news", nil),
 		publish: newFakePublisher(),
 		ai:      &fakeAI{result: automation.PolishResult{Text: "A polished hello.", Title: "Polished", Model: "test-model"}},
 		marker:  &fakeMarker{},
@@ -244,8 +281,8 @@ func newEnv(t *testing.T, mutate ...func(*automation.WorkflowInput)) *env {
 }
 
 // insertEvent records one source message as a stored automation event.
-func insertEvent(t *testing.T, store *channelstore.Store, channelID, messageID int64, text string,
-	media *rpc.Media) string {
+func insertEvent(t *testing.T, store *channelstore.Store, channelID int64, accountID string,
+	ownerUserID, messageID int64, text string, media *rpc.Media) string {
 
 	t.Helper()
 	now := time.Now().UTC()
@@ -256,7 +293,8 @@ func insertEvent(t *testing.T, store *channelstore.Store, channelID, messageID i
 		OccurredAt: now, ReceivedAt: now,
 		Payload: automation.MessagePayload{Message: rpc.Message{ID: int(messageID), Text: text, Media: media,
 			Entities: []rpc.Entity{{Type: "hashtag", Offset: 6, Length: 5}}}},
-	})
+		AccountID: accountID,
+	}.WithOwner(ownerUserID))
 	if err != nil || !inserted {
 		t.Fatalf("InsertMessageEvent: inserted=%v err=%v", inserted, err)
 	}
@@ -265,7 +303,8 @@ func insertEvent(t *testing.T, store *channelstore.Store, channelID, messageID i
 
 func (e *env) job() automation.Job {
 	return automation.Job{ID: 1, EventID: e.eventID, Kind: automation.JobWorkflowRun,
-		TargetID: e.workflow.ID, Attempt: 1, MaxAttempts: 5}
+		TargetID: e.workflow.ID, Attempt: 1, MaxAttempts: 5,
+		Owner: automation.Owner{OwnerUserID: e.user.ID, AccountID: e.workflow.AccountID}}
 }
 
 func (e *env) run(t *testing.T) automation.WorkflowRun {
@@ -284,9 +323,29 @@ func (e *env) handle() error {
 	return e.handler.HandleJob(context.Background(), e.job())
 }
 
+func TestAJobForAnotherAccountCannotRunTheWorkflow(t *testing.T) {
+	e := newEnv(t)
+	job := e.job()
+	job.Owner.AccountID = "acc_wrong"
+	err := e.handler.HandleJob(context.Background(), job)
+	if err == nil {
+		t.Fatal("a job bound to a different account must not run this workflow")
+	}
+	if len(e.publish.calls) != 0 {
+		t.Fatalf("mismatched job published %d times", len(e.publish.calls))
+	}
+	page, listErr := e.store.ListRuns(context.Background(), e.workflow.ID, automation.RunListOptions{})
+	if listErr != nil {
+		t.Fatalf("ListRuns: %v", listErr)
+	}
+	if len(page.Runs) != 0 {
+		t.Fatalf("mismatched job created %d workflow runs", len(page.Runs))
+	}
+}
+
 // withSourceMedia gives the source message an attachment to publish.
 func (e *env) withSourceMedia() {
-	e.eventID = insertEvent(e.t, e.store, e.channel.ID, 12, "a caption",
+	e.eventID = insertEvent(e.t, e.store, e.channel.ID, e.workflow.AccountID, e.user.ID, 12, "a caption",
 		&rpc.Media{ID: "555:12", Type: "photo", MimeType: "image/jpeg", Filename: "photo.jpg", Size: 5})
 }
 
@@ -310,6 +369,19 @@ func TestARunPublishesTheSourceContentToEveryDestination(t *testing.T) {
 	// Each destination is addressed on its own connection.
 	if e.publish.calls[0].Destination.ClientKey != "dest-a" || e.publish.calls[1].Destination.ClientKey != "dest-b" {
 		t.Fatalf("clients = %q, %q", e.publish.calls[0].Destination.ClientKey, e.publish.calls[1].Destination.ClientKey)
+	}
+	for i, key := range []string{"dest-a", "dest-b"} {
+		var want string
+		for _, dest := range e.workflow.Destinations {
+			if dest.ClientKey == key {
+				want = dest.AccountID
+				break
+			}
+		}
+		if got := e.publish.calls[i].Destination.AccountID; got == "" || got != want {
+			t.Fatalf("destination %q account = %q, want exact registered account %q",
+				key, got, want)
+		}
 	}
 	run := e.run(t)
 	if run.Status != channelstore.WorkflowRunPublished {

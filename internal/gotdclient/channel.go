@@ -48,8 +48,8 @@ func MediaType(media tg.MessageMediaClass) string {
 			return ""
 		}
 		d, ok := doc.(*tg.Document)
-		if !ok {
-			return "document"
+		if !ok || d == nil {
+			return "other"
 		}
 		return documentType(d)
 	case *tg.MessageMediaPoll:
@@ -72,6 +72,22 @@ func MediaType(media tg.MessageMediaClass) string {
 }
 
 func documentType(d *tg.Document) string {
+	if d == nil {
+		return "other"
+	}
+	// Specialized document semantics take precedence over animation/video
+	// container attributes. A TGS or WebM sticker can carry those attributes
+	// too, but Telegram still identifies the document as a sticker.
+	for _, attr := range d.Attributes {
+		if _, ok := attr.(*tg.DocumentAttributeCustomEmoji); ok {
+			return "custom_emoji"
+		}
+	}
+	for _, attr := range d.Attributes {
+		if _, ok := attr.(*tg.DocumentAttributeSticker); ok {
+			return "sticker"
+		}
+	}
 	// Audio semantics are more specific than the generic document constructor;
 	// filenames and MIME types below never promote a document.
 	for _, attr := range d.Attributes {
@@ -86,8 +102,6 @@ func documentType(d *tg.Document) string {
 		switch a := attr.(type) {
 		case *tg.DocumentAttributeAnimated:
 			return "gif"
-		case *tg.DocumentAttributeSticker:
-			return "sticker"
 		case *tg.DocumentAttributeVideo:
 			if a.RoundMessage {
 				return "round_video"
@@ -96,6 +110,84 @@ func documentType(d *tg.Document) string {
 		}
 	}
 	return "document"
+}
+
+// StickerEmoji returns Telegram's sticker alt/emoji from the sticker attribute.
+func StickerEmoji(media tg.MessageMediaClass) string {
+	doc := documentOf(media)
+	if doc == nil {
+		return ""
+	}
+	for _, attr := range doc.Attributes {
+		if sticker, ok := attr.(*tg.DocumentAttributeSticker); ok {
+			return sticker.Alt
+		}
+	}
+	return ""
+}
+
+// StickerAnimated reports animation only after the document is classified as a
+// sticker; generic animated GIFs are not promoted to stickers.
+func StickerAnimated(media tg.MessageMediaClass) bool {
+	doc := documentOf(media)
+	if doc == nil || documentType(doc) != "sticker" {
+		return false
+	}
+	for _, attr := range doc.Attributes {
+		if _, ok := attr.(*tg.DocumentAttributeAnimated); ok {
+			return true
+		}
+	}
+	// Once the sticker attribute has established sticker semantics, Telegram's
+	// TGS MIME type distinguishes its animated-vector container. MIME alone
+	// never promotes a generic document to a sticker.
+	return doc.MimeType == "application/x-tgsticker"
+}
+
+// StickerVideo reports a sticker's video attribute, not a MIME-based guess.
+func StickerVideo(media tg.MessageMediaClass) bool {
+	doc := documentOf(media)
+	return doc != nil && documentType(doc) == "sticker" && MediaVideoAttribute(media) != nil
+}
+
+// StickerMask reports whether the source sticker is a mask sticker.
+func StickerMask(media tg.MessageMediaClass) bool {
+	doc := documentOf(media)
+	if doc == nil {
+		return false
+	}
+	for _, attr := range doc.Attributes {
+		if sticker, ok := attr.(*tg.DocumentAttributeSticker); ok {
+			return sticker.Mask
+		}
+	}
+	return false
+}
+
+// StickerMaskCoords returns the source sticker's mask placement when present.
+func StickerMaskCoords(media tg.MessageMediaClass) *tgapi.StickerMaskCoords {
+	doc := documentOf(media)
+	if doc == nil {
+		return nil
+	}
+	for _, attr := range doc.Attributes {
+		if sticker, ok := attr.(*tg.DocumentAttributeSticker); ok {
+			coords, exists := sticker.GetMaskCoords()
+			if exists {
+				return &tgapi.StickerMaskCoords{N: coords.N, X: coords.X, Y: coords.Y, Zoom: coords.Zoom}
+			}
+		}
+	}
+	return nil
+}
+
+func documentOf(media tg.MessageMediaClass) *tg.Document {
+	msg, ok := media.(*tg.MessageMediaDocument)
+	if !ok {
+		return nil
+	}
+	doc, _ := msg.Document.(*tg.Document)
+	return doc
 }
 
 // MediaVideoAttribute returns Telegram's authoritative video metadata, if any.
@@ -120,6 +212,9 @@ func MediaWidth(media tg.MessageMediaClass) int {
 	if video := MediaVideoAttribute(media); video != nil {
 		return video.W
 	}
+	if size := MediaImageSizeAttribute(media); size != nil {
+		return size.W
+	}
 	return 0
 }
 
@@ -127,7 +222,23 @@ func MediaHeight(media tg.MessageMediaClass) int {
 	if video := MediaVideoAttribute(media); video != nil {
 		return video.H
 	}
+	if size := MediaImageSizeAttribute(media); size != nil {
+		return size.H
+	}
 	return 0
+}
+
+func MediaImageSizeAttribute(media tg.MessageMediaClass) *tg.DocumentAttributeImageSize {
+	doc := documentOf(media)
+	if doc == nil {
+		return nil
+	}
+	for _, attr := range doc.Attributes {
+		if size, ok := attr.(*tg.DocumentAttributeImageSize); ok {
+			return size
+		}
+	}
+	return nil
 }
 
 func MediaSupportsStreaming(media tg.MessageMediaClass) bool {

@@ -222,3 +222,17 @@ refresh.
   `documentAttributeAudio{voice=true, duration, waveform}` and `ForceFile=false`
   (`TestSendAVoiceMessageCarriesTheVoiceAttribute`). Not verified against live
   Telegram.
+
+## Account-auth session handoff (2026-11-14)
+
+- The account-auth adapter keeps one `telegram.Client` alive across separate
+  phone-code/2FA HTTP operations. The account's `AccountBox` is supplied as
+  `Options.SessionStorage`; the phone-code hash is stored separately with
+  account/key-version-bound encryption context.
+- On successful authorization, closing the temporary `Client.Run` completes
+  before the permanent account Runner opens the same AccountBox. A
+  `tgtest.Server` integration test verifies that the permanent gotd client can
+  load the saved session and reports the same authorized Telegram user after
+  this close boundary.
+- Verified against gotd v0.162.0's fake server only; live Telegram/Cat login,
+  delivery and handoff remain unverified.

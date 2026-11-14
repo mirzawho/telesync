@@ -22,8 +22,10 @@ var ErrChannelCreationIdempotencyConflict = errors.New("channelstore: channel cr
 // remote create. UserID 0 is reserved for the loopback operator token, which
 // has no database user record.
 type ChannelCreationOperation struct {
-	ID                int64
-	UserID            int64
+	ID        int64
+	UserID    int64
+	// AccountID is the user-owned account this creation runs under.
+	AccountID         string
 	ClientKey         string
 	IdempotencyKey    string
 	Fingerprint       string
@@ -45,7 +47,7 @@ type ChannelCreationOperation struct {
 // retry with the same principal, connection, key and fingerprint returns the
 // existing operation; a mismatched request is a conflict. An unfinished
 // operation must never be silently restarted after an ambiguous outcome.
-func (s *Store) BeginChannelCreation(ctx context.Context, userID int64, clientKey, idempotencyKey, fingerprint, payload string) (ChannelCreationOperation, bool, error) {
+func (s *Store) BeginChannelCreation(ctx context.Context, userID int64, accountID, clientKey, idempotencyKey, fingerprint, payload string) (ChannelCreationOperation, bool, error) {
 	if userID < 0 || strings.TrimSpace(clientKey) == "" || strings.TrimSpace(idempotencyKey) == "" || strings.TrimSpace(fingerprint) == "" {
 		return ChannelCreationOperation{}, false, errors.New("channelstore: invalid channel creation identity")
 	}
@@ -68,8 +70,8 @@ func (s *Store) BeginChannelCreation(ctx context.Context, userID int64, clientKe
 	}
 	now := s.now().UTC()
 	result, err := tx.ExecContext(ctx, `INSERT INTO channel_creation_operations
-		(user_id, client_key, idempotency_key, request_fingerprint, request_payload, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, userID, clientKey, idempotencyKey, fingerprint, payload,
+		(user_id, account_id, client_key, idempotency_key, request_fingerprint, request_payload, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, userID, nullableText(accountID), clientKey, idempotencyKey, fingerprint, payload,
 		ChannelCreationPending, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
 		return ChannelCreationOperation{}, false, fmt.Errorf("channelstore: insert channel creation: %w", err)
@@ -82,7 +84,9 @@ func (s *Store) BeginChannelCreation(ctx context.Context, userID int64, clientKe
 		return ChannelCreationOperation{}, false, fmt.Errorf("channelstore: commit channel creation: %w", err)
 	}
 	return ChannelCreationOperation{
-		ID: id, UserID: userID, ClientKey: clientKey, IdempotencyKey: idempotencyKey,
+		// The binding is reported back as it was stored, so a caller that checks
+		// it does not see an ownerless operation it just created.
+		ID: id, UserID: userID, AccountID: accountID, ClientKey: clientKey, IdempotencyKey: idempotencyKey,
 		Fingerprint: fingerprint, RequestPayload: payload, Status: ChannelCreationPending,
 		CreatedAt: now, UpdatedAt: now,
 	}, true, nil
@@ -132,7 +136,7 @@ func (s *Store) GetChannelCreation(ctx context.Context, userID int64, clientKey,
 		FROM channel_creation_operations WHERE user_id = ? AND client_key = ? AND idempotency_key = ?`, userID, clientKey, idempotencyKey))
 }
 
-const channelCreationColumns = `id, user_id, client_key, idempotency_key, request_fingerprint, request_payload,
+const channelCreationColumns = `id, user_id, account_id, client_key, idempotency_key, request_fingerprint, request_payload,
 	status, remote_channel_id, local_channel_id, channel_created, username_assigned, avatar_updated,
 	locally_registered, error_code, error_message, created_at, updated_at`
 
@@ -143,7 +147,8 @@ type channelCreationRow interface {
 func scanChannelCreation(row channelCreationRow) (ChannelCreationOperation, bool, error) {
 	var op ChannelCreationOperation
 	var createdAt, updatedAt string
-	err := row.Scan(&op.ID, &op.UserID, &op.ClientKey, &op.IdempotencyKey, &op.Fingerprint, &op.RequestPayload,
+	var accountID sql.NullString
+	err := row.Scan(&op.ID, &op.UserID, &accountID, &op.ClientKey, &op.IdempotencyKey, &op.Fingerprint, &op.RequestPayload,
 		&op.Status, &op.RemoteChannelID, &op.LocalChannelID, &op.ChannelCreated, &op.UsernameAssigned,
 		&op.AvatarUpdated, &op.LocallyRegistered, &op.ErrorCode, &op.ErrorMessage, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -152,6 +157,7 @@ func scanChannelCreation(row channelCreationRow) (ChannelCreationOperation, bool
 	if err != nil {
 		return ChannelCreationOperation{}, false, fmt.Errorf("channelstore: read channel creation: %w", err)
 	}
+	op.AccountID = accountID.String
 	op.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
 		return ChannelCreationOperation{}, false, fmt.Errorf("channelstore: parse channel creation created_at: %w", err)

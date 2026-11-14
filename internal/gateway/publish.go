@@ -70,9 +70,16 @@ func (s *Server) publisher() *publishing.Service {
 }
 
 // actorOfPublish is the authorization context a publication runs under: one
-// account, and the permissions it holds as of this request.
+// account, the account it acts as, and the permissions it holds as of this
+// request.
+//
+// AccountID is the resolved Telegram account, never a client-supplied field and
+// never a server key. It is what binds the work a request starts to the session
+// it may use: a send recorded against one user's account is never delivered
+// through another's. It is empty only when no account has been resolved, and
+// the durable queue then refuses the work rather than run it as somebody else.
 func actorOfPublish(a *actor) publishing.Actor {
-	return publishing.Actor{UserID: a.user.ID, Auth: a.auth}
+	return publishing.Actor{UserID: a.user.ID, AccountID: accountIDOf(a), Auth: a.auth}
 }
 
 // publishingRegistry adapts the client registry to the publisher's own worker
@@ -100,7 +107,11 @@ func localChannelsOf(store ManagedStore) publishing.ManagedChannels {
 	if store == nil {
 		return nil
 	}
-	local, ok := store.(LocalChannelStore)
+	// The publishing pipeline needs the account-owner lookup in addition to
+	// the channel reads. Keep this assertion against its exact contract rather
+	// than returning LocalChannelStore, which intentionally exposes a different
+	// local-API surface.
+	local, ok := store.(publishing.ManagedChannels)
 	if !ok {
 		return nil
 	}

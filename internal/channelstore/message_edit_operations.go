@@ -38,6 +38,9 @@ type MessageEditOperation struct {
 	ID                   int64
 	PublicID             string
 	UserID               int64
+	// AccountID is the account the replacement goes out on. It is recorded at
+	// acceptance and binds the queued job, exactly as on a send.
+	AccountID            string
 	ClientKey            string
 	DestinationChannelID string
 	TargetMessageID      int64
@@ -72,7 +75,7 @@ var (
 	ErrMessageEditIdempotencyConflict = errors.New("channelstore: message edit idempotency key already used for another request")
 )
 
-const messageEditOperationColumns = `id, public_id, user_id, client_key, destination_channel_id,
+const messageEditOperationColumns = `id, public_id, user_id, COALESCE(account_id, ''), client_key, destination_channel_id,
 	target_message_id, request_payload, media_kind, media_staging_name, media_filename,
 	media_mime_type, media_size, media_sha256, idempotency_key, request_fingerprint,
 	status, stage, attempt_count, next_attempt_at, remote_message_id, result_media_kind,
@@ -109,13 +112,13 @@ func (s *Store) BeginMessageEditOperation(ctx context.Context, op MessageEditOpe
 		op.Status = MessageEditQueued
 	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO message_edit_operations (
-	public_id, user_id, client_key, destination_channel_id, target_message_id, request_payload,
+	public_id, user_id, account_id, client_key, destination_channel_id, target_message_id, request_payload,
 	media_kind, media_staging_name, media_filename, media_mime_type, media_size, media_sha256,
 	idempotency_key, request_fingerprint, status, stage, attempt_count, next_attempt_at,
 	remote_message_id, result_media_kind, last_error_code, last_error_message, created_at,
 	started_at, completed_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 0, '', '', '', ?, NULL, NULL, ?)`,
-		op.PublicID, op.UserID, strings.TrimSpace(op.ClientKey), strings.TrimSpace(op.DestinationChannelID), op.TargetMessageID,
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 0, '', '', '', ?, NULL, NULL, ?)`,
+		op.PublicID, op.UserID, nullableText(op.AccountID), strings.TrimSpace(op.ClientKey), strings.TrimSpace(op.DestinationChannelID), op.TargetMessageID,
 		op.RequestPayload, op.MediaKind, op.MediaStagingName, op.MediaFilename, op.MediaMimeType, op.MediaSize, op.MediaSHA256,
 		strings.TrimSpace(op.IdempotencyKey), op.RequestFingerprint, string(op.Status), op.Stage, formatTime(now), formatTime(now))
 	if err != nil {
@@ -290,7 +293,7 @@ func scanMessageEditOperation(row messageEditScanner) (MessageEditOperation, err
 		status, createdAt, updatedAt          string
 		nextAttemptAt, startedAt, completedAt sql.NullString
 	)
-	err := row.Scan(&op.ID, &op.PublicID, &op.UserID, &op.ClientKey, &op.DestinationChannelID,
+	err := row.Scan(&op.ID, &op.PublicID, &op.UserID, &op.AccountID, &op.ClientKey, &op.DestinationChannelID,
 		&op.TargetMessageID, &op.RequestPayload, &op.MediaKind, &op.MediaStagingName, &op.MediaFilename,
 		&op.MediaMimeType, &op.MediaSize, &op.MediaSHA256, &op.IdempotencyKey, &op.RequestFingerprint,
 		&status, &op.Stage, &op.AttemptCount, &nextAttemptAt, &op.RemoteMessageID, &op.ResultMediaKind,

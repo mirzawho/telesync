@@ -18,7 +18,7 @@ import {
 import {
   addLink,
   initDraftState,
-  setClientKey,
+  setAccountID,
   setPlatform,
   setSite,
   toggleAttachment,
@@ -26,6 +26,7 @@ import {
 } from "@/lib/publish-draft"
 import type { PublishingOptions } from "@/components/publish/publish-options"
 import type { Entity } from "@/lib/types"
+import type { TelegramAccount } from "@/lib/types"
 
 const html = (node: React.ReactNode) => renderToStaticMarkup(node)
 
@@ -59,6 +60,17 @@ const SOURCE: PublishSource = {
 }
 
 const OPTIONS: PublishingOptions = {
+  accounts: [
+    {
+      id: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      server_key: "cat",
+      network_type: "custom",
+      remote_display_name: "حساب شخصی",
+      remote_username: "personal",
+      phone_number_masked: "",
+      status: "connected",
+    } satisfies TelegramAccount,
+  ],
   servers: [
     {
       key: "cat",
@@ -87,7 +99,7 @@ const noop = () => {}
 
 function telegramState() {
   const s = initDraftState(SOURCE)
-  setClientKey(s, "cat")
+  setAccountID(s, "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", "cat")
   s.telegram.channelIds = ["5", "9"]
   return s
 }
@@ -180,7 +192,7 @@ test("switching to WordPress changes the editor and the preview together", () =>
 // Destinations
 // ---------------------------------------------------------------------------
 
-test("the Telegram destination offers the server combobox and multi-select channels", () => {
+test("the Telegram destination selects a personal account before its multi-select channels", () => {
   const out = html(
     <DesktopPublishingWorkspace
       state={telegramState()}
@@ -188,7 +200,7 @@ test("the Telegram destination offers the server combobox and multi-select chann
       onChange={noop}
     />
   )
-  assert.match(out, /سرور تلگرام/)
+  assert.match(out, /حساب تلگرام/)
   assert.match(out, /کانال‌های مقصد/)
   // The channels are checkboxes, not a single-value select.
   assert.match(out, /type="checkbox"/)
@@ -224,6 +236,37 @@ test("a channel this account may not post to is never offered", () => {
   )
   assert.match(out, /فقط خواندنی/)
   assert.match(out, /disabled/)
+})
+
+test("an empty sendable destination list has its distinct Persian empty state", () => {
+  const options: PublishingOptions = { ...OPTIONS, channels: [] }
+  const out = html(
+    <DesktopPublishingWorkspace
+      state={telegramState()}
+      options={options}
+      onChange={noop}
+    />
+  )
+  assert.match(out, /کانالی با مجوز ارسال برای این حساب یافت نشد/)
+})
+
+test("a destination-list failure stays an error and offers retry instead of empty state", () => {
+  const options: PublishingOptions = {
+    ...OPTIONS,
+    channels: [],
+    errors: { channels: "بارگذاری کانال‌های مقصد ناموفق بود." },
+  }
+  const out = html(
+    <DesktopPublishingWorkspace
+      state={telegramState()}
+      options={options}
+      onChange={noop}
+      onRetryChannels={noop}
+    />
+  )
+  assert.match(out, /بارگذاری کانال‌های مقصد ناموفق بود/)
+  assert.match(out, /تلاش دوباره/)
+  assert.doesNotMatch(out, /کانالی با مجوز ارسال برای این حساب یافت نشد/)
 })
 
 // ---------------------------------------------------------------------------
@@ -279,7 +322,7 @@ test("changing the destination leaves the source attachment's own url alone", ()
   const before = telegramState()
   const beforeURL = before.source.attachments[0]?.url
 
-  setClientKey(before, "official")
+  setAccountID(before, "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb", "official")
   assert.equal(
     before.source.attachments[0]?.url,
     beforeURL,

@@ -71,6 +71,22 @@ func TestFirstRequestFetchesAndCaches(t *testing.T) {
 	}
 }
 
+func TestSameRemoteChannelUsesIndependentAccountCacheEntries(t *testing.T) {
+	cache := openCache(t, newClock())
+	var firstCalls, secondCalls int32
+	first, err := cache.Get(context.Background(), "acc_owner_one", 500, counterFetch(&firstCalls, "first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := cache.Get(context.Background(), "acc_owner_two", 500, counterFetch(&secondCalls, "second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first.Data) != "first" || string(second.Data) != "second" || firstCalls != 1 || secondCalls != 1 {
+		t.Fatalf("account cache entries = (%q, %q), fetches=(%d,%d)", first.Data, second.Data, firstCalls, secondCalls)
+	}
+}
+
 func TestARepeatedRequestWithinTheDayServesTheCache(t *testing.T) {
 	clk := newClock()
 	cache := openCache(t, clk)

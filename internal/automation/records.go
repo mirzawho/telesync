@@ -53,6 +53,13 @@ type Webhook struct {
 	// ever narrows the deployment's own permission: without
 	// TELESYNC_WEBHOOK_ALLOW_LOCALHOST it does nothing at all.
 	AllowLocalhost bool
+	// OwnerUserID and AccountID are the ownership binding. AccountID names the
+	// user-owned Telegram account this webhook's events come through, and
+	// OwnerUserID the Telesync user who owns both. Every read of this record is
+	// scoped by them: one tenant's webhook configuration, secrets and delivery
+	// history are never another's to see.
+	OwnerUserID int64
+	AccountID   string
 	// SourceChannelIDs are the local managed_channels.id values it subscribes
 	// to. These are local row ids, never Telegram ids.
 	SourceChannelIDs []int64
@@ -96,14 +103,23 @@ type WebhookInput struct {
 	SourceChannelIDs []int64
 	AllowLocalhost   bool
 	CreatedBy        int64
+	// AccountID names the user-owned account the webhook is registered against.
+	// It is checked against CreatedBy's own accounts: a webhook may never be
+	// attached to an account its creator does not own.
+	AccountID string
 }
 
 // WebhookDelivery is one logical delivery of one event to one webhook. A retry
 // extends the same row; it never becomes a second delivery.
 type WebhookDelivery struct {
-	ID             int64
-	WebhookID      int64
-	EventID        string
+	ID        int64
+	WebhookID int64
+	EventID   string
+	// OwnerUserID and AccountID are inherited from the webhook and the event at
+	// creation and never change. A delivery's payload is exactly the material a
+	// tenant must not see about another, so every read of one is scoped.
+	OwnerUserID    int64
+	AccountID      string
 	Status         string // pending, delivering, succeeded, failed, cancelled
 	AttemptCount   int
 	NextAttemptAt  *time.Time
@@ -175,8 +191,16 @@ type WorkflowSourceChannel struct {
 
 // Workflow is the one automation attached to one managed source channel.
 type Workflow struct {
-	ID                 int64
-	ManagedChannelID   int64
+	ID               int64
+	ManagedChannelID int64
+	// OwnerUserID and AccountID are the ownership binding. The product rule is
+	// one workflow per managed source channel, and under user-owned accounts the
+	// unit is the registration: two users subscribed to one remote channel are
+	// two managed channels and get two independent workflows. AccountID is the
+	// account a background run publishes under, and it is the source channel's
+	// owner account — never a central one and never another user's.
+	OwnerUserID        int64
+	AccountID          string
 	Enabled            bool
 	AIEnabled          bool
 	AIPrompt           string
@@ -222,16 +246,32 @@ type WorkflowDestination struct {
 	ClientKey       string
 	ChannelID       int64
 	SiteID          int64
-	Options         map[string]any
-	Position        int
-	Enabled         bool
+	// AccountID explicitly names the registered account selected for this
+	// destination and therefore the account that must upload to it. Empty is
+	// preserved for unresolved legacy Telegram destinations and for WordPress;
+	// it is never inferred from a server key or channel.
+	//
+	// It is deliberately not the workflow's account. When the two differ the
+	// publication is a cross-account one: both ends must belong to the same
+	// user, and the upload happens on this account and never on the source's.
+	// Using the source account for a different destination would post as an
+	// identity the destination was never subscribed under.
+	AccountID string
+	Options   map[string]any
+	Position  int
+	Enabled   bool
 }
 
 // WorkflowInput is a create or update request. ManagedChannelID is a local
 // managed_channels.id and is fixed at creation. CreatedBy is read on create
 // only; an update never reassigns it.
 type WorkflowInput struct {
-	ManagedChannelID   int64
+	ManagedChannelID int64
+	// AccountID names the account the workflow runs under. It must be one
+	// CreatedBy owns, and it must be the account that owns the source channel
+	// registration: background execution runs as the source channel's owner and
+	// never as a central or borrowed account.
+	AccountID          string
 	Enabled            bool
 	AIEnabled          bool
 	AIPrompt           string
@@ -274,12 +314,16 @@ type WorkflowRun struct {
 
 // WorkflowPublication is one destination's result within one run.
 type WorkflowPublication struct {
-	ID               int64
-	WorkflowRunID    int64
-	DestinationType  string
-	ClientKey        string
-	ChannelID        int64
-	SiteID           int64
+	ID              int64
+	WorkflowRunID   int64
+	DestinationType string
+	ClientKey       string
+	ChannelID       int64
+	SiteID          int64
+	// AccountID is the exact Telegram identity selected for this destination.
+	// Empty is retained only for pre-binding history and is never inferred from
+	// a server key or a current channel registration.
+	AccountID        string
 	Status           string // pending, published, failed, unknown
 	RemoteMessageID  int64
 	RemotePostID     int64
@@ -360,6 +404,9 @@ type WebhookListOptions struct {
 	PerPage int
 	Query   string
 	Enabled *bool
+	// OwnerUserID scopes the whole listing. A webhook collection is one
+	// tenant's, and without this a page would be a page of everybody's.
+	OwnerUserID int64
 	// Visible reports whether the caller may see one local managed-channel id.
 	// The service applies it so the page and the total it returns are already
 	// restricted to what this caller may see; the gateway does not filter a
@@ -372,6 +419,10 @@ type DeliveryListOptions struct {
 	Page    int
 	PerPage int
 	Status  string
+	// OwnerUserID scopes the listing. Delivery history carries request and
+	// response bodies, so it is the most sensitive read in the subsystem and is
+	// always scoped to one owner.
+	OwnerUserID int64
 }
 
 // WorkflowService is what the gateway calls for workflow configuration and run
@@ -392,6 +443,8 @@ type WorkflowListOptions struct {
 	PerPage int
 	Query   string
 	Enabled *bool
+	// OwnerUserID scopes the whole listing, exactly as on webhooks.
+	OwnerUserID int64
 	// Visible is the same restriction WebhookListOptions carries: supplied by
 	// the gateway, applied by the service, so totals stay honest.
 	Visible func(localChannelID int64) bool

@@ -2,13 +2,15 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 
 import { renderToStaticMarkup } from "react-dom/server"
+import { MemoryRouter } from "react-router"
 
 import { ChannelMessageItem } from "@/components/channel-explorer/message-item"
 import { ChannelMessagesPane } from "@/components/channel-explorer/channel-messages-pane"
 import { ChannelCategoryChips, ChannelListPane } from "@/components/channel-explorer/channel-list"
+import { accountOriginKey, needsAccountControl } from "@/lib/account-channel-scope"
 import { ChannelDeleteDialogContent } from "@/components/channel-explorer/channel-delete-dialog"
 import { deleteChannelForm } from "@/lib/channel-actions"
-import type { Category, Channel, ChannelDetail, ChannelMessage, TelegramServer } from "@/lib/types"
+import type { Category, Channel, ChannelDetail, ChannelMessage, TelegramAccount } from "@/lib/types"
 import { AlertDialog } from "@workspace/ui/components/alert-dialog"
 
 // The panel is `dir="rtl"` end to end, so the logical utilities map to the
@@ -18,6 +20,10 @@ import { AlertDialog } from "@workspace/ui/components/alert-dialog"
 // even though no browser is involved.
 
 const html = (node: React.ReactNode) => renderToStaticMarkup(node)
+// A channel row carries a link, so a list with rows in it needs the router the
+// app runs it under. Empty lists render fine without one.
+const routed = (node: React.ReactNode) =>
+  renderToStaticMarkup(<MemoryRouter initialEntries={["/channels"]}>{node}</MemoryRouter>)
 
 const TEXT_MESSAGE: ChannelMessage = {
   id: 24,
@@ -327,11 +333,6 @@ const CATEGORIES: Category[] = [
   { id: 20, name: "فناوری", description: "", created_at: "", updated_at: "" },
 ]
 
-const SERVERS: TelegramServer[] = [
-  { key: "official", type: "official", enabled: true, health_checkable: true, state: "connected", authorized: true, transport: "ready", last_success_at: null, last_error: "" },
-  { key: "cat", type: "custom", enabled: true, health_checkable: true, state: "error", authorized: null, transport: "disconnected", last_success_at: null, last_error: "offline" },
-]
-
 test("category chips expose their pressed state to assistive tech", () => {
   const out = html(
     <ChannelCategoryChips
@@ -376,16 +377,16 @@ test("channel list replaces the add button with the global channel menu trigger"
   assert.match(out, /aria-label="عملیات کانال‌ها"/)
   assert.doesNotMatch(out, /aria-label="کانال جدید"/)
   assert.match(out, /جستجو در کانال‌ها/)
-  assert.match(out, /data-slot="server-multi-select"/)
   assert.match(out, /data-slot="channel-filter-toolbar"/)
-  assert.ok(out.indexOf('data-slot="server-multi-select"') < out.indexOf('data-slot="category-chips"'))
+  assert.doesNotMatch(out, /data-slot="server-multi-select"/)
+  assert.doesNotMatch(out, /همه سرورها/)
   const toolbar = out.match(/data-slot="channel-filter-toolbar"[^>]*>/)?.[0] ?? ""
   assert.match(toolbar, /dir="rtl"/)
   assert.match(toolbar, /min-w-0/)
   assert.match(out, /overflow-x-auto/)
 })
 
-test("server selector uses configured keys, shows selection summary and connection status", () => {
+test("the Explorer does not use server definitions as account identity filters", () => {
   const out = html(
     <ChannelListPane
       channels={[]}
@@ -396,23 +397,20 @@ test("server selector uses configured keys, shows selection summary and connecti
       onSearchChange={() => undefined}
       selectedCategories={[]}
       onToggleCategory={() => undefined}
-      servers={SERVERS}
-      selectedServers={["cat"]}
-      onToggleServer={() => undefined}
-      onSelectAllServers={() => undefined}
       onAdd={() => undefined}
       onEditCategories={() => undefined}
       onDelete={() => undefined}
     />
   )
-  assert.match(out, /aria-label="فیلتر سرورها: cat"/)
-  assert.match(out, /data-slot="server-multi-select"/)
+  assert.doesNotMatch(out, /server-multi-select/)
+  assert.doesNotMatch(out, /فیلتر سرورها/)
 })
 
 // --- channel message management permissions -------------------------------
 
 const DETAIL: ChannelDetail = {
   id: "141",
+  account_id: "acc_test",
   type: "channel",
   title: "کانال آزمایشی",
   avatar_available: false,
@@ -428,7 +426,7 @@ const DETAIL: ChannelDetail = {
 
 test("channel message viewer shows the composer only with new permission", () => {
   const writable = html(
-    <ChannelMessagesPane channel={DETAIL} channelId={7} client="cat" />
+    <ChannelMessagesPane channel={DETAIL} channelId={7} client="cat" accountId="acc_test" />
   )
   assert.match(writable, /پیام خود را بنویسید/)
   assert.doesNotMatch(writable, /ویرایش پیام|حذف پیام/)
@@ -438,6 +436,7 @@ test("channel message viewer shows the composer only with new permission", () =>
       channel={{ ...DETAIL, permissions: { new: false, edit: false, delete: false, read: true } }}
       channelId={7}
       client="cat"
+      accountId="acc_test"
     />
   )
   assert.doesNotMatch(readOnly, /پیام خود را بنویسید/)
@@ -446,7 +445,7 @@ test("channel message viewer shows the composer only with new permission", () =>
 test("a missing destination is distinct from a confirmed Send denial", () => {
   const allGranted = { ...DETAIL, permissions: { new: true, edit: true, delete: true, read: true } }
   const missingDestination = html(
-    <ChannelMessagesPane channel={allGranted} channelId={2} client="" />
+    <ChannelMessagesPane channel={allGranted} channelId={2} client="" accountId="acc_test" />
   )
   assert.match(missingDestination, /اطلاعات مقصد کانال در دسترس نیست/)
   assert.doesNotMatch(missingDestination, /مقصد یا مجوز کانال در دسترس نیست/)
@@ -456,6 +455,7 @@ test("a missing destination is distinct from a confirmed Send denial", () => {
       channel={{ ...allGranted, permissions: { new: false, edit: true, delete: true, read: true } }}
       channelId={2}
       client="cat"
+      accountId="acc_test"
     />
   )
   assert.match(deniedSend, /امکان ارسال پیام برای این کانال فعال نیست/)
@@ -547,4 +547,134 @@ test("the standalone Telegram-leave action is gone from this interface", () => {
   const out = html(<DeleteBody />)
   assert.doesNotMatch(out, /خروج از کانال \(تلگرام\)/)
   assert.doesNotMatch(out, /حذف رکورد محلی/)
+})
+
+// --- account origin in the channel list ------------------------------------
+
+const ACCOUNT_ONE: TelegramAccount = {
+  id: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  server_key: "official",
+  network_type: "telegram",
+  remote_display_name: "حساب نخست",
+  remote_username: "first",
+  status: "connected",
+}
+
+const ACCOUNT_TWO: TelegramAccount = {
+  id: "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+  server_key: "official",
+  network_type: "telegram",
+  remote_display_name: "حساب دوم",
+  remote_username: "second",
+  status: "connected",
+}
+
+function ownChannel(overrides: Partial<Channel> = {}): Channel {
+  return {
+    id: 1,
+    client_key: "official",
+    account_id: ACCOUNT_ONE.id,
+    channel_id: 100,
+    type: "channel",
+    title: "کانال مشترک",
+    avatar_available: false,
+    membership_status: "member",
+    participants_count: null,
+    created_at: "",
+    updated_at: "",
+    last_synced_at: "",
+    ...overrides,
+  }
+}
+
+const listProps = (channels: Channel[], accounts: TelegramAccount[]) => ({
+  channels,
+  accounts,
+  categories: [] as Category[],
+  filed: {} as Record<number, number[]>,
+  selectedId: null,
+  search: "",
+  onSearchChange: () => undefined,
+  selectedCategories: [] as number[],
+  onToggleCategory: () => undefined,
+  onAdd: () => undefined,
+  onEditCategories: () => undefined,
+  onDelete: () => undefined,
+})
+
+test("two rows for one remote channel are told apart by their account", () => {
+  const first = ownChannel({ id: 1, account_id: ACCOUNT_ONE.id })
+  const second = ownChannel({ id: 2, account_id: ACCOUNT_TWO.id })
+  const out = routed(
+    <ChannelListPane {...listProps([first, second], [ACCOUNT_ONE, ACCOUNT_TWO])} />
+  )
+  // Both rows are drawn: one is never collapsed into the other.
+  assert.equal((out.match(/data-slot="channel-list-item"/g) ?? []).length, 2)
+  // Each names the account it is reached through.
+  assert.match(out, /حساب نخست/)
+  assert.match(out, /حساب دوم/)
+  assert.equal((out.match(/data-slot="account-origin"/g) ?? []).length, 2)
+})
+
+test("a row is never keyed by something two accounts would share", () => {
+  // The same remote channel through two accounts would be one React key if it
+  // were keyed by the channel; the list keys it by the account-scoped origin.
+  const first = ownChannel({ id: 1, account_id: ACCOUNT_ONE.id, channel_id: 100 })
+  const second = ownChannel({ id: 2, account_id: ACCOUNT_TWO.id, channel_id: 100 })
+  assert.equal(first.channel_id, second.channel_id)
+  assert.notEqual(accountOriginKey(first), accountOriginKey(second))
+
+  const out = routed(
+    <ChannelListPane {...listProps([first, second], [ACCOUNT_ONE, ACCOUNT_TWO])} />
+  )
+  // An ambiguous row says "account unknown" rather than passing for one.
+  assert.doesNotMatch(out, /حساب نامشخص/)
+})
+
+test("one account is unambiguous and needs no label on every row", () => {
+  const out = routed(
+    <ChannelListPane {...listProps([ownChannel()], [ACCOUNT_ONE])} />
+  )
+  assert.equal((out.match(/data-slot="channel-list-item"/g) ?? []).length, 1)
+  assert.equal((out.match(/data-slot="account-origin"/g) ?? []).length, 0)
+})
+
+test("an unowned row is labelled as unknown, never as somebody's own", () => {
+  // The pane draws exactly what it is given; the ownership gate is
+  // scopeToOwnAccounts, and a caller that skipped it is the bug. What the pane
+  // must never do is pass such a row off as one of the accounts it knows.
+  const legacy = ownChannel({ id: 9, account_id: undefined })
+  const out = routed(
+    <ChannelListPane
+      {...listProps([ownChannel(), legacy], [ACCOUNT_ONE, ACCOUNT_TWO])}
+    />
+  )
+  assert.match(out, /حساب نامشخص/)
+  assert.match(out, /حساب نخست/)
+  // One label per row: the unknown one never borrows the other's name.
+  assert.equal((out.match(/data-slot="account-origin"/g) ?? []).length, 2)
+})
+
+test("the account control appears only where the server filter cannot say", () => {
+  const two = [ACCOUNT_ONE, ACCOUNT_TWO]
+  assert.equal(needsAccountControl(two, ["official"]), true)
+  const shown = routed(
+    <ChannelListPane
+      {...listProps([ownChannel()], two)}
+      showAccountControl={needsAccountControl(two, ["official"])}
+      onToggleAccount={() => undefined}
+      onSelectAllAccounts={() => undefined}
+      selectedAccounts={[]}
+    />
+  )
+  assert.match(shown, /data-slot="account-multi-select"/)
+  assert.match(shown, /همه حساب‌ها/)
+
+  const one = routed(
+    <ChannelListPane
+      {...listProps([ownChannel()], [ACCOUNT_ONE])}
+      showAccountControl={needsAccountControl([ACCOUNT_ONE], ["official"])}
+    />
+  )
+  assert.doesNotMatch(one, /data-slot="account-multi-select"/)
 })

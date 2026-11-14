@@ -63,7 +63,10 @@ export const permissionsTabs = [
   { value: "wordpress", label: "سایت‌های وردپرسی" },
   { value: "users", label: "مدیرها" },
   { value: "automation", label: "اتوماسیون" },
-  { value: "general", label: "عمومی" },
+  // There is no "عمومی" tab any more. It existed to grant `servers.view`, which
+  // is access to the centrally managed Telegram connections — the one mechanism
+  // v0.0.5 retires. Users, categories, channels, WordPress sites and the
+  // channel Telegram capabilities keep their own tabs above and are untouched.
 ] as const
 
 export type PermissionsTab = (typeof permissionsTabs)[number]["value"]
@@ -247,19 +250,6 @@ export function AdministratorPermissionsContent({
                   { value: "automation.view", label: "مشاهده اتوماسیون" },
                   { value: "webhooks.manage", label: "مدیریت وب‌هوک‌ها" },
                   { value: "workflows.manage", label: "مدیریت ورک‌فلوها" },
-                ]}
-              />
-            </TabsContent>
-            <TabsContent value="general" className="mt-0">
-              <PermissionFlags
-                title="عمومی"
-                draft={draft}
-                onDraftChange={onDraftChange}
-                flags={[
-                  {
-                    value: "servers.view",
-                    label: "مشاهده وضعیت سرورهای تلگرامی",
-                  },
                 ]}
               />
             </TabsContent>

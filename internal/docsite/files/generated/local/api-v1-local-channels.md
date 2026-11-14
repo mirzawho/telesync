@@ -7,7 +7,7 @@
 
 | Method | Path | Auth conditions | Success |
 | --- | --- | --- | --- |
-| GET | `/api/v1/local/channels` | 3 | `200` |
+| GET | `/api/v1/local/channels` | 2 | `200` |
 
 ## GET
 
@@ -18,7 +18,6 @@
 ### Authorization conditions in the source
 
 - `authr.Allowed(kind, action, localID)  (access.go:visible)`
-- `authr.CanList(channelstore.KindChannel)  (local_channels.go:listLocalChannels)`
 - `authr.CanList(kind)  (access.go:visible)`
 
 What these mean for who may call the route is in the authentication paragraph; the conditions are checked, not interpreted.
@@ -46,7 +45,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>operator: GET /api/v1/local/channels → 200</summary>
 
 ```json
-{"data":{"channels":[{"id":1,"client_key":"doc-client","channel_id":1,"type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/local/channels/1/avatar","membership_status":"member","participants_count":null,"created_at":"","updated_at":"","last_synced_at":""}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","has_more":false,"page":1,"per_page":20,"request_id":"docsgen","total":1,"total_pages":1}}
+{"data":{"channels":[]},"meta":{"generated_at":"2026-10-25T10:00:00Z","has_more":false,"page":1,"per_page":20,"request_id":"docsgen","total":0,"total_pages":0}}
 
 ```
 
@@ -64,7 +63,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>administrator: GET /api/v1/local/channels → 200</summary>
 
 ```json
-{"data":{"channels":[{"id":1,"client_key":"doc-client","channel_id":1,"type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/local/channels/1/avatar","membership_status":"member","participants_count":null,"created_at":"","updated_at":"","last_synced_at":""}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","has_more":false,"page":1,"per_page":20,"request_id":"docsgen","total":1,"total_pages":1}}
+{"data":{"channels":[{"id":1,"client_key":"official","account_id":"acc_aaaaaaaaaaaaaaaaaaaaaaaaaa","channel_id":1671633563,"type":"channel","title":"Documented channel","avatar_available":false,"membership_status":"member","participants_count":null,"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z","last_synced_at":"2026-10-25T10:00:00Z"},{"id":2,"client_key":"doc-client","account_id":"acc_aaaaaaaaaaaaaaaaaaaaaaaaaa","channel_id":1,"type":"channel","title":"Documented channel","avatar_available":false,"membership_status":"member","participants_count":null,"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z","last_synced_at":"2026-10-25T10:00:00Z"}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","has_more":false,"page":1,"per_page":20,"request_id":"docsgen","total":2,"total_pages":1}}
 
 ```
 

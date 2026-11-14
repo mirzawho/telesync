@@ -79,6 +79,20 @@ func NewEncrypter(key []byte) (*Encrypter, error) {
 
 // Seal encrypts one value.
 func (e *Encrypter) Seal(plaintext string) (Box, error) {
+	return e.seal(plaintext, nil)
+}
+
+// SealWithAAD encrypts one value and binds the box to a caller-chosen context.
+//
+// The additional data is authenticated but not encrypted, so it must be
+// derivable at open time (an account identity and key version, never a secret).
+// A box sealed this way only opens under exactly the same context: tamper, the
+// wrong key and the wrong context remain one answer, ErrDecrypt.
+func (e *Encrypter) SealWithAAD(plaintext string, aad []byte) (Box, error) {
+	return e.seal(plaintext, aad)
+}
+
+func (e *Encrypter) seal(plaintext string, aad []byte) (Box, error) {
 	nonce := make([]byte, e.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return Box{}, fmt.Errorf("secrets: draw a nonce: %w", err)
@@ -86,20 +100,31 @@ func (e *Encrypter) Seal(plaintext string) (Box, error) {
 	return Box{
 		Version:    Version1,
 		Nonce:      nonce,
-		Ciphertext: e.aead.Seal(nil, nonce, []byte(plaintext), nil),
+		Ciphertext: e.aead.Seal(nil, nonce, []byte(plaintext), aad),
 		SealedAt:   e.now(),
 	}, nil
 }
 
 // Open decrypts one value.
 func (e *Encrypter) Open(box Box) (string, error) {
+	return e.open(box, nil)
+}
+
+// OpenWithAAD decrypts one value sealed with SealWithAAD under the same
+// context. Any difference — a changed box, another key, another context — is
+// reported as ErrDecrypt and nothing more.
+func (e *Encrypter) OpenWithAAD(box Box, aad []byte) (string, error) {
+	return e.open(box, aad)
+}
+
+func (e *Encrypter) open(box Box, aad []byte) (string, error) {
 	if box.Version != Version1 {
 		return "", fmt.Errorf("%w: unsupported box version %d", ErrDecrypt, box.Version)
 	}
 	if len(box.Nonce) != e.aead.NonceSize() || len(box.Ciphertext) <= e.aead.Overhead() {
 		return "", fmt.Errorf("%w: the box is malformed", ErrDecrypt)
 	}
-	plaintext, err := e.aead.Open(nil, box.Nonce, box.Ciphertext, nil)
+	plaintext, err := e.aead.Open(nil, box.Nonce, box.Ciphertext, aad)
 	if err != nil {
 		return "", ErrDecrypt
 	}

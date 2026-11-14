@@ -2,7 +2,9 @@ import { Field, FieldError, FieldLabel } from "@workspace/ui/components/field"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { TelegramServerCombobox } from "@/components/telegram-server-combobox"
-import type { TelegramServer } from "@/lib/types"
+import { ownedAccountIds } from "@/lib/account-channel-scope"
+import { listAll } from "@/lib/session"
+import type { TelegramAccount, TelegramServer } from "@/lib/types"
 
 // A managed channel a form may name as its source, together with the Telegram
 // connection it belongs to. The id is the local managed_channels.id — never a
@@ -11,6 +13,10 @@ export interface SourceChannel {
   id: number
   label: string
   clientKey: string
+  // accountId is the user-owned account this channel belongs to. It is the
+  // authoritative identity behind the row and the thing a workflow or webhook
+  // binds to; `clientKey` only says which server definition it sits on.
+  accountId?: string
   // A second line for the picker, when the caller has one to show.
   detail?: string
 }
@@ -18,7 +24,66 @@ export interface SourceChannel {
 // The name the webhook table has always read this shape by.
 export type SourceChannelOption = SourceChannel
 
+/**
+ * sourceChannelsOf turns the managed-channel listing into picker rows, scoped
+ * to the accounts the reader owns.
+ *
+ * This is the ownership gate for every automation source picker. A row reached
+ * through an account the caller does not own is dropped rather than offered —
+ * being an administrator never widens it — and a row with no owning account at
+ * all is a quarantined legacy record and is dropped for the same reason. What
+ * survives is exactly one reader's own inventory.
+ */
+export function sourceChannelsOf(
+  rows:
+    | readonly {
+        id: number
+        title: string
+        client_key?: string
+        account_id?: string
+      }[]
+    | undefined,
+  accounts: readonly TelegramAccount[]
+): SourceChannel[] {
+  const owned = ownedAccountIds(accounts)
+  return (rows ?? [])
+    .filter((row) => owned.has((row.account_id ?? "").trim()))
+    .map((row) => ({
+      id: row.id,
+      label: row.title,
+      clientKey: row.client_key ?? "",
+      accountId: row.account_id ?? "",
+      detail: row.client_key,
+    }))
+}
+
+// Automation forms need the complete managed inventory before applying the
+// ownership gate. A single 100-row page silently hid valid sources on larger
+// installations.
+export async function listOwnedSourceChannels(
+  token: string,
+  accounts: readonly TelegramAccount[]
+): Promise<SourceChannel[]> {
+  const { rows } = await listAll(
+    token,
+    "/local/channels",
+    (data) =>
+      (data as {
+        channels?: {
+          id: number
+          title: string
+          client_key?: string
+          account_id?: string
+        }[]
+      }).channels ?? [],
+    {},
+    Number.POSITIVE_INFINITY
+  )
+  return sourceChannelsOf(rows, accounts)
+}
+
 export const SERVER_REQUIRED = "انتخاب سرور تلگرام الزامی است."
+export const ACCOUNT_REQUIRED = "انتخاب حساب تلگرام الزامی است."
 export const SOURCE_REQUIRED = "انتخاب کانال مبدأ الزامی است."
 export const SOURCES_REQUIRED = "انتخاب کانال‌های منبع الزامی است."
 
@@ -30,6 +95,47 @@ export function channelsForServer(
 ): SourceChannel[] {
   if (!clientKey) return []
   return channels.filter((channel) => channel.clientKey === clientKey)
+}
+
+// The channels one of the reader's accounts holds. A workflow or webhook is
+// bound to one account, so its source list is that account's inventory and
+// nothing wider — never every channel the installation happens to know.
+export function channelsForAccount(
+  channels: SourceChannel[],
+  accountId: string | undefined
+): SourceChannel[] {
+  if (!accountId) return []
+  return channels.filter((channel) => channel.accountId === accountId)
+}
+
+// The account a saved selection belongs to: the first channel still on file
+// names it, exactly as `serverKeyFor` does for the connection.
+export function accountIdFor(
+  channels: SourceChannel[],
+  ids: number[]
+): string | undefined {
+  for (const id of ids) {
+    const channel = channels.find((candidate) => candidate.id === id)
+    if (channel?.accountId) return channel.accountId
+  }
+  return undefined
+}
+
+// What the picker must list when an account is chosen: that account's
+// channels, plus any already saved channel that belongs to another one. The
+// second half keeps an existing source from being silently trimmed by the
+// visible filter — those rows stay selected and stay posted.
+export function sourceItemsForAccount(
+  channels: SourceChannel[],
+  accountId: string | undefined,
+  selected: number[]
+): SourceChannel[] {
+  const eligible = channelsForAccount(channels, accountId)
+  const kept = channels.filter(
+    (channel) =>
+      selected.includes(channel.id) && channel.accountId !== accountId
+  )
+  return [...eligible, ...kept]
 }
 
 // The connection a saved selection belongs to. A selection may have been made

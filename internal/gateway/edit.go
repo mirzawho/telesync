@@ -20,6 +20,7 @@ import (
 )
 
 type editTarget struct {
+	AccountID string `json:"account_id,omitempty"`
 	ClientKey string `json:"client_key"`
 	ChannelID string `json:"channel_id"`
 	MessageID int64  `json:"message_id"`
@@ -127,7 +128,7 @@ func (s *Server) editTelegramMessage(ctx context.Context, w http.ResponseWriter,
 		s.editFailure(w, err, requestID)
 		return
 	}
-	statusURL := s.messageEditStatusPath(key, strconv.FormatInt(channelID, 10), messageID, accepted.Operation.PublicID)
+	statusURL := s.messageEditStatusPath(routeSelectorOf(r, key), strconv.FormatInt(channelID, 10), messageID, accepted.Operation.PublicID)
 	w.Header().Set("Location", statusURL)
 	if !accepted.Created {
 		w.Header().Set("Idempotent-Replay", "true")
@@ -136,8 +137,11 @@ func (s *Server) editTelegramMessage(ctx context.Context, w http.ResponseWriter,
 		OperationID: accepted.Operation.PublicID,
 		Status:      string(accepted.Operation.Status),
 		AcceptedAt:  RFC3339String(accepted.Operation.CreatedAt),
-		Target:      editTarget{ClientKey: key, ChannelID: strconv.FormatInt(channelID, 10), MessageID: messageID},
-		StatusURL:   statusURL,
+		Target: editTarget{
+			AccountID: accountRouteIDForResponse(r),
+			ClientKey: key, ChannelID: strconv.FormatInt(channelID, 10), MessageID: messageID,
+		},
+		StatusURL: statusURL,
 	}, Meta: metaFor(requestID, s.cfg.Now())})
 }
 
@@ -178,10 +182,13 @@ func (s *Server) telegramMessageEditStatus(ctx context.Context, w http.ResponseW
 		OperationID:  op.PublicID,
 		Status:       string(op.Status),
 		AttemptCount: op.AttemptCount,
-		Target:       editTarget{ClientKey: op.ClientKey, ChannelID: op.DestinationChannelID, MessageID: op.TargetMessageID},
-		AcceptedAt:   RFC3339String(op.CreatedAt),
-		CompletedAt:  formatOptionalTime(op.CompletedAt),
-		NextAttempt:  formatOptionalTime(op.NextAttemptAt),
+		Target: editTarget{
+			AccountID: accountRouteIDForResponse(r),
+			ClientKey: op.ClientKey, ChannelID: op.DestinationChannelID, MessageID: op.TargetMessageID,
+		},
+		AcceptedAt:  RFC3339String(op.CreatedAt),
+		CompletedAt: formatOptionalTime(op.CompletedAt),
+		NextAttempt: formatOptionalTime(op.NextAttemptAt),
 	}
 	if op.Status == channelstore.MessageEditProcessing || op.Status == channelstore.MessageEditRetrying {
 		view.Stage = op.Stage
@@ -199,7 +206,7 @@ func (s *Server) editTargetLocalID(ctx context.Context, key string, channelID in
 	if s.cfg.Channels == nil {
 		return 0, false, nil
 	}
-	row, ok, err := s.cfg.Channels.Get(ctx, key, channelID)
+	row, ok, err := s.storeFor(ctx).Get(ctx, key, channelID)
 	if err != nil {
 		return 0, false, err
 	}
@@ -209,8 +216,8 @@ func (s *Server) editTargetLocalID(ctx context.Context, key string, channelID in
 	return row.ID, true, nil
 }
 
-func (s *Server) messageEditStatusPath(key, channelID string, messageID int64, operationID string) string {
-	return s.fullPath("/api/v1/telegram/" + key + "/channels/" + channelID + "/messages/" +
+func (s *Server) messageEditStatusPath(routeSelector, channelID string, messageID int64, operationID string) string {
+	return s.fullPath("/api/v1/telegram/" + routeSelector + "/channels/" + channelID + "/messages/" +
 		strconv.FormatInt(messageID, 10) + "/edit/" + operationID)
 }
 
@@ -278,7 +285,7 @@ func (s *Server) readMessageEditRequest(w http.ResponseWriter, r *http.Request,
 					return in, invalidEditRequest(http.StatusBadRequest, "Only one file may be sent.")
 				}
 				sawFile = true
-				staged, err = s.cfg.Edit.StageAttachment(r.Context(), &sending.Attachment{
+				staged, err = s.cfg.Edit.StageAttachment(r.Context(), actorOfPublish(actorOf(r)), &sending.Attachment{
 					Reader: part, Name: part.FileName(), MimeType: part.Header.Get("Content-Type"),
 				})
 				if err != nil {

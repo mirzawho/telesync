@@ -58,6 +58,10 @@ export interface ChannelPermissions {
 // id, never the local managed-channel row id.
 export interface ChannelDetail {
   id: string
+  // account_id names the user-owned account this channel is reached through,
+  // when the answer carried one. The message viewer reads the account from the
+  // record, never from whichever server filter happens to be on screen.
+  account_id?: string
   type: string
   title: string
   username?: string
@@ -74,12 +78,61 @@ export interface ChannelDetail {
   participants_count: number | null
 }
 
+// AccountStatus is the lifecycle of one user-owned Telegram account. It is the
+// contract's own set (`V005-ACCOUNT-CONTRACTS.md` §2.1); a value this build does
+// not know is carried through as a plain string and never guessed at.
+export type AccountStatus =
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "reconnecting"
+  | "authentication_required"
+  | "disabled"
+  | "error"
+  | "removed"
+  | (string & {})
+
+// TelegramAccount is one row of GET /api/v1/me/telegram-accounts: a Telegram or
+// Cat account the signed-in user owns and authenticated themselves.
+//
+// `id` is the opaque, server-generated, authoritative session identity
+// (`acc_…`). It is the only thing that ever names "which Telegram identity":
+// never a username, never a phone number, never a server key. The API never
+// returns session bytes, a full phone number or a credential of any kind —
+// `phone_number_masked` is already masked by the server and is shown as-is.
+export interface TelegramAccount {
+  id: string
+  server_key: string
+  network_type: "telegram" | "custom" | (string & {})
+  remote_user_id?: number
+  remote_username?: string
+  remote_display_name?: string
+  phone_number_masked?: string
+  status: AccountStatus
+  created_at?: string
+  authorized_at?: string | null
+  last_connected_at?: string | null
+  last_disconnected_at?: string | null
+  last_error_code?: string
+  // login_methods is what the server reports this server definition supports.
+  // A server that leaves it out is read through loginMethodsOf's own rule; the
+  // panel never claims a method the API did not offer.
+  login_methods?: LoginMethod[]
+}
+
+export type LoginMethod = "phone" | "qr" | (string & {})
+
 // Channel is one row of GET /local/channels: the managed-channel record as
 // stored, addressed by its local `id`. It is the listing's shape, not the
 // channel object; see ChannelDetail for the channel itself.
 export interface Channel {
   id: number
   client_key: string
+  // account_id is the owning user-owned account, the authoritative identity a
+  // channel is reached through. It is optional only because an older answer may
+  // omit it: a row without one is legacy and is never presented as anybody's
+  // own channel.
+  account_id?: string
   channel_id: number
   type: string
   title: string
@@ -157,6 +210,10 @@ export interface MessageMedia {
   height?: number
   supports_streaming?: boolean
   round_message?: boolean
+  sticker_emoji?: string
+  sticker_animated?: boolean
+  sticker_video?: boolean
+  sticker_mask?: boolean
   // waveform is a voice message's own bitpacked amplitude samples, from the
   // same attribute, sent as base64 the way Go encodes a byte string. The API
   // omits it when the message is not a voice recording or the backend reported
@@ -299,6 +356,9 @@ export interface TelegramServer {
   transport: string
   last_success_at: string | null
   last_error: string
+  // Optional on older gateway responses. The panel never infers methods when
+  // the server has not declared its supported login capabilities.
+  login_methods?: LoginMethod[]
   // user is the server's own Telegram account, null when it is not known (a
   // server that is not connected has none).
   user?: TelegramUser | null
@@ -316,3 +376,62 @@ export interface TelegramUser {
 // It carries the whole channel object, permissions included, like every other
 // channel response.
 export type FoundChannel = ChannelDetail
+
+// LoginAttemptState is the persisted login state machine's own vocabulary
+// (`V005-ACCOUNT-CONTRACTS.md` §4). It is the server's record; the wizard's
+// phases are derived from it in `lib/login-flow.ts`, never invented beside it.
+export type LoginAttemptState =
+  | "created"
+  | "connecting"
+  | "waiting_for_code"
+  | "waiting_for_password"
+  | "waiting_for_qr"
+  | "authorized"
+  | "failed"
+  | "expired"
+  | "canceled"
+  | (string & {})
+
+// CodeDelivery is how the code actually arrived, as `auth.sentCode` reported
+// it. `type` is Telegram's own sent-code type name. The panel describes the
+// method the API named and never says "SMS sent" on its own.
+export interface CodeDelivery {
+  type: string
+  // length is the code length Telegram announced, when it announced one.
+  length?: number
+  // timeout_seconds is how long the code stays valid, when Telegram said.
+  timeout_seconds?: number
+}
+
+// LoginQr is the short-lived QR login token and its lifetime. `token` is the
+// value the QR encodes — not a session, not a credential that outlives the
+// attempt — and it is refreshed rather than reused once it expires.
+export interface LoginQr {
+  token: string
+  expires_at?: string | null
+  refresh_after?: string | null
+}
+
+// LoginAttempt is one row of GET /api/v1/me/telegram-accounts/login/{attempt_id}.
+//
+// It is owner-scoped and opaque. `account_id` is set once the attempt is bound
+// to an account; `owner_user_id` is deliberately absent — the client never
+// sends it and never decides on it.
+export interface LoginAttempt {
+  id: string
+  server_key: string
+  method: LoginMethod
+  state: LoginAttemptState
+  // next_step is the server's hint for what to ask for next. "already_connected"
+  // is how an attempt reports that this account was signed in already.
+  next_step?: string
+  account_id?: string
+  phone_number_masked?: string
+  resend_after?: string | null
+  expires_at?: string
+  last_error_code?: string
+  code_delivery?: CodeDelivery
+  qr?: LoginQr
+  created_at?: string
+  updated_at?: string
+}

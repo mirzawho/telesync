@@ -4,17 +4,28 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import { CreateChannelForm, createChannelSubmitIsValid, validateChannelImage, validatePublicUsername } from "./create-channel-form"
+import type { TelegramAccount } from "@/lib/types"
 
-test("creation form requires a server, starts Private, and uses a circular hidden-input picker", () => {
+const ACCOUNT: TelegramAccount = {
+  id: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  server_key: "official",
+  network_type: "telegram",
+  remote_display_name: "حساب اصلی",
+  remote_username: "main",
+  phone_number_masked: "+98 *** **12",
+  status: "connected",
+}
+
+test("creation form selects an explicit personal account and keeps the existing private/media layout", () => {
   const html = renderToStaticMarkup(
     createElement(CreateChannelForm, {
-      servers: [],
+      accounts: [ACCOUNT],
       onSubmit: () => undefined,
       onCheckUsername: async () => ({ state: "unclaimed" as const }),
     })
   )
 
-  assert.match(html, /سرور تلگرام/)
+  assert.match(html, /حساب تلگرام/)
   assert.match(html, /نام کانال/)
   assert.match(html, /خصوصی/)
   assert.doesNotMatch(html, /شناسه عمومی کانال/)
@@ -25,6 +36,20 @@ test("creation form requires a server, starts Private, and uses a circular hidde
   assert.doesNotMatch(html, /<span[^>]*data-slot="switch"/)
 })
 
+test("channel creation cannot be valid without an explicit account id", () => {
+  const base = {
+    accountID: "",
+    title: "Title",
+    description: "",
+    visibility: "private" as const,
+  }
+  assert.equal(createChannelSubmitIsValid({ ...base, accountID: "" }), false)
+  assert.equal(
+    createChannelSubmitIsValid({ ...base, accountID: ACCOUNT.id }),
+    true
+  )
+})
+
 test("public usernames are checked locally before the availability callback", () => {
   assert.equal(validatePublicUsername("news_room"), null)
   assert.ok(validatePublicUsername("ab"))
@@ -33,7 +58,7 @@ test("public usernames are checked locally before the availability callback", ()
 })
 
 test("public creation requires a username while private creation does not", () => {
-  const base = { clientKey: "server", title: "Title", description: "", visibility: "public" as const }
+  const base = { accountID: ACCOUNT.id, title: "Title", description: "", visibility: "public" as const }
   assert.equal(createChannelSubmitIsValid({ ...base, username: "" }), false)
   assert.equal(createChannelSubmitIsValid({ ...base, username: "news_room" }), true)
   assert.equal(createChannelSubmitIsValid({ ...base, visibility: "private", username: "" }), true)

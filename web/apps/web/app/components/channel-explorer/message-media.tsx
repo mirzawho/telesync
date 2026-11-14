@@ -157,7 +157,22 @@ export function MediaView({
   if (kind === "image") return <ImageMedia media={media} status={status} url={url} />
   if (kind === "video") return <VideoMedia media={media} status={status} url={url} />
   if (kind === "audio") return <AudioMedia media={media} status={status} url={url} />
+  if (kind === "sticker") return <StickerFallback media={media} />
   return <FileAttachment media={media} />
+}
+
+// TGS is not natively rendered by browsers. Keep the semantic sticker identity
+// visible and accessible instead of presenting it as a generic download card.
+function StickerFallback({ media }: { media: MessageMedia }) {
+  return (
+    <span
+      role="img"
+      aria-label={media.sticker_emoji ? `استیکر ${media.sticker_emoji}` : "استیکر"}
+      className="flex size-24 items-center justify-center rounded-xl bg-muted/40 text-muted-foreground"
+    >
+      <StickerIcon className="size-10" aria-hidden="true" />
+    </span>
+  )
 }
 
 // The picture is the message. It keeps its own proportions, gets a soft corner

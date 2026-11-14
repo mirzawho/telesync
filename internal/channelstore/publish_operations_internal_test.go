@@ -18,15 +18,16 @@ func TestMigrationsUpgradeASixDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch, err := old.Upsert(ctx, Channel{
-		ClientKey:        "official",
-		ChannelID:        123,
-		PeerType:         PeerChannel,
-		Title:            "Kept",
-		MembershipStatus: StatusMember,
-	})
-	if err != nil {
-		t.Fatal(err)
+	// The row is written with the columns a version-6 schema has: the
+	// repository writes every current column, which this schema does not have.
+	if _, err := old.db.ExecContext(ctx, `INSERT INTO managed_channels
+		(client_key, channel_id, peer_type, title, membership_status, created_at, updated_at, last_synced_at)
+		VALUES ('official', 123, 'channel', 'Kept', 'member', 'now', 'now', 'now')`); err != nil {
+		t.Fatalf("seed v6: %v", err)
+	}
+	ch, ok, err := old.Get(ctx, "official", 123)
+	if err != nil || !ok {
+		t.Fatalf("read the seeded channel back: ok=%v err=%v", ok, err)
 	}
 	if err := old.Close(); err != nil {
 		t.Fatal(err)
@@ -69,5 +70,59 @@ func TestMigrationsUpgradeASixDatabase(t *testing.T) {
 	}
 	if _, err := upgraded.Upsert(ctx, ch); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMigrationTwentyThreeScopesPublishKeysAndPreservesLegacyRows(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state", "channels.db")
+	old := openInternalAt(t, path, 22)
+	user, err := old.CreateUser(ctx, "Operator", "operator", "$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if _, err := old.Create(ctx, Account{
+		ID: accountID, OwnerUserID: user.ID, ServerKey: "official",
+		NetworkType: NetworkTelegram, RemoteUserID: 991,
+		Status: AccountStatusConnected, SessionEncKeyVersion: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		key, destination string
+	}{
+		{"account-op", accountID + ":official:555"},
+		{"unresolved-legacy-op", "official:555"},
+	} {
+		if _, err := old.db.ExecContext(ctx, `INSERT INTO publish_operations
+			(user_id, idempotency_key, request_hash, destination_type, destination_id,
+			 status, result, error_code, created_at, updated_at, account_id)
+			VALUES (?, ?, 'hash', 'telegram', ?, 'succeeded', '{"message":{"id":7}}', '', 'now', 'now', NULL)`,
+			user.ID, row.key, row.destination); err != nil {
+			t.Fatalf("seed pre-v23 operation %q: %v", row.key, err)
+		}
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	upgraded, err := Open(path, Options{})
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	t.Cleanup(func() { _ = upgraded.Close() })
+
+	version, err := upgraded.SchemaVersion(ctx)
+	if err != nil || version != 23 {
+		t.Fatalf("schema version = %d, err=%v; want 23", version, err)
+	}
+	bound, ok, err := upgraded.GetPublishOperationForAccount(ctx, user.ID, accountID, "account-op")
+	if err != nil || !ok || bound.AccountID != accountID || bound.Status != PublishSucceeded {
+		t.Fatalf("bound operation = %+v, ok=%v err=%v", bound, ok, err)
+	}
+	legacy, ok, err := upgraded.GetPublishOperationForAccount(ctx, user.ID, "", "unresolved-legacy-op")
+	if err != nil || !ok || legacy.AccountID != "" {
+		t.Fatalf("unresolved legacy operation = %+v, ok=%v err=%v", legacy, ok, err)
 	}
 }

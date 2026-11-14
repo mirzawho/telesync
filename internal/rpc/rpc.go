@@ -70,7 +70,8 @@ const (
 	// CodeSendUnsupported means the destination cannot take this content — a
 	// media type it does not accept, or a method this backend does not
 	// implement.
-	CodeSendUnsupported = "send_unsupported"
+	CodeSendUnsupported    = "send_unsupported"
+	CodeSendOutcomeUnknown = "send_outcome_unknown"
 	// CodeMediaTooLarge means the attachment is above the transfer limit.
 	CodeMediaTooLarge = "media_too_large"
 	// CodeMessageTooLong means the text is above the destination's limit.
@@ -109,7 +110,8 @@ var (
 	// ErrSendForbidden means the destination refused the message.
 	ErrSendForbidden = errors.New("rpc: the destination refused the message")
 	// ErrSendUnsupported means this content cannot be sent there.
-	ErrSendUnsupported = errors.New("rpc: this content cannot be sent to the destination")
+	ErrSendUnsupported    = errors.New("rpc: this content cannot be sent to the destination")
+	ErrSendOutcomeUnknown = errors.New("rpc: the destination send result could not be verified")
 	// ErrMediaTooLarge means the attachment is above the transfer limit.
 	ErrMediaTooLarge = errors.New("rpc: the attachment is too large to send")
 	// ErrMessageTooLong means the text is above the destination's limit.
@@ -148,8 +150,13 @@ type ErrorBody struct {
 
 // Health is the worker's self-report.
 type Health struct {
-	Key            string      `json:"key"`
-	Type           string      `json:"type"`
+	Key  string `json:"key"`
+	Type string `json:"type"`
+	// AccountID is the opaque account this worker serves. It is the worker's
+	// identity and the routing key.
+	AccountID string `json:"account_id,omitempty"`
+	// OwnerUserID is the Telesync user that owns the account.
+	OwnerUserID    int64       `json:"owner_user_id,omitempty"`
 	State          WorkerState `json:"state"`
 	Authorized     bool        `json:"authorized"`
 	Transport      string      `json:"transport"`
@@ -173,8 +180,12 @@ type Account struct {
 
 // Profile is the authorized account and its client identity.
 type Profile struct {
-	Key                string   `json:"key"`
-	Type               string   `json:"type"`
+	Key  string `json:"key"`
+	Type string `json:"type"`
+	// AccountID is the opaque account this worker serves.
+	AccountID string `json:"account_id,omitempty"`
+	// OwnerUserID is the Telesync user that owns the account.
+	OwnerUserID        int64    `json:"owner_user_id,omitempty"`
 	Authorized         bool     `json:"authorized"`
 	AuthorizationState string   `json:"authorization_state"`
 	User               *Account `json:"user,omitempty"`
@@ -219,6 +230,15 @@ type Sender struct {
 	Username string `json:"username,omitempty"`
 }
 
+// StickerMaskCoords is Telegram's relative mask placement, not a sticker-set
+// identifier and therefore safe to carry between connections.
+type StickerMaskCoords struct {
+	N    int     `json:"n"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	Zoom float64 `json:"zoom"`
+}
+
 // Media describes one attachment. The bytes are fetched separately through
 // MediaFile, so listing a page never downloads images.
 type Media struct {
@@ -226,8 +246,8 @@ type Media struct {
 	// photo of message 500 at index 9. It is opaque to callers: pass it back
 	// (or the id in the media URL) to fetch the bytes.
 	ID string `json:"id"`
-	// Type is one of photo, video, document, audio, voice, sticker, gif, poll,
-	// geo, webpage, other.
+	// Type includes photo, video, document, audio, voice, sticker, gif,
+	// custom_emoji, poll, geo, webpage and other.
 	Type string `json:"type"`
 	// Label is a human-readable description.
 	Label string `json:"label,omitempty"`
@@ -249,6 +269,13 @@ type Media struct {
 	Height            int  `json:"height,omitempty"`
 	SupportsStreaming bool `json:"supports_streaming,omitempty"`
 	RoundMessage      bool `json:"round_message,omitempty"`
+	// Sticker fields come from document attributes. Sticker-set identifiers
+	// and access hashes are intentionally not shared across connections.
+	StickerEmoji      string             `json:"sticker_emoji,omitempty"`
+	StickerAnimated   bool               `json:"sticker_animated,omitempty"`
+	StickerVideo      bool               `json:"sticker_video,omitempty"`
+	StickerMask       bool               `json:"sticker_mask,omitempty"`
+	StickerMaskCoords *StickerMaskCoords `json:"sticker_mask_coords,omitempty"`
 	// Waveform is the voice message's own bitpacked amplitude samples, from
 	// the same attribute. It is omitted when the message is not a voice
 	// recording or the backend reported none: a waveform is never invented.
@@ -442,7 +469,7 @@ type SendRequest struct {
 // The bytes are not part of the JSON body: they travel beside it in the
 // request, so a large attachment never rides a text document.
 type SendMedia struct {
-	// Kind is "photo", "video", "document", "audio" or "voice". A voice
+	// Kind is "photo", "video", "document", "audio", "voice" or "sticker". A voice
 	// recording is its own kind and is never a document: the destination draws
 	// a play button or a download card according to it.
 	Kind string `json:"kind"`
@@ -457,11 +484,16 @@ type SendMedia struct {
 	Data []byte `json:"-"`
 	// Duration is the recording length in seconds, for "audio" and "voice".
 	// Zero means unknown and is sent as no length rather than as a guess.
-	Duration          int  `json:"duration,omitempty"`
-	Width             int  `json:"width,omitempty"`
-	Height            int  `json:"height,omitempty"`
-	SupportsStreaming bool `json:"supports_streaming,omitempty"`
-	RoundMessage      bool `json:"round_message,omitempty"`
+	Duration          int                `json:"duration,omitempty"`
+	Width             int                `json:"width,omitempty"`
+	Height            int                `json:"height,omitempty"`
+	SupportsStreaming bool               `json:"supports_streaming,omitempty"`
+	RoundMessage      bool               `json:"round_message,omitempty"`
+	StickerEmoji      string             `json:"sticker_emoji,omitempty"`
+	StickerAnimated   bool               `json:"sticker_animated,omitempty"`
+	StickerVideo      bool               `json:"sticker_video,omitempty"`
+	StickerMask       bool               `json:"sticker_mask,omitempty"`
+	StickerMaskCoords *StickerMaskCoords `json:"sticker_mask_coords,omitempty"`
 	// Waveform is a voice message's own bitpacked amplitude samples, for
 	// "voice" only. Nil sends none: a waveform is never made up.
 	Waveform []byte `json:"waveform,omitempty"`
@@ -690,6 +722,10 @@ func classify(err error) (*Error, int) {
 	case errors.Is(err, ErrSendUnsupported):
 		return NewError(CodeSendUnsupported, "This content cannot be sent to that destination.", 0),
 			http.StatusBadRequest
+	case errors.Is(err, ErrSendOutcomeUnknown):
+		return NewError(CodeSendOutcomeUnknown,
+				"The destination send result could not be verified; inspect the destination before retrying.", 0),
+			http.StatusConflict
 	case errors.Is(err, ErrMediaTooLarge):
 		return NewError(CodeMediaTooLarge,
 				fmt.Sprintf("The attachment is larger than the %d byte limit.", MaxSendMediaBytes), 0),
@@ -723,6 +759,8 @@ func statusForCode(code string) int {
 	case CodeInvalidInput, CodeInviteInvalid, CodePeerUnresolved, CodeSendUnsupported, CodeMessageTooLong,
 		CodeMessageEditUnsupported, CodeEditMediaRemovalUnsupported:
 		return http.StatusBadRequest
+	case CodeSendOutcomeUnknown:
+		return http.StatusConflict
 	case CodeNeedsAuth:
 		return http.StatusConflict
 	case CodeNotConnected:
@@ -774,6 +812,8 @@ func (e *Error) wire() error {
 		return errors.Join(e, ErrMessageDeleteForbidden)
 	case CodeSendUnsupported:
 		return errors.Join(e, ErrSendUnsupported)
+	case CodeSendOutcomeUnknown:
+		return errors.Join(e, ErrSendOutcomeUnknown)
 	case CodeMediaTooLarge:
 		return errors.Join(e, ErrMediaTooLarge)
 	case CodeMessageTooLong:

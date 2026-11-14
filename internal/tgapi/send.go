@@ -27,7 +27,7 @@ type SendRequest struct {
 
 // SendMedia is the attachment of an outgoing post.
 type SendMedia struct {
-	// Kind is "photo", "video", "document", "audio" or "voice". A voice
+	// Kind is "photo", "video", "document", "audio", "voice" or "sticker". A voice
 	// recording is its own kind and never a document: what the destination
 	// draws — a play button or a download card — is decided by it alone.
 	Kind string
@@ -48,7 +48,12 @@ type SendMedia struct {
 	RoundMessage      bool
 	// Waveform is the voice message's own bitpacked amplitude samples, for
 	// "voice" only. Nil sends none; a waveform is never made up.
-	Waveform []byte
+	Waveform          []byte
+	StickerEmoji      string
+	StickerAnimated   bool
+	StickerVideo      bool
+	StickerMask       bool
+	StickerMaskCoords *StickerMaskCoords
 }
 
 // Media kinds an outgoing attachment can be sent as.
@@ -59,6 +64,7 @@ const (
 	SendMediaDocument   = "document"
 	SendMediaAudio      = "audio"
 	SendMediaVoice      = "voice"
+	SendMediaSticker    = "sticker"
 )
 
 // SendResult is what the destination confirmed about the sent message.
@@ -121,6 +127,8 @@ var (
 	ErrSendForbidden = errors.New("tgapi: the destination refused the message")
 	// ErrSendUnsupported means this content cannot be sent to that destination.
 	ErrSendUnsupported = errors.New("tgapi: this content cannot be sent to the destination")
+	// ErrSendOutcomeUnknown means a send was accepted but could not be verified.
+	ErrSendOutcomeUnknown = errors.New("tgapi: the destination send result could not be verified")
 	// ErrMessageTooLong means the text is above the destination's limit.
 	ErrMessageTooLong              = errors.New("tgapi: the message text is too long")
 	ErrMessageEditForbidden        = errors.New("tgapi: Telegram refused to edit this message")

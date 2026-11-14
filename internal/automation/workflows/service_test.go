@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/automation/workflows"
 	"github.com/mirza/telesync/internal/channelstore"
@@ -37,6 +38,7 @@ func (f *fakeTerms) VerifyTerms(_ context.Context, siteID int64, taxonomy string
 type configWorld struct {
 	store   *channelstore.Store
 	user    channelstore.User
+	account string
 	channel channelstore.Channel
 	terms   *fakeTerms
 	service *workflows.Service
@@ -55,16 +57,29 @@ func newConfigWorld(t *testing.T) *configWorld {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	channel, err := store.Upsert(ctx, channelstore.Channel{
+	// A workflow names the account its source channel is registered under, so
+	// the fixture creates one and registers the channel through it.
+	accID, err := accountid.New()
+	if err != nil {
+		t.Fatalf("accountid: %v", err)
+	}
+	if _, err := store.Create(ctx, channelstore.Account{
+		ID: accID, OwnerUserID: user.ID, ServerKey: "source",
+		NetworkType: channelstore.NetworkTelegram, RemoteUserID: 1,
+		Status: channelstore.AccountStatusConnected,
+	}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	channel, err := store.UpsertFor(ctx, accID, channelstore.Channel{
 		ClientKey: "source", ChannelID: 555, PeerType: channelstore.PeerChannel,
 		Title: "Source", MembershipStatus: channelstore.StatusMember,
 	})
 	if err != nil {
-		t.Fatalf("Upsert: %v", err)
+		t.Fatalf("UpsertFor: %v", err)
 	}
 	terms := &fakeTerms{}
 	return &configWorld{
-		store: store, user: user, channel: channel, terms: terms,
+		store: store, user: user, account: accID, channel: channel, terms: terms,
 		service: &workflows.Service{Store: store, Terms: terms},
 	}
 }
@@ -73,6 +88,7 @@ func newConfigWorld(t *testing.T) *configWorld {
 func (c *configWorld) wordpressInput(options map[string]any) automation.WorkflowInput {
 	return automation.WorkflowInput{
 		ManagedChannelID: c.channel.ID,
+		AccountID:        c.account,
 		CreatedBy:        c.user.ID,
 		Destinations: []automation.WorkflowDestination{{
 			DestinationType: string(automation.DestinationWordPress),
@@ -87,11 +103,17 @@ func TestASecondWorkflowForOneChannelIsRefused(t *testing.T) {
 	c := newConfigWorld(t)
 	ctx := context.Background()
 	in := automation.WorkflowInput{
-		ManagedChannelID: c.channel.ID, CreatedBy: c.user.ID,
+		ManagedChannelID: c.channel.ID, AccountID: c.account, CreatedBy: c.user.ID,
 		Destinations: []automation.WorkflowDestination{{
 			DestinationType: string(automation.DestinationTelegram),
-			ClientKey:       "dest", ChannelID: 777, Enabled: true,
+			ClientKey:       "official", ChannelID: 777, AccountID: c.account, Enabled: true,
 		}},
+	}
+	if _, err := c.store.UpsertFor(ctx, c.account, channelstore.Channel{
+		ClientKey: "official", ChannelID: 777, PeerType: channelstore.PeerChannel,
+		Title: "Destination", MembershipStatus: channelstore.StatusMember,
+	}); err != nil {
+		t.Fatalf("register destination: %v", err)
 	}
 	if _, err := c.service.CreateWorkflow(ctx, in); err != nil {
 		t.Fatalf("CreateWorkflow: %v", err)

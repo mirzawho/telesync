@@ -133,14 +133,18 @@ type sourceChannelView struct {
 }
 
 type workflowDestinationView struct {
-	ID              int64          `json:"id"`
-	DestinationType string         `json:"destination_type"`
-	ClientKey       string         `json:"client_key"`
-	ChannelID       int64          `json:"channel_id"`
-	SiteID          int64          `json:"site_id"`
-	Options         map[string]any `json:"options"`
-	Position        int            `json:"position"`
-	Enabled         bool           `json:"enabled"`
+	ID              int64  `json:"id"`
+	DestinationType string `json:"destination_type"`
+	// AccountID is the authoritative Telegram session identity. It is empty
+	// for WordPress and for legacy Telegram destinations whose ownership was
+	// never resolved; callers must require selection rather than infer one.
+	AccountID string         `json:"account_id"`
+	ClientKey string         `json:"client_key"`
+	ChannelID int64          `json:"channel_id"`
+	SiteID    int64          `json:"site_id"`
+	Options   map[string]any `json:"options"`
+	Position  int            `json:"position"`
+	Enabled   bool           `json:"enabled"`
 }
 
 type workflowRunSummaryView struct {
@@ -244,6 +248,7 @@ type workflowRequest struct {
 
 type workflowDestinationRequest struct {
 	DestinationType string         `json:"destination_type"`
+	AccountID       string         `json:"account_id"`
 	ClientKey       string         `json:"client_key"`
 	ChannelID       int64          `json:"channel_id"`
 	SiteID          int64          `json:"site_id"`
@@ -1373,26 +1378,59 @@ func (s *Server) workflowInputOf(w http.ResponseWriter, r *http.Request, request
 	for i, d := range *req.Destinations {
 		where := "destinations[" + strconv.Itoa(i) + "]"
 		dest := automation.WorkflowDestination{
-			DestinationType: d.DestinationType, ClientKey: d.ClientKey,
+			DestinationType: d.DestinationType, AccountID: strings.TrimSpace(d.AccountID), ClientKey: d.ClientKey,
 			ChannelID: d.ChannelID, SiteID: d.SiteID, Options: d.Options,
 			Position: d.Position, Enabled: d.Enabled == nil || *d.Enabled,
 		}
 		switch d.DestinationType {
 		case string(automation.DestinationTelegram):
-			if strings.TrimSpace(d.ClientKey) == "" || d.ChannelID == 0 {
+			if dest.AccountID == "" || d.ChannelID == 0 {
 				s.fail(w, http.StatusBadRequest, CodeInvalidInput,
-					where+" must name a client_key and a channel_id.", requestID)
+					where+" must name an account_id and a channel_id; select the Telegram account explicitly.", requestID)
 				return automation.WorkflowInput{}, false
 			}
-			// The destination is addressed the way the manual publishing route
-			// addresses one: a connection key and a Telegram peer id. The
-			// permission rule only understands the local managed_channels row,
-			// so the pair is resolved first and the row is what is asked about.
-			target, err := s.targetOf(r.Context(), d.ClientKey, d.ChannelID)
-			if err != nil {
-				s.logf("gateway: request_id=%s automation destination lookup failed: %v", requestID, err)
+			owner := actorOf(r).user.ID
+			if owner <= 0 || s.cfg.Accounts == nil {
+				s.fail(w, http.StatusNotFound, CodeNotFound,
+					where+" does not name an account of the authenticated user.", requestID)
+				return automation.WorkflowInput{}, false
 			}
-			if !access(authr, target).allowed {
+			account, err := s.cfg.Accounts.ByID(r.Context(), owner, dest.AccountID)
+			if err != nil {
+				if errors.Is(err, channelstore.ErrAccountNotFound) {
+					s.fail(w, http.StatusNotFound, CodeNotFound,
+						where+" does not name an account of the authenticated user.", requestID)
+					return automation.WorkflowInput{}, false
+				}
+				s.storeError(w, "automation_destination_account_lookup", err, requestID)
+				return automation.WorkflowInput{}, false
+			}
+			if clientKey := strings.TrimSpace(d.ClientKey); clientKey != "" && clientKey != account.ServerKey {
+				s.fail(w, http.StatusBadRequest, CodeInvalidInput,
+					where+" client_key must match the selected account's server_key.", requestID)
+				return automation.WorkflowInput{}, false
+			}
+			// The account is the identity. Resolve the peer only inside its
+			// registration namespace, then authorize the local managed row.
+			// A server key alone can never select another session or account.
+			channels := s.accountChannels()
+			if channels == nil {
+				s.fail(w, http.StatusServiceUnavailable, CodeAutomationUnavailable,
+					"Account-scoped Telegram channel storage is not configured.", requestID)
+				return automation.WorkflowInput{}, false
+			}
+			channel, found, err := channels.GetForAccount(r.Context(), dest.AccountID, d.ChannelID)
+			if err != nil {
+				s.storeError(w, "automation_destination_channel_lookup", err, requestID)
+				return automation.WorkflowInput{}, false
+			}
+			if !found || channel.ClientKey != account.ServerKey {
+				s.fail(w, http.StatusForbidden, CodeAutomationDestDenied,
+					where+" is not visible to this account.", requestID)
+				return automation.WorkflowInput{}, false
+			}
+			dest.ClientKey = account.ServerKey
+			if !visible(authr, channelstore.KindChannel, channelstore.ActionView, channel.ID) {
 				s.fail(w, http.StatusForbidden, CodeAutomationDestDenied,
 					where+" is not visible to this account.", requestID)
 				return automation.WorkflowInput{}, false
@@ -1513,7 +1551,7 @@ func workflowViewOf(wf automation.Workflow) workflowView {
 			opts = map[string]any{}
 		}
 		v.Destinations = append(v.Destinations, workflowDestinationView{
-			ID: d.ID, DestinationType: d.DestinationType, ClientKey: d.ClientKey,
+			ID: d.ID, DestinationType: d.DestinationType, AccountID: d.AccountID, ClientKey: d.ClientKey,
 			ChannelID: d.ChannelID, SiteID: d.SiteID, Options: opts,
 			Position: d.Position, Enabled: d.Enabled,
 		})

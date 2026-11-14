@@ -73,6 +73,7 @@ func (a *App) announceCreated(path string) {
 // runtimeArgs are the parsed arguments of a runtime command.
 type runtimeArgs struct {
 	Key        string
+	AccountID  string
 	ConfigPath string
 	JSON       bool
 	// Timeout bounds the command. Zero means the command's default.
@@ -88,21 +89,44 @@ const defaultAuthTimeout = 5 * time.Minute
 type runtimeFlags struct {
 	JSON    bool
 	Timeout bool
+	Account bool
 }
 
-// parseRuntimeArgs accepts --key <client>, --config <path> and the flags the
-// command declares. Any other argument is a usage error, so a typo or an
-// inapplicable flag never silently changes which client is affected.
+// parseRuntimeArgs accepts --key <client>, --account <account_id>, --config
+// <path> and the flags the command declares. Any other argument is a usage
+// error, so a typo or an inapplicable flag never silently changes identity.
 func (a *App) parseRuntimeArgs(command string, args []string, flags runtimeFlags) (runtimeArgs, int) {
 	var out runtimeArgs
+	var keyProvided, accountProvided bool
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--key", "-key":
+			keyProvided = true
 			if i+1 >= len(args) {
 				fmt.Fprintf(a.deps.Stderr, "%s: --key needs a client key\n", command)
 				return runtimeArgs{}, 2
 			}
 			out.Key = strings.TrimSpace(args[i+1])
+			i++
+		case "--account":
+			if !flags.Account {
+				a.printRuntimeUsage(command)
+				return runtimeArgs{}, 2
+			}
+			if accountProvided {
+				fmt.Fprintf(a.deps.Stderr, "%s: --account may only be specified once\n", command)
+				return runtimeArgs{}, 2
+			}
+			accountProvided = true
+			if i+1 >= len(args) {
+				fmt.Fprintf(a.deps.Stderr, "%s: --account needs an account id\n", command)
+				return runtimeArgs{}, 2
+			}
+			out.AccountID = strings.TrimSpace(args[i+1])
+			if !validAccountID(out.AccountID) {
+				fmt.Fprintf(a.deps.Stderr, "%s: --account must be an opaque account id\n", command)
+				return runtimeArgs{}, 2
+			}
 			i++
 		case "--config":
 			if i+1 >= len(args) {
@@ -139,7 +163,24 @@ func (a *App) parseRuntimeArgs(command string, args []string, flags runtimeFlags
 			return runtimeArgs{}, 2
 		}
 	}
+	if keyProvided && accountProvided {
+		fmt.Fprintf(a.deps.Stderr, "%s: --key and --account are mutually exclusive\n", command)
+		return runtimeArgs{}, 2
+	}
 	return out, 0
+}
+
+func validAccountID(id string) bool {
+	if len(id) != len("acc_")+26 || !strings.HasPrefix(id, "acc_") {
+		return false
+	}
+	const crockford = "0123456789abcdefghjkmnpqrstvwxyz"
+	for i := len("acc_"); i < len(id); i++ {
+		if !strings.ContainsRune(crockford, rune(id[i])) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *App) printRuntimeUsage(command string) {
@@ -154,6 +195,9 @@ func (a *App) printRuntimeUsage(command string) {
 	case "admin":
 		fmt.Fprintf(a.deps.Stderr,
 			"usage: telesync admin [--config <path>]   (asks for the username and password)\n")
+	case "worker":
+		fmt.Fprintf(a.deps.Stderr,
+			"usage: telesync worker (--account <account_id> | --key <client>) [--config <path>]\n")
 	default:
 		fmt.Fprintf(a.deps.Stderr, "usage: telesync %s --key <client> [--config <path>]\n", command)
 	}
@@ -225,11 +269,11 @@ func (a *App) runDaemon(ctx context.Context, args []string) int {
 
 // runWorker implements "worker --key <client>".
 func (a *App) runWorker(ctx context.Context, args []string) int {
-	parsed, code := a.parseRuntimeArgs("worker", args, runtimeFlags{})
+	parsed, code := a.parseRuntimeArgs("worker", args, runtimeFlags{Account: true})
 	if code != 0 {
 		return code
 	}
-	if parsed.Key == "" {
+	if parsed.Key == "" && parsed.AccountID == "" {
 		a.printRuntimeUsage("worker")
 		return 2
 	}
@@ -237,18 +281,35 @@ func (a *App) runWorker(ctx context.Context, args []string) int {
 		fmt.Fprintf(a.deps.Stderr, "the runtime is not available in this build\n")
 		return 1
 	}
-	cl, path, code := a.enabledClient(parsed)
-	if code != 0 {
-		return code
-	}
-	req := RuntimeRequest{ConfigPath: path, Client: cl}
-	// The configuration is best-effort here: the client is already resolved,
-	// and a worker must not refuse to run because a reload later failed.
-	if cfg, loadErr := appconfig.Load(path, a.deps.Lookup); loadErr == nil {
-		req.Config = cfg
+	var req RuntimeRequest
+	if parsed.AccountID != "" {
+		cfg, path, created, err := a.loadConfigPath(parsed.ConfigPath)
+		if created {
+			a.announceCreated(path)
+		}
+		if err != nil {
+			fmt.Fprintf(a.deps.Stderr, "%v\n", err)
+			return 1
+		}
+		req = RuntimeRequest{ConfigPath: path, Config: cfg, AccountID: parsed.AccountID}
+	} else {
+		cl, path, exit := a.enabledClient(parsed)
+		if exit != 0 {
+			return exit
+		}
+		req = RuntimeRequest{ConfigPath: path, Client: cl}
+		// The configuration is best-effort here: the client is already resolved,
+		// and a worker must not refuse to run because a reload later failed.
+		if cfg, loadErr := appconfig.Load(path, a.deps.Lookup); loadErr == nil {
+			req.Config = cfg
+		}
 	}
 	if err := a.deps.Runtime.Worker(ctx, req); err != nil {
-		fmt.Fprintf(a.deps.Stderr, "worker %s: %v\n", parsed.Key, err)
+		identity := parsed.Key
+		if parsed.AccountID != "" {
+			identity = parsed.AccountID
+		}
+		fmt.Fprintf(a.deps.Stderr, "worker %s: %v\n", identity, err)
 		return 1
 	}
 	return 0

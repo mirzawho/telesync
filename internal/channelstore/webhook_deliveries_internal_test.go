@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/secrets"
 )
@@ -21,18 +22,38 @@ func testStore(t *testing.T) *Store {
 	return openInternal(t)
 }
 
-func testUser(t *testing.T, s *Store) int64 {
+type webhookTestIdentity struct {
+	ownerID   int64
+	accountID string
+}
+
+func testIdentity(t *testing.T, s *Store) webhookTestIdentity {
+	return testIdentityNamed(t, s, "Operator", 101)
+}
+
+func testIdentityNamed(t *testing.T, s *Store, username string, remoteUserID int64) webhookTestIdentity {
 	t.Helper()
-	u, err := s.CreateUser(context.Background(), "Operator", "operator", "hash", true)
+	u, err := s.CreateUser(context.Background(), username, username, "hash", true)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	return u.ID
+	id, err := accountid.New()
+	if err != nil {
+		t.Fatalf("accountid.New: %v", err)
+	}
+	if _, err := s.Create(context.Background(), Account{
+		ID: id, OwnerUserID: u.ID, ServerKey: "client-a",
+		NetworkType: NetworkTelegram, RemoteUserID: remoteUserID,
+		Status: AccountStatusConnected,
+	}); err != nil {
+		t.Fatalf("Create account: %v", err)
+	}
+	return webhookTestIdentity{ownerID: u.ID, accountID: id}
 }
 
-func testChannel(t *testing.T, s *Store) int64 {
+func testChannel(t *testing.T, s *Store, identity webhookTestIdentity) int64 {
 	t.Helper()
-	ch, err := s.Upsert(context.Background(), Channel{
+	ch, err := s.UpsertFor(context.Background(), identity.accountID, Channel{
 		ClientKey:        "client-a",
 		ChannelID:        42,
 		PeerType:         PeerChannel,
@@ -45,15 +66,17 @@ func testChannel(t *testing.T, s *Store) int64 {
 	return ch.ID
 }
 
-func testEvent(t *testing.T, s *Store, managedChannelID int64, messageID int64) string {
+func testEvent(t *testing.T, s *Store, identity webhookTestIdentity, managedChannelID int64, messageID int64) string {
 	t.Helper()
 	id := "evt_" + strings.Repeat("a", 8) + itoa(messageID)
 	now := formatTime(time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC))
 	if _, err := s.db.ExecContext(context.Background(), `
-INSERT INTO automation_events (id, type, network_key, source_client_key, managed_channel_id,
+INSERT INTO automation_events (id, type, network_key, source_client_key, account_id,
+	source_account_id, owner_user_id, managed_channel_id,
 	telegram_channel_id, message_id, grouped_id, occurred_at, received_at, payload, created_at)
-VALUES (?, 'telegram.message.created', 'official', 'client-a', ?, -10042, ?, NULL, ?, ?, '{}', ?)`,
-		id, managedChannelID, messageID, now, now, now); err != nil {
+VALUES (?, 'telegram.message.created', 'official', 'client-a', ?, ?, ?, ?, -10042, ?, NULL, ?, ?, '{}', ?)`,
+		id, identity.accountID, identity.accountID, identity.ownerID, managedChannelID,
+		messageID, now, now, now); err != nil {
 		t.Fatalf("insert event: %v", err)
 	}
 	return id
@@ -95,10 +118,11 @@ func testSeal(t *testing.T, plaintext string) *secrets.Box {
 }
 
 // testWebhook creates one enabled webhook and returns its id.
-func testWebhook(t *testing.T, s *Store) int64 {
+func testWebhook(t *testing.T, s *Store, identity webhookTestIdentity) int64 {
 	t.Helper()
 	rec := automation.Webhook{
-		Name:        "feed",
+		Name:        "feed-" + identity.accountID,
+		AccountID:   identity.accountID,
 		Enabled:     true,
 		URL:         "https://receiver.example.com/hook",
 		Method:      "POST",
@@ -106,7 +130,7 @@ func testWebhook(t *testing.T, s *Store) int64 {
 		Timeout:     15 * time.Second,
 		MaxAttempts: 5,
 	}
-	saved, err := s.CreateWebhook(context.Background(), testUser(t, s), rec, testSeal(t, "whsec_abc"))
+	saved, err := s.CreateWebhook(context.Background(), identity.ownerID, rec, testSeal(t, "whsec_abc"))
 	if err != nil {
 		t.Fatalf("CreateWebhook: %v", err)
 	}
@@ -116,9 +140,10 @@ func testWebhook(t *testing.T, s *Store) int64 {
 func TestWebhookDeliveryIsOneRowPerWebhookAndEvent(t *testing.T) {
 	ctx := context.Background()
 	s := testStore(t)
-	channelID := testChannel(t, s)
-	webhookID := testWebhook(t, s)
-	eventID := testEvent(t, s, channelID, 1)
+	identity := testIdentity(t, s)
+	channelID := testChannel(t, s, identity)
+	webhookID := testWebhook(t, s, identity)
+	eventID := testEvent(t, s, identity, channelID, 1)
 
 	rec := automation.WebhookDelivery{
 		WebhookID: webhookID,
@@ -152,9 +177,10 @@ func TestWebhookDeliveryIsOneRowPerWebhookAndEvent(t *testing.T) {
 func TestWebhookAttemptsAreAppendedOnceEachAndRedactedHeadersSurvive(t *testing.T) {
 	ctx := context.Background()
 	s := testStore(t)
-	channelID := testChannel(t, s)
-	webhookID := testWebhook(t, s)
-	eventID := testEvent(t, s, channelID, 1)
+	identity := testIdentity(t, s)
+	channelID := testChannel(t, s, identity)
+	webhookID := testWebhook(t, s, identity)
+	eventID := testEvent(t, s, identity, channelID, 1)
 
 	delivery, err := s.CreateWebhookDelivery(ctx, automation.WebhookDelivery{
 		WebhookID: webhookID, EventID: eventID, Status: DeliveryDelivering,
@@ -227,9 +253,10 @@ func TestWebhookAttemptsAreAppendedOnceEachAndRedactedHeadersSurvive(t *testing.
 func TestWebhookDeliveryDetailCarriesItsRequestAndAttempts(t *testing.T) {
 	ctx := context.Background()
 	s := testStore(t)
-	channelID := testChannel(t, s)
-	webhookID := testWebhook(t, s)
-	eventID := testEvent(t, s, channelID, 1)
+	identity := testIdentity(t, s)
+	channelID := testChannel(t, s, identity)
+	webhookID := testWebhook(t, s, identity)
+	eventID := testEvent(t, s, identity, channelID, 1)
 
 	delivery, err := s.CreateWebhookDelivery(ctx, automation.WebhookDelivery{
 		WebhookID: webhookID, EventID: eventID, Status: DeliveryDelivering,
@@ -277,12 +304,13 @@ func TestWebhookDeliveryDetailCarriesItsRequestAndAttempts(t *testing.T) {
 func TestWebhookDeliveryStateIsUpdatedAndListed(t *testing.T) {
 	ctx := context.Background()
 	s := testStore(t)
-	channelID := testChannel(t, s)
-	webhookID := testWebhook(t, s)
+	identity := testIdentity(t, s)
+	channelID := testChannel(t, s, identity)
+	webhookID := testWebhook(t, s, identity)
 
 	ids := []int64{}
 	for i := int64(1); i <= 3; i++ {
-		eventID := testEvent(t, s, channelID, i)
+		eventID := testEvent(t, s, identity, channelID, i)
 		rec, err := s.CreateWebhookDelivery(ctx, automation.WebhookDelivery{
 			WebhookID: webhookID, EventID: eventID, Status: DeliveryPending,
 		})
@@ -349,9 +377,10 @@ func TestWebhookDeliveryStateIsUpdatedAndListed(t *testing.T) {
 func TestDeletingAWebhookRemovesItsDeliveriesAndAttempts(t *testing.T) {
 	ctx := context.Background()
 	s := testStore(t)
-	channelID := testChannel(t, s)
-	webhookID := testWebhook(t, s)
-	eventID := testEvent(t, s, channelID, 1)
+	identity := testIdentity(t, s)
+	channelID := testChannel(t, s, identity)
+	webhookID := testWebhook(t, s, identity)
+	eventID := testEvent(t, s, identity, channelID, 1)
 
 	delivery, err := s.CreateWebhookDelivery(ctx, automation.WebhookDelivery{
 		WebhookID: webhookID, EventID: eventID, Status: DeliveryDelivering,
@@ -383,9 +412,10 @@ func TestDeletingAWebhookRemovesItsDeliveriesAndAttempts(t *testing.T) {
 func TestWebhookDeliveryRefusesAnUnknownStatusOrANonPositiveAttempt(t *testing.T) {
 	ctx := context.Background()
 	s := testStore(t)
-	channelID := testChannel(t, s)
-	webhookID := testWebhook(t, s)
-	eventID := testEvent(t, s, channelID, 1)
+	identity := testIdentity(t, s)
+	channelID := testChannel(t, s, identity)
+	webhookID := testWebhook(t, s, identity)
+	eventID := testEvent(t, s, identity, channelID, 1)
 
 	if _, err := s.CreateWebhookDelivery(ctx, automation.WebhookDelivery{
 		WebhookID: webhookID, EventID: eventID, Status: "exploded",
@@ -403,5 +433,39 @@ func TestWebhookDeliveryRefusesAnUnknownStatusOrANonPositiveAttempt(t *testing.T
 	}
 	if _, err := s.AppendWebhookAttempt(ctx, rec.ID, automation.WebhookAttempt{AttemptNumber: maxDeliveryAttempts + 1}); !errors.Is(err, ErrInvalidDelivery) {
 		t.Fatalf("err = %v, want ErrInvalidDelivery", err)
+	}
+}
+
+func TestWebhookDeliveryRejectsCrossAccountAndCrossUserMismatches(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(t)
+	sourceIdentity := testIdentityNamed(t, s, "source-owner", 101)
+	otherOwnerAccountID, err := accountid.New()
+	if err != nil {
+		t.Fatalf("accountid.New: %v", err)
+	}
+	if _, err := s.Create(ctx, Account{
+		ID: otherOwnerAccountID, OwnerUserID: sourceIdentity.ownerID, ServerKey: "client-a",
+		NetworkType: NetworkTelegram, RemoteUserID: 202,
+		Status: AccountStatusConnected,
+	}); err != nil {
+		t.Fatalf("Create second same-owner account: %v", err)
+	}
+	sameOwnerDifferentAccount := webhookTestIdentity{
+		ownerID: sourceIdentity.ownerID, accountID: otherOwnerAccountID,
+	}
+	foreignUserIdentity := testIdentityNamed(t, s, "foreign-owner", 303)
+	channelID := testChannel(t, s, sourceIdentity)
+	eventID := testEvent(t, s, sourceIdentity, channelID, 1)
+
+	for _, identity := range []webhookTestIdentity{sameOwnerDifferentAccount, foreignUserIdentity} {
+		webhookID := testWebhook(t, s, identity)
+		_, err := s.CreateWebhookDelivery(ctx, automation.WebhookDelivery{
+			WebhookID: webhookID, EventID: eventID, Status: DeliveryPending,
+		})
+		if !errors.Is(err, ErrInvalidDelivery) {
+			t.Fatalf("CreateWebhookDelivery for owner=%d account=%q error = %v, want ErrInvalidDelivery",
+				identity.ownerID, identity.accountID, err)
+		}
 	}
 }

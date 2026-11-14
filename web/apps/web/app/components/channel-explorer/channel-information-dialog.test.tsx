@@ -3,7 +3,7 @@ import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 
-import type { ChannelDetail } from "@/lib/types"
+import type { ChannelDetail, TelegramAccount } from "@/lib/types"
 import {
   channelRequestKey,
   channelMessagePath,
@@ -135,4 +135,84 @@ test("channel detail error remains an accessible alert", () => {
 
   assert.match(html, /role="alert"/)
   assert.match(html, /دریافت اطلاعات کانال ناموفق بود/)
+})
+
+// --- the account the channel is reached through -----------------------------
+
+const OWN_ACCOUNT: TelegramAccount = {
+  id: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  server_key: "official",
+  network_type: "telegram",
+  remote_display_name: "میرزا",
+  remote_username: "mirza",
+  phone_number_masked: "+98 *** **45",
+  status: "connected",
+}
+
+function renderProfileFor(
+  value: ChannelDetail,
+  account: TelegramAccount | null | undefined
+) {
+  return renderToStaticMarkup(
+    createElement(ChannelInformationProfile, {
+      detail: value,
+      localChannelId: 42,
+      account,
+      onCopyId: () => {},
+      onView: () => {},
+      onEditCategories: () => {},
+      onDelete: () => {},
+    })
+  )
+}
+
+test("the dialog names the account the capabilities belong to", () => {
+  const html = renderProfileFor(detail(), OWN_ACCOUNT)
+  assert.match(html, /data-slot="channel-account"/)
+  assert.match(html, /میرزا/)
+  assert.match(html, /رسمی تلگرام/)
+  // The rights are labelled as that account's, so two readers of one channel
+  // are never told they share a capability set.
+  assert.match(html, /دسترسی‌های میرزا/)
+})
+
+test("two accounts on one channel are shown as two different capability sets", () => {
+  const other: TelegramAccount = {
+    ...OWN_ACCOUNT,
+    id: "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    remote_display_name: "حساب دوم",
+  }
+  const mine = renderProfileFor(detail(), OWN_ACCOUNT)
+  const theirs = renderProfileFor(detail(), other)
+  assert.match(mine, /دسترسی‌های میرزا/)
+  assert.match(theirs, /دسترسی‌های حساب دوم/)
+  assert.notEqual(mine, theirs)
+})
+
+test("an unknown account is not invented; the rights are still shown", () => {
+  // The capability set is real either way — it is the account's, and the dialog
+  // only stops naming the account it could not read.
+  const html = renderProfileFor(detail(), null)
+  assert.doesNotMatch(html, /data-slot="channel-account"/)
+  assert.match(html, /دسترسی‌ها/)
+  assert.match(html, /مشاهده پیام/)
+})
+
+test("the account summary carries no credential and no full phone number", () => {
+  const html = renderProfileFor(detail(), OWN_ACCOUNT)
+  assert.doesNotMatch(html, /\+989\d{9}/)
+  assert.doesNotMatch(html, /session|token|password|api_id/i)
+  // The masked number is never even shown here: this is about who acts, not
+  // about how they signed in.
+  assert.doesNotMatch(html, /\+98 \*\*\*/)
+})
+
+test("the account's real capabilities are what the dialog reports", () => {
+  // The record says read and edit, not new or delete: nothing else may appear
+  // under this account's name.
+  const html = renderProfileFor(detail(), OWN_ACCOUNT)
+  assert.match(html, /مشاهده پیام/)
+  assert.match(html, /ویرایش پیام/)
+  assert.doesNotMatch(html, /ارسال پیام/)
+  assert.doesNotMatch(html, /حذف پیام/)
 })

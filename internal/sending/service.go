@@ -86,15 +86,18 @@ type Staging interface {
 	Limit() int64
 	Write(ctx context.Context, r io.Reader, meta staging.Meta) (staging.File, error)
 	Open(name string) (io.ReadCloser, error)
+	OpenFor(ctx context.Context, ownerUserID int64, accountID, name string) (io.ReadCloser, error)
 	ReadAll(name string) ([]byte, error)
+	ReadFor(ctx context.Context, ownerUserID int64, accountID, name string) ([]byte, error)
 	Remove(name string) error
 	Reconcile(keep func(name string) bool) (int, error)
+	ReconcileOwnedKeeping(ctx context.Context, keep []string, owners []staging.OwnerFilter) (int, error)
 	SweepPartials(olderThan time.Duration) (int, error)
 }
 
 // Jobs schedules background work on the durable queue.
 type Jobs interface {
-	EnqueueMessageSend(ctx context.Context, operationID string, channelID int64) error
+	EnqueueMessageSend(ctx context.Context, operationID string, channelID int64, owner automation.Owner) error
 }
 
 // Service accepts sends and performs them later.
@@ -184,7 +187,7 @@ func (s *Service) Accept(ctx context.Context, a publishing.Actor, in AcceptInput
 	}
 
 	if hasAttachment {
-		kept, err := s.stageAttachment(ctx, in.Attachment)
+		kept, err := s.stageAttachment(ctx, a, in.Attachment)
 		if err != nil {
 			return Accepted{}, err
 		}
@@ -211,6 +214,7 @@ func (s *Service) Accept(ctx context.Context, a publishing.Actor, in AcceptInput
 
 	operation, created, err := s.Operations.BeginSendOperation(ctx, channelstore.SendOperation{
 		UserID:               a.UserID,
+		AccountID:            a.AccountID,
 		ClientKey:            in.ClientKey,
 		DestinationChannelID: formatChannelID(in.DestinationChannelID),
 		RequestPayload:       payloadOf(in.Request),
@@ -239,7 +243,7 @@ func (s *Service) Accept(ctx context.Context, a publishing.Actor, in AcceptInput
 		return Accepted{Operation: operation, Created: false}, nil
 	}
 
-	if err := s.Jobs.EnqueueMessageSend(ctx, operation.PublicID, in.DestinationChannelID); err != nil {
+	if err := s.Jobs.EnqueueMessageSend(ctx, operation.PublicID, in.DestinationChannelID, a.Owner()); err != nil {
 		// The request is not accepted: an operation no job will ever run is a
 		// message that was promised and will never be sent. Both halves are
 		// undone so a retry of the same request starts clean.
@@ -280,8 +284,8 @@ type stagedFile struct {
 // it is there and cannot be held in memory waiting for the rest. The answer is
 // the same either way — an attachment in the staging area, and what its bytes
 // turned out to be.
-func (s *Service) StageAttachment(ctx context.Context, a *Attachment) (*Staged, error) {
-	return s.stageAttachment(ctx, a)
+func (s *Service) StageAttachment(ctx context.Context, owner publishing.Actor, a *Attachment) (*Staged, error) {
+	return s.stageAttachment(ctx, owner, a)
 }
 
 // stageAttachment is the one place an attachment is written down.
@@ -289,7 +293,7 @@ func (s *Service) StageAttachment(ctx context.Context, a *Attachment) (*Staged, 
 // The bytes go straight to the staging area in chunks and are hashed as they
 // pass. What they are is decided from their first bytes rather than from the
 // content type the client declared, which is a claim and is treated as one.
-func (s *Service) stageAttachment(ctx context.Context, a *Attachment) (*Staged, error) {
+func (s *Service) stageAttachment(ctx context.Context, owner publishing.Actor, a *Attachment) (*Staged, error) {
 	if a == nil || (a.Reader == nil && a.Staged == nil) {
 		return nil, &publishing.Error{Status: 400, Code: publishing.CodeInvalidInput,
 			Message: "There is no attachment."}
@@ -305,9 +309,14 @@ func (s *Service) stageAttachment(ctx context.Context, a *Attachment) (*Staged, 
 	}
 	contentType := effectiveContentType(a.MimeType, head)
 
+	// The upload is bound to the account and user it belongs to. Staged bytes
+	// are readable only by the owner named here, so a guessed storage name is
+	// not a way to fetch somebody else's attachment.
 	file, err := s.Staging.Write(ctx, body, staging.Meta{
 		OriginalName: a.Name,
 		MIMEType:     contentType,
+		OwnerUserID:  owner.UserID,
+		AccountID:    owner.AccountID,
 	})
 	if err != nil {
 		if errors.Is(err, staging.ErrTooLarge) {
@@ -324,12 +333,11 @@ func (s *Service) stageAttachment(ctx context.Context, a *Attachment) (*Staged, 
 	return &Staged{File: file, ContentType: contentType}, nil
 }
 
-// attachmentThere reports whether a staged attachment is still on disk.
-func (s *Service) attachmentThere(name string) bool {
-	if name == "" {
+func (s *Service) attachmentThereFor(ctx context.Context, op channelstore.SendOperation) bool {
+	if op.MediaStagingName == "" || op.UserID <= 0 || strings.TrimSpace(op.AccountID) == "" {
 		return false
 	}
-	rc, err := s.Staging.Open(name)
+	rc, err := s.Staging.OpenFor(ctx, op.UserID, op.AccountID, op.MediaStagingName)
 	if err != nil {
 		return false
 	}
@@ -371,6 +379,11 @@ func (s *Service) Execute(ctx context.Context, job automation.Job) error {
 		s.logf("sending: job %d names no operation (%s)", job.ID, job.EventID)
 		return nil
 	}
+	if !job.Owner.Bound() || job.Owner.OwnerUserID != op.UserID || job.Owner.AccountID != op.AccountID {
+		return s.failPermanently(ctx, op, StageSendingMessage,
+			&publishing.Error{Status: 409, Code: publishing.CodeInvalidInput,
+				Message: "The queued send does not match its recorded owner."})
+	}
 	if op.Status == channelstore.SendSent || op.Status == channelstore.SendUnknown {
 		// Already answered, and never to be answered twice. A second worker
 		// picking this up is a lease that expired, not new work.
@@ -395,7 +408,7 @@ func (s *Service) Execute(ctx context.Context, job automation.Job) error {
 		return s.failPermanently(ctx, op, stage, err)
 	}
 
-	send, err := s.prepare(op)
+	send, err := s.prepare(ctx, op)
 	if err != nil {
 		return s.failPermanently(ctx, op, stage, err)
 	}
@@ -425,7 +438,7 @@ func (s *Service) Execute(ctx context.Context, job automation.Job) error {
 // The attachment is read whole here because the worker's send takes one buffer;
 // it is the one place that is allowed to, and it is bounded by the same limit
 // the upload was.
-func (s *Service) prepare(op channelstore.SendOperation) (rpc.SendRequest, error) {
+func (s *Service) prepare(ctx context.Context, op channelstore.SendOperation) (rpc.SendRequest, error) {
 	req, err := decodePayload(op.RequestPayload)
 	if err != nil {
 		return rpc.SendRequest{}, &publishing.Error{Status: 500, Code: publishing.CodeStoreError,
@@ -448,7 +461,7 @@ func (s *Service) prepare(op channelstore.SendOperation) (rpc.SendRequest, error
 		return rpc.SendRequest{}, &publishing.Error{Status: 500, Code: CodeSendAttachmentMissing,
 			Message: "The staged attachment is not named on this operation."}
 	}
-	data, err := s.Staging.ReadAll(op.MediaStagingName)
+	data, err := s.Staging.ReadFor(ctx, op.UserID, op.AccountID, op.MediaStagingName)
 	if err != nil {
 		// Permanent. The bytes are gone and no amount of waiting brings them
 		// back, so the send stops here and says so rather than burning the
@@ -613,6 +626,22 @@ func (s *Service) Cleanup(ctx context.Context) (CleanupReport, error) {
 // startup, by the caller that owns the shared staging lifecycle.
 func (s *Service) CleanupKeeping(ctx context.Context, additionalHeldMediaNames []string) (CleanupReport, error) {
 	var report CleanupReport
+	// Capture all send ownership scopes before retention deletes finished
+	// operation rows. A sweep may delete abandoned media only for owners this
+	// operation store can positively identify.
+	allOps, err := s.Operations.SendOperationsHoldingMedia(ctx)
+	if err != nil {
+		return report, err
+	}
+	owners := make([]staging.OwnerFilter, 0, len(allOps))
+	seenOwners := make(map[staging.OwnerFilter]bool, len(allOps))
+	for _, op := range allOps {
+		filter := staging.OwnerFilter{OwnerUserID: op.UserID, AccountID: op.AccountID}
+		if filter.OwnerUserID > 0 && filter.AccountID != "" && !seenOwners[filter] {
+			owners = append(owners, filter)
+			seenOwners[filter] = true
+		}
+	}
 
 	if s.HistoryRetention > 0 {
 		before := time.Now().UTC().Add(-s.HistoryRetention)
@@ -647,7 +676,7 @@ func (s *Service) CleanupKeeping(ctx context.Context, additionalHeldMediaNames [
 		case channelstore.SendSent, channelstore.SendFailed, channelstore.SendUnknown:
 			continue
 		}
-		if !s.attachmentThere(op.MediaStagingName) {
+		if !s.attachmentThereFor(ctx, op) {
 			if err := s.Operations.FinishSendOperation(ctx, op.ID, channelstore.SendFailed, 0, StagePreparing,
 				CodeSendAttachmentMissing, "The uploaded attachment is no longer available."); err != nil {
 				s.logf("sending: stop operation %s: %v", op.PublicID, err)
@@ -664,7 +693,11 @@ func (s *Service) CleanupKeeping(ctx context.Context, additionalHeldMediaNames [
 		}
 	}
 
-	removed, err := s.Staging.Reconcile(func(name string) bool { return keep[name] })
+	keepNames := make([]string, 0, len(keep))
+	for name := range keep {
+		keepNames = append(keepNames, name)
+	}
+	removed, err := s.Staging.ReconcileOwnedKeeping(ctx, keepNames, owners)
 	if err != nil {
 		return report, err
 	}

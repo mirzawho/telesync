@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/appconfig"
 	"github.com/mirza/telesync/internal/auth"
 	"github.com/mirza/telesync/internal/automation"
@@ -78,6 +79,10 @@ type pipeline struct {
 	secret   *secrets.Encrypter
 	channel  channelstore.Channel
 	owner    int64
+	// account is the owning Telegram account. Everything the pipeline records —
+	// the event, its jobs, the webhook — is bound to it, so a worker for one
+	// tenant can never execute another's.
+	account string
 }
 
 func newPipeline(t *testing.T) *pipeline {
@@ -88,13 +93,6 @@ func newPipeline(t *testing.T) *pipeline {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	channel, err := store.Upsert(context.Background(), channelstore.Channel{
-		ClientKey: "official", ChannelID: 123456789, PeerType: channelstore.PeerChannel,
-		Title: "Source", MembershipStatus: channelstore.StatusMember,
-	})
-	if err != nil {
-		t.Fatalf("seed channel: %v", err)
-	}
 	hash, err := auth.HashPassword("PipelinePass123!")
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
@@ -102,6 +100,24 @@ func newPipeline(t *testing.T) *pipeline {
 	user, err := store.CreateUser(context.Background(), "Pipeline Owner", "pipeline-owner", hash, true)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
+	}
+	accID, err := accountid.New()
+	if err != nil {
+		t.Fatalf("accountid: %v", err)
+	}
+	if _, err := store.Create(context.Background(), channelstore.Account{
+		ID: accID, OwnerUserID: user.ID, ServerKey: "official",
+		NetworkType: channelstore.NetworkTelegram, RemoteUserID: 1,
+		Status: channelstore.AccountStatusConnected,
+	}); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	channel, err := store.UpsertFor(context.Background(), accID, channelstore.Channel{
+		ClientKey: "official", ChannelID: 123456789, PeerType: channelstore.PeerChannel,
+		Title: "Source", MembershipStatus: channelstore.StatusMember,
+	})
+	if err != nil {
+		t.Fatalf("seed channel: %v", err)
 	}
 	box, err := secrets.NewEncrypter([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
@@ -136,7 +152,7 @@ func newPipeline(t *testing.T) *pipeline {
 	return &pipeline{
 		t: t, store: store, svc: svc, runner: runner, enqueuer: enqueuer,
 		ingest: events.NewIngestor(store, enqueuer, store, store, store),
-		recv:   recv, secret: box, channel: channel, owner: user.ID,
+		recv:   recv, secret: box, channel: channel, owner: user.ID, account: accID,
 	}
 }
 
@@ -146,6 +162,10 @@ func (p *pipeline) observe(messageID int) automation.MessageEvent {
 	p.t.Helper()
 	ev := events.Source{
 		ClientKey: "official", NetworkKey: "official",
+		// The event carries the account that observed it and the user behind it,
+		// which is what makes the work scheduled from it owner-bound.
+		AccountID:         p.account,
+		OwnerUserID:       p.owner,
 		ManagedChannelID:  p.channel.ID,
 		TelegramChannelID: p.channel.ChannelID,
 		Message: rpc.Message{
@@ -166,7 +186,7 @@ func (p *pipeline) drain() {
 	p.t.Helper()
 	for {
 		job, ok, err := p.store.ClaimAutomationJob(context.Background(),
-			channelstore.ClaimJobRequest{Worker: "pipeline", Lease: time.Minute})
+			channelstore.ClaimJobRequest{Worker: "pipeline", Lease: time.Minute, AccountID: p.account})
 		if err != nil {
 			p.t.Fatalf("claim: %v", err)
 		}
@@ -186,7 +206,7 @@ func (p *pipeline) webhook() automation.Webhook {
 		Name: "pipeline", Enabled: true,
 		URL: "https://receiver.example.com/hook", Method: "POST",
 		AuthMode: webhooks.AuthHMAC, Secret: &secret,
-		SourceChannelIDs: []int64{p.channel.ID}, CreatedBy: p.owner,
+		SourceChannelIDs: []int64{p.channel.ID}, CreatedBy: p.owner, AccountID: p.account,
 	})
 	if err != nil {
 		p.t.Fatalf("create webhook: %v", err)

@@ -52,7 +52,12 @@ func jobStore(t *testing.T) (*channelstore.Store, string, *testClock) {
 func insertJobEvent(t *testing.T, store *channelstore.Store) string {
 	t.Helper()
 	ctx := context.Background()
-	ch, err := store.Upsert(ctx, channelstore.Channel{
+	// Every job is bound to an owner and every event to an account, so the
+	// fixture creates one rather than leaning on a bare id.
+	user := createUser(t, store, "observer")
+	acc := ownerAccount(t, store, user.ID, "official", channelstore.NetworkTelegram, 1)
+	defaultOwner = automation.Owner{OwnerUserID: user.ID, AccountID: acc}
+	ch, err := store.UpsertFor(ctx, acc, channelstore.Channel{
 		ClientKey:        "official",
 		ChannelID:        1000,
 		PeerType:         channelstore.PeerChannel,
@@ -104,6 +109,7 @@ func enqueueJob(t *testing.T, store *channelstore.Store, eventID string, target 
 		EventID:     eventID,
 		Kind:        automation.JobWebhookDelivery,
 		TargetID:    target,
+		Owner:       defaultOwner,
 		MaxAttempts: 3,
 	})
 	if err != nil {
@@ -118,8 +124,9 @@ func enqueueJob(t *testing.T, store *channelstore.Store, eventID string, target 
 func claim(t *testing.T, store *channelstore.Store, worker string, clock *testClock) (channelstore.AutomationJob, bool) {
 	t.Helper()
 	job, ok, err := store.ClaimAutomationJob(context.Background(), channelstore.ClaimJobRequest{
-		Worker: worker,
-		Lease:  time.Minute,
+		AccountID: defaultOwner.AccountID,
+		Worker:    worker,
+		Lease:     time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("claim: %v", err)
@@ -394,6 +401,7 @@ func TestEnqueueingTheSameWorkTwiceReusesTheRow(t *testing.T) {
 		EventID:     eventID,
 		Kind:        automation.JobWebhookDelivery,
 		TargetID:    1,
+		Owner:       defaultOwner,
 		MaxAttempts: 3,
 	})
 	if err != nil {
@@ -491,6 +499,7 @@ func TestAnEnqueuedJobNeedsAnEvent(t *testing.T) {
 		EventID:     "evt_missing",
 		Kind:        automation.JobWorkflowRun,
 		TargetID:    1,
+		Owner:       defaultOwner,
 		MaxAttempts: 3,
 	})
 	if err == nil {
@@ -515,7 +524,7 @@ func TestReopeningAFailedJobGivesItAFreshBudget(t *testing.T) {
 	}
 
 	reopened, created, err := store.ReopenAutomationJob(context.Background(), channelstore.ReopenJobRequest{
-		EventID: job.EventID, Kind: job.Kind, TargetID: job.TargetID,
+		EventID: job.EventID, Kind: job.Kind, TargetID: job.TargetID, Owner: defaultOwner,
 	})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -547,6 +556,31 @@ func TestReopeningAFailedJobGivesItAFreshBudget(t *testing.T) {
 	}
 }
 
+func TestReopeningAFailedJobRequiresItsExactOwner(t *testing.T) {
+	store, _, clock := jobStore(t)
+	job := enqueueJob(t, store, insertJobEventN(t, store, 1), 1)
+	claimed, _ := claim(t, store, "worker-a", clock)
+	if _, err := store.RecordAutomationJobFailure(context.Background(), claimed.ID, "worker-a",
+		automation.JobError{Code: "temporary", Message: "retry"}, false, clock.Now()); err != nil {
+		t.Fatalf("record failure: %v", err)
+	}
+
+	other := automation.Owner{OwnerUserID: defaultOwner.OwnerUserID + 1, AccountID: "acc_other"}
+	for name, owner := range map[string]automation.Owner{
+		"unbound":                   {},
+		"wrong owner and account":   other,
+		"right owner wrong account": {OwnerUserID: defaultOwner.OwnerUserID, AccountID: "acc_other"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := store.ReopenAutomationJob(context.Background(), channelstore.ReopenJobRequest{
+				EventID: job.EventID, Kind: job.Kind, TargetID: job.TargetID, Owner: owner,
+			}); !errors.Is(err, automation.ErrConflict) {
+				t.Fatalf("reopen with owner %+v = %v, want conflict", owner, err)
+			}
+		})
+	}
+}
+
 // Retrying something that already succeeded could publish the same message
 // twice. Idempotency protects that, and an operator's retry button must not be
 // the hole in it.
@@ -560,7 +594,7 @@ func TestReopeningASucceededJobIsRefused(t *testing.T) {
 	}
 
 	if _, _, err := store.ReopenAutomationJob(context.Background(), channelstore.ReopenJobRequest{
-		EventID: job.EventID, Kind: job.Kind, TargetID: job.TargetID,
+		EventID: job.EventID, Kind: job.Kind, TargetID: job.TargetID, Owner: defaultOwner,
 	}); !errors.Is(err, automation.ErrConflict) {
 		t.Fatalf("reopen a succeeded job = %v, want a conflict", err)
 	}
@@ -575,7 +609,7 @@ func TestReopeningAJobThatIsRunningIsRefused(t *testing.T) {
 		t.Fatal("nothing was claimable")
 	}
 	if _, _, err := store.ReopenAutomationJob(context.Background(), channelstore.ReopenJobRequest{
-		EventID: job.EventID, Kind: job.Kind, TargetID: job.TargetID,
+		EventID: job.EventID, Kind: job.Kind, TargetID: job.TargetID, Owner: defaultOwner,
 	}); !errors.Is(err, automation.ErrConflict) {
 		t.Fatalf("reopen a running job = %v, want a conflict", err)
 	}

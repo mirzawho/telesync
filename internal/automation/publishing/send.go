@@ -41,13 +41,28 @@ func (s *Service) buildSend(ctx context.Context, source sourceMessage, req Reque
 	if req.Media.Mode != MediaPreserveSource {
 		return send, nil
 	}
-	if source.message.Media == nil || !mediaHasBytes(source.message.Media.Type) {
-		// Nothing to preserve: a poll, a location or a message with no
-		// attachment is sent as the text it is.
-		return send, nil
-	}
 	if err := namedAttachment(req.Media.AttachmentID, source.message.Media); err != nil {
 		return rpc.SendRequest{}, err
+	}
+	if source.message.Media == nil {
+		// Nothing to preserve: a poll, a location or a message with no
+		// attachment is sent as the text it is.
+		if strings.TrimSpace(req.Content.Text) == "" {
+			return rpc.SendRequest{}, &Error{http.StatusUnprocessableEntity, CodePublishSourceMedia,
+				"The source message has no usable attachment to publish."}
+		}
+		return send, nil
+	}
+	if source.message.Media.Type == "other" || source.message.Media.Type == "custom_emoji" {
+		return rpc.SendRequest{}, &Error{http.StatusUnprocessableEntity, CodePublishUnsupported,
+			"The source media type is not supported for native publishing."}
+	}
+	if !mediaHasBytes(source.message.Media.Type) {
+		if strings.TrimSpace(req.Content.Text) == "" {
+			return rpc.SendRequest{}, &Error{http.StatusUnprocessableEntity, CodePublishSourceMedia,
+				"The source message has no usable attachment to publish."}
+		}
+		return send, nil
 	}
 	stream, err := source.worker.Media(ctx, source.row.ChannelID, source.message.ID, largestPhotoSize, rpc.MediaSlice{})
 	if err != nil {
@@ -64,6 +79,9 @@ func (s *Service) buildSend(ctx context.Context, source sourceMessage, req Reque
 		}
 		return rpc.SendRequest{}, s.sourceMediaFailure(source, err)
 	}
+	if len(data) == 0 {
+		return rpc.SendRequest{}, s.sourceMediaFailure(source, errors.New("source attachment contained zero bytes"))
+	}
 	send.Media = &rpc.SendMedia{
 		Kind:              sendKind(source.message.Media),
 		Name:              sendFileName(source.message.Media),
@@ -75,6 +93,11 @@ func (s *Service) buildSend(ctx context.Context, source sourceMessage, req Reque
 		Height:            source.message.Media.Height,
 		SupportsStreaming: source.message.Media.SupportsStreaming,
 		RoundMessage:      source.message.Media.RoundMessage,
+		StickerEmoji:      source.message.Media.StickerEmoji,
+		StickerAnimated:   source.message.Media.StickerAnimated,
+		StickerVideo:      source.message.Media.StickerVideo,
+		StickerMask:       source.message.Media.StickerMask,
+		StickerMaskCoords: source.message.Media.StickerMaskCoords,
 	}
 	return send, nil
 }
@@ -128,6 +151,11 @@ func (s *Service) buildAlbumSend(ctx context.Context, source sourceMessage, req 
 				Width: member.Media.Width, Height: member.Media.Height,
 				SupportsStreaming: member.Media.SupportsStreaming,
 				RoundMessage:      member.Media.RoundMessage,
+				StickerEmoji:      member.Media.StickerEmoji,
+				StickerAnimated:   member.Media.StickerAnimated,
+				StickerVideo:      member.Media.StickerVideo,
+				StickerMask:       member.Media.StickerMask,
+				StickerMaskCoords: member.Media.StickerMaskCoords,
 			},
 			Text: text, Entities: entities, RandomID: albumRandomID(req, member.ID),
 		})
@@ -179,6 +207,8 @@ func sendKind(m *rpc.Media) string {
 		return "voice"
 	case "audio":
 		return "audio"
+	case "sticker":
+		return "sticker"
 	default:
 		return "document"
 	}
@@ -198,12 +228,13 @@ func (s *Service) sourceMediaFailure(source sourceMessage, err error) error {
 		"The source attachment could not be read; publish without media or retry."}
 }
 
-// logSourceMedia records which connection and which message the read failed
-// for, so a failing stage can be followed. The bytes and the file reference are
-// never logged.
+// logSourceMedia records the failing stage and safe source identifiers. It
+// intentionally logs only the error type, never its string: a transport error
+// may contain server details or a Telegram file reference.
 func (s *Service) logSourceMedia(source sourceMessage, err error) {
-	s.logf("publishing: source media download failed: client=%s channel=%d message=%d: %v",
-		source.row.ClientKey, source.row.ChannelID, source.message.ID, err)
+	knownSize := source.message.Media != nil && source.message.Media.Size > 0
+	s.logf("publishing stage=download_media source_account=%s source_channel_id=%d source_message_id=%d media_size_known=%t result=failed error_type=%T",
+		source.row.AccountID, source.row.ChannelID, source.message.ID, knownSize, err)
 }
 
 // mediaHasBytes reports whether an attachment of this kind has bytes to send. A
@@ -236,7 +267,7 @@ func sendFileName(m *rpc.Media) string {
 	if m.Filename != "" {
 		return sanitiseFileName(m.Filename)
 	}
-	if m.Type == "voice" {
+	if m.Type == "voice" || m.Type == "sticker" {
 		return ""
 	}
 	if m.Label != "" {
@@ -312,7 +343,10 @@ func mustChannelID(raw string) int64 {
 // An id left empty on either side is not a claim and is not checked: a caller
 // that does not name one gets the attachment the message has.
 func namedAttachment(want string, media *rpc.Media) error {
-	if want == "" || media == nil || media.ID == "" || want == media.ID {
+	if want == "" {
+		return nil
+	}
+	if media != nil && media.ID != "" && want == media.ID {
 		return nil
 	}
 	return &Error{http.StatusBadRequest, CodeInvalidInput,

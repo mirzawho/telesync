@@ -64,8 +64,8 @@ type Channel struct {
 
 // Media describes one attachment without downloading it.
 type Media struct {
-	// Type is photo, video, document, audio, voice, sticker, gif, poll, geo,
-	// webpage or other.
+	// Type includes photo, video, document, audio, voice, sticker, gif,
+	// custom_emoji, poll, geo, webpage and other.
 	Type  string
 	Label string
 	// Filename is the name the sender gave the file, exactly as Telegram
@@ -86,10 +86,26 @@ type Media struct {
 	// attribute flags. They are never inferred from MIME or filename.
 	SupportsStreaming bool
 	RoundMessage      bool
+	// Sticker semantics come from source document attributes. Sticker-set
+	// identity is not portable between source and destination connections.
+	StickerEmoji      string
+	StickerAnimated   bool
+	StickerVideo      bool
+	StickerMask       bool
+	StickerMaskCoords *StickerMaskCoords
 	// Waveform is the voice message's own bitpacked amplitude samples, from
 	// the same attribute. Nil when the message is not a voice recording or the
 	// backend reported none: a waveform is never invented to fill the field.
 	Waveform []byte
+}
+
+// StickerMaskCoords is Telegram's relative mask placement, independent of the
+// source sticker-set identity.
+type StickerMaskCoords struct {
+	N    int
+	X    float64
+	Y    float64
+	Zoom float64
 }
 
 // MediaFile is the downloaded content of one attachment.

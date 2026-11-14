@@ -24,7 +24,7 @@ type ManagedStore interface {
 }
 
 type ChannelCreationStore interface {
-	BeginChannelCreation(ctx context.Context, userID int64, clientKey, idempotencyKey, fingerprint, payload string) (channelstore.ChannelCreationOperation, bool, error)
+	BeginChannelCreation(ctx context.Context, userID int64, accountID, clientKey, idempotencyKey, fingerprint, payload string) (channelstore.ChannelCreationOperation, bool, error)
 	UpdateChannelCreation(ctx context.Context, op channelstore.ChannelCreationOperation) error
 }
 
@@ -165,7 +165,7 @@ func (s *Server) find(ctx context.Context, w http.ResponseWriter, r *http.Reques
 		if !s.liveAllowed(ctx, a, key, info.ID) {
 			continue
 		}
-		channels = append(channels, s.channelViewOf(key, info, isManaged))
+		channels = append(channels, s.channelViewOf(routeSelectorOf(r, key), info, isManaged))
 	}
 
 	writeJSON(w, http.StatusOK, envelope{
@@ -230,7 +230,7 @@ func (s *Server) channel(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusOK, envelope{
-		Data: map[string]any{"channel": s.channelViewOf(key, result.Channel, managed)},
+		Data: map[string]any{"channel": s.channelViewOf(routeSelectorOf(r, key), result.Channel, managed)},
 		Meta: metaFor(requestID, s.cfg.Now()),
 	})
 }
@@ -294,7 +294,7 @@ func (s *Server) join(ctx context.Context, w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	saved, err := s.cfg.Channels.Upsert(ctx, channelstore.Channel{
+	saved, err := s.storeFor(ctx).Upsert(ctx, channelstore.Channel{
 		ClientKey:        key,
 		ChannelID:        channelID,
 		PeerType:         peerTypeOf(result.Channel.Type),
@@ -331,7 +331,7 @@ func (s *Server) join(ctx context.Context, w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	view := s.channelViewOf(key, result.Channel, true)
+	view := s.channelViewOf(routeSelectorOf(r, key), result.Channel, true)
 	if saved.ChannelID != channelID {
 		// Defensive: never answer with a view of a different channel.
 		s.logf("gateway: client=%s op=join request_id=%s stored %d for %d", key, requestID, saved.ChannelID, channelID)
@@ -369,7 +369,7 @@ func (s *Server) managedBefore(ctx context.Context, key string, channelID int64)
 	if s.cfg.Channels == nil {
 		return false, nil
 	}
-	_, ok, err := s.cfg.Channels.Get(ctx, key, channelID)
+	_, ok, err := s.storeFor(ctx).Get(ctx, key, channelID)
 	return ok, err
 }
 
@@ -422,7 +422,7 @@ func (s *Server) managedIDs(ctx context.Context, key string) (map[int64]bool, er
 	if s.cfg.Channels == nil {
 		return map[int64]bool{}, nil
 	}
-	return s.cfg.Channels.ManagedIDs(ctx, key)
+	return s.storeFor(ctx).ManagedIDs(ctx, key)
 }
 
 // avatar serves GET /channels/{id}/avatar — the image bytes, never a URL.
@@ -556,7 +556,7 @@ func (s *Server) liveAllowed(ctx context.Context, authr *channelstore.Authorizer
 	}
 	t := channelTarget{telegramID: id}
 	if s.cfg.Channels != nil {
-		row, ok, err := s.cfg.Channels.Get(ctx, key, id)
+		row, ok, err := s.storeFor(ctx).Get(ctx, key, id)
 		if err != nil {
 			s.logf("gateway: client=%s live authorization lookup failed for %s: %v", key, rawID, err)
 			return authr.CanList(channelstore.KindChannel)

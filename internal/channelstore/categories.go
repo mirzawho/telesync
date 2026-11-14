@@ -44,11 +44,12 @@ type ListQuery struct {
 	Query string
 }
 
-// Assignment is one (client key, channel id) pair filed under a category.
+// Assignment is one (account, channel id) pair filed under a category.
 //
 // ChannelID is as the gateway reports it — a decimal string, so it is stored as
 // text rather than round-tripped through a number.
 type Assignment struct {
+	AccountID string
 	ClientKey string
 	ChannelID string
 	Category  Category
@@ -231,11 +232,11 @@ func (s *Store) ListCategories(ctx context.Context, q ListQuery) ([]Category, in
 // Idempotent: assigning the same channel to the same category twice keeps the
 // original row and its created_at. The channel does not have to exist in
 // managed_channels.
-func (s *Store) AssignChannel(ctx context.Context, clientKey, channelID string, categoryID int64) (Assignment, error) {
-	clientKey = strings.TrimSpace(clientKey)
+func (s *Store) AssignChannel(ctx context.Context, accountID, channelID string, categoryID int64) (Assignment, error) {
+	accountID = strings.TrimSpace(accountID)
 	channelID = strings.TrimSpace(channelID)
-	if clientKey == "" {
-		return Assignment{}, errors.New("channelstore: client_key is required")
+	if accountID == "" {
+		return Assignment{}, errors.New("channelstore: account_id is required")
 	}
 	if channelID == "" {
 		return Assignment{}, errors.New("channelstore: channel_id is required")
@@ -253,10 +254,10 @@ func (s *Store) AssignChannel(ctx context.Context, clientKey, channelID string, 
 	}
 	now := formatTime(s.now())
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO channel_categories (client_key, channel_id, category_id, created_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT (client_key, channel_id, category_id) DO NOTHING`,
-		clientKey, channelID, categoryID, now,
+INSERT INTO channel_categories (client_key, account_id, channel_id, category_id, created_at)
+SELECT server_key, ?, ?, ?, ? FROM telegram_accounts WHERE id = ? AND deleted_at IS NULL
+ON CONFLICT (account_id, channel_id, category_id) DO NOTHING`,
+		accountID, channelID, categoryID, now, accountID,
 	); err != nil {
 		return Assignment{}, fmt.Errorf("channelstore: assign channel %s: %w", channelID, err)
 	}
@@ -264,14 +265,19 @@ ON CONFLICT (client_key, channel_id, category_id) DO NOTHING`,
 	var created string
 	if err := tx.QueryRowContext(ctx, `
 SELECT created_at FROM channel_categories
-WHERE client_key = ? AND channel_id = ? AND category_id = ?`,
-		clientKey, channelID, categoryID).Scan(&created); err != nil {
+WHERE account_id = ? AND channel_id = ? AND category_id = ?`,
+		accountID, channelID, categoryID).Scan(&created); err != nil {
+		return Assignment{}, fmt.Errorf("channelstore: assign channel %s: %w", channelID, err)
+	}
+	var clientKey string
+	if err := tx.QueryRowContext(ctx, `SELECT server_key FROM telegram_accounts WHERE id = ?`, accountID).Scan(&clientKey); err != nil {
 		return Assignment{}, fmt.Errorf("channelstore: assign channel %s: %w", channelID, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return Assignment{}, fmt.Errorf("channelstore: assign channel %s: %w", channelID, err)
 	}
 	return Assignment{
+		AccountID: accountID,
 		ClientKey: clientKey,
 		ChannelID: channelID,
 		Category:  cat,
@@ -279,14 +285,15 @@ WHERE client_key = ? AND channel_id = ? AND category_id = ?`,
 	}, nil
 }
 
-// ListAssignments returns the categories filed under one client's channel.
-func (s *Store) ListAssignments(ctx context.Context, clientKey, channelID string) ([]Assignment, error) {
+// ListAssignments returns the categories filed under one account's channel.
+func (s *Store) ListAssignments(ctx context.Context, accountID, channelID string) ([]Assignment, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT `+categoryAliasColumns+`, cc.created_at
+SELECT `+categoryAliasColumns+`, cc.created_at, cc.account_id, a.server_key
 FROM channel_categories cc
 JOIN categories c ON c.id = cc.category_id
-WHERE cc.client_key = ? AND cc.channel_id = ?
-ORDER BY cc.created_at DESC, c.id DESC`, clientKey, channelID)
+JOIN telegram_accounts a ON a.id = cc.account_id
+WHERE cc.account_id = ? AND cc.channel_id = ?
+ORDER BY cc.created_at DESC, c.id DESC`, accountID, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("channelstore: list assignments: %w", err)
 	}
@@ -295,18 +302,21 @@ ORDER BY cc.created_at DESC, c.id DESC`, clientKey, channelID)
 	var out []Assignment
 	for rows.Next() {
 		var (
-			cat     Category
-			created string
-			updated string
-			assign  string
+			cat               Category
+			created           string
+			updated           string
+			assign            string
+			assignmentAccount string
+			clientKey         string
 		)
 		if err := rows.Scan(&cat.ID, &cat.Name, &cat.Description, &created, &updated,
-			&assign); err != nil {
+			&assign, &assignmentAccount, &clientKey); err != nil {
 			return nil, fmt.Errorf("channelstore: list assignments: %w", err)
 		}
 		cat.CreatedAt = parseTime(created)
 		cat.UpdatedAt = parseTime(updated)
 		out = append(out, Assignment{
+			AccountID: assignmentAccount,
 			ClientKey: clientKey,
 			ChannelID: channelID,
 			Category:  cat,
@@ -366,11 +376,11 @@ func isUniqueViolation(err error) bool {
 
 // AssignmentCounts returns how many categories are filed under one client's
 // channel, keyed by category id.
-func (s *Store) AssignmentCounts(ctx context.Context, clientKey, channelID string) (map[int64]int, error) {
+func (s *Store) AssignmentCounts(ctx context.Context, accountID, channelID string) (map[int64]int, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT category_id, COUNT(*) FROM channel_categories
-WHERE client_key = ? AND channel_id = ?
-GROUP BY category_id`, clientKey, channelID)
+WHERE account_id = ? AND channel_id = ?
+GROUP BY category_id`, accountID, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("channelstore: count assignments: %w", err)
 	}

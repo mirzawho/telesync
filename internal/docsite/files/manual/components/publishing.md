@@ -400,6 +400,8 @@ the stage, so a caller knows which one to do something about:
 | `publish_source_media_unavailable` | the source connection could not read the source attachment | sent anywhere | yes, or `media.mode: "omit"` to publish the text alone |
 | `publish_media_upload_failed` | the attachment was read and the destination would not take the post carrying it | published | after checking the destination |
 | `publish_unsupported` | the destination cannot take this content at all | published | no |
+| `publish_sticker_unsupported` | the destination refused native publishing for this sticker format | published | no |
+| `publish_source_message_not_found` | the live source connection did not return the named message | nothing | correct the source or retry after checking it |
 | `publish_media_too_large` | the attachment is above the 32 MiB send limit | published | no |
 
 `publish_source_media_unavailable` is a source failure and only that: the
@@ -414,6 +416,19 @@ Nothing is published without its attachment by accident. A draft that says
 `preserve_source` and whose attachment cannot be read is refused before the
 message is created; the only way a post leaves without its attachment is an
 explicit `omit`.
+
+The source message is fetched through its own connection for each publish.
+Cached media type and size are not used as proof that the source has no
+attachment. If the live MTProto metadata still does not identify a supported
+media kind, publication fails rather than guessing from a filename or MIME type
+or sending an empty message. A caption may be empty when valid media is present.
+
+Native stickers retain their source format and sticker attributes. Sticker-set
+identifiers are not transferred between connections. A destination refusal is
+`publish_sticker_unsupported`; if Telegram accepts the request but does not
+return a native sticker message to verify, the operation is
+`publish_outcome_unknown` and must be reconciled at the destination before
+retrying. It is never silently sent as a generic file.
 
 ## Idempotency
 

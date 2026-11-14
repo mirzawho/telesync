@@ -29,8 +29,8 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 | Caller | Request | Status | Shape |
 | --- | --- | --- | --- |
 | anonymous | `POST /api/v1/telegram/official/messages/copy` | 401 | `unauthorized` |
-| operator | `POST /api/v1/telegram/official/messages/copy` | 415 | `invalid_input` |
-| limited user | `POST /api/v1/telegram/official/messages/copy` | 403 | `publish_forbidden` |
+| operator | `POST /api/v1/telegram/official/messages/copy` | 403 | `forbidden` |
+| limited user | `POST /api/v1/telegram/official/messages/copy` | 404 | `account_not_owned` |
 | administrator | `POST /api/v1/telegram/official/messages/copy` | 415 | `invalid_input` |
 
 <details><summary>anonymous: POST /api/v1/telegram/official/messages/copy → 401</summary>
@@ -42,19 +42,19 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 </details>
 
-<details><summary>operator: POST /api/v1/telegram/official/messages/copy → 415</summary>
+<details><summary>operator: POST /api/v1/telegram/official/messages/copy → 403</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"the body must be application/json.","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>limited user: POST /api/v1/telegram/official/messages/copy → 403</summary>
+<details><summary>limited user: POST /api/v1/telegram/official/messages/copy → 404</summary>
 
 ```json
-{"error":{"code":"publish_forbidden","message":"Publishing a message needs the content.publish permission.","request_id":"docsgen"}}
+{"error":{"code":"account_not_owned","message":"No account of yours is available for this server.","request_id":"docsgen"}}
 
 ```
 
@@ -71,12 +71,12 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 ### Responses captured from the documentation examples
 
-- `POST /api/v1/telegram/official/messages/copy` as operator → `400`
+- `POST /api/v1/telegram/official/messages/copy` as operator → `403`
 
-<details><summary>POST /api/v1/telegram/official/messages/copy → 400</summary>
+<details><summary>POST /api/v1/telegram/official/messages/copy → 403</summary>
 
 ```json
-{"error":{"code":"invalid_input","message":"an entity span falls outside content.text","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 

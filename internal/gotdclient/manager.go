@@ -17,6 +17,7 @@ import (
 	"github.com/mirza/telesync/internal/automation/recovery"
 	"github.com/mirza/telesync/internal/peerstore"
 	"github.com/mirza/telesync/internal/profile"
+	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/tgapi"
 )
 
@@ -76,6 +77,10 @@ type Manager struct {
 	eventf func(format string, args ...any)
 	// automation turns on the update listener when set.
 	automation *AutomationOptions
+	// accountID is the opaque account this connection serves. It scopes every
+	// piece of durable state the connection keeps.
+	accountID            string
+	expectedRemoteUserID int64
 	// updatesMgr is the current generation's gotd update manager. It is rebuilt
 	// per client generation and reloads its counters from the daemon, so a
 	// reconnect resumes where the durable state left off. Guarded by mu.
@@ -84,6 +89,17 @@ type Manager struct {
 
 // ManagerOptions configures the manager.
 type ManagerOptions struct {
+	// AccountID is the opaque account this connection serves. It is the scope
+	// key for update state, peer access hashes, checkpoints and observations.
+	//
+	// It is required for an account worker: without it the manager would fall
+	// back to the client key and two accounts on one server definition would
+	// share one pts. See Validate.
+	AccountID string
+	// RemoteUserID is the authorized Telegram identity stored on the account
+	// record. Self must continue to match it before the manager marks the
+	// account ready or starts update ingestion.
+	RemoteUserID int64
 	// Log receives gotd's structured logs. They contain no credentials.
 	Log io.Writer
 	// Verbose enables gotd's debug logs. They are very noisy, so the worker
@@ -110,6 +126,93 @@ type ManagerOptions struct {
 	// reach the durable automation pipeline. Nil leaves updates discarded (the
 	// pre-automation behaviour).
 	Automation *AutomationOptions
+}
+
+// scopeKey is the key this connection's durable state is scoped by.
+//
+// It is the account id whenever the manager serves an account, and the client
+// key only on the legacy configured-client path, where one worker per key made
+// the key an identity. Two accounts on one server definition therefore never
+// share a counter, a peer cache, a checkpoint or an observation.
+func (m *Manager) scopeKey() string {
+	if m.accountID != "" {
+		return m.accountID
+	}
+	return m.spec.Key
+}
+
+// buildStateStore binds the durable update state to this connection's account.
+func (m *Manager) buildStateStore() *recovery.StateStore {
+	return recovery.NewStateStore(m.scopeKey(), m.automationState())
+}
+
+// automationState is the durable state backend, or nil when automation is off.
+func (m *Manager) automationState() recovery.StatePersistence {
+	if m.automation == nil {
+		return nil
+	}
+	return m.automation.State
+}
+
+// Validate reports whether this manager has a complete, isolated identity for
+// serving one account.
+//
+// An account worker that did not name its account would fall back to the server
+// key, and every account on that server would then share one pts, one peer
+// cache and one dedup scope. That is refused rather than allowed to happen
+// silently.
+func (m *Manager) Validate() error {
+	if err := rpc.ValidAccountID(m.accountID); err != nil {
+		return fmt.Errorf("gotdclient: a manager that serves an account must name the account; " +
+			"without it update state would be shared across every account on this server")
+	}
+	if m.spec == nil {
+		return errors.New("gotdclient: account manager has no resolved server profile")
+	}
+	if m.expectedRemoteUserID <= 0 {
+		return errors.New("gotdclient: account manager has no persisted remote user identity")
+	}
+	return nil
+}
+
+// ValidateAccount checks that this Telegram manager was built from the same
+// account metadata the worker service will report.
+func (m *Manager) ValidateAccount(accountID string, remoteUserID int64, serverKey, networkType string) error {
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	if m.accountID != accountID || m.expectedRemoteUserID != remoteUserID ||
+		m.spec == nil || m.spec.Key != serverKey {
+		return errors.New("gotdclient: manager profile does not match the account record")
+	}
+	switch networkType {
+	case "telegram":
+		if m.spec.Kind != profile.Official {
+			return errors.New("gotdclient: manager network does not match the account record")
+		}
+	case "custom":
+		if m.spec.Kind != profile.Custom {
+			return errors.New("gotdclient: manager network does not match the account record")
+		}
+	default:
+		return errors.New("gotdclient: manager network does not match the account record")
+	}
+	return nil
+}
+
+func (m *Manager) verifyRemoteUser(userID int64) error {
+	if m.accountID != "" && (m.expectedRemoteUserID <= 0 || userID != m.expectedRemoteUserID) {
+		return errors.New("authenticated identity does not match the account record")
+	}
+	return nil
+}
+
+// emitLockedForTest exposes the one-line-per-transition logger to tests, which
+// is the only way to assert what an operator would see without a live client.
+func (m *Manager) emitLockedForTest(phase tgapi.State) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.emitLocked(phase)
 }
 
 // AutomationOptions is what the update listener needs to reach the daemon.
@@ -160,14 +263,16 @@ func NewManager(spec *profile.Spec, opts ManagerOptions) *Manager {
 		reconnect = DefaultReconnect
 	}
 	m := &Manager{
-		spec:       spec,
-		log:        logw,
-		state:      tgapi.StateDisconnected,
-		ready:      make(chan struct{}),
-		peers:      opts.Peers,
-		reconnect:  reconnect,
-		now:        opts.Now,
-		automation: opts.Automation,
+		spec:                 spec,
+		log:                  logw,
+		state:                tgapi.StateDisconnected,
+		ready:                make(chan struct{}),
+		peers:                opts.Peers,
+		reconnect:            reconnect,
+		now:                  opts.Now,
+		automation:           opts.Automation,
+		accountID:            opts.AccountID,
+		expectedRemoteUserID: opts.RemoteUserID,
 	}
 	m.eventf = opts.OnEvent
 	if m.eventf == nil {
@@ -202,9 +307,21 @@ func (m *Manager) peerHash(id int64) (int64, bool) {
 // that has long expired, and only a fresh client re-resolves and redials.
 func (m *Manager) Start(ctx context.Context) {
 	m.mu.Lock()
-	if m.client != nil {
+	if m.runDone != nil {
 		m.mu.Unlock()
 		return
+	}
+	if ctx.Err() != nil {
+		m.state = tgapi.StateDisconnected
+		m.mu.Unlock()
+		return
+	}
+	if m.accountID != "" {
+		if err := m.Validate(); err != nil {
+			m.mu.Unlock()
+			m.setStateError(err)
+			return
+		}
 	}
 	m.state = tgapi.StateConnecting
 	done := make(chan struct{})
@@ -250,7 +367,7 @@ func (m *Manager) supervise(ctx context.Context) {
 				return
 			}
 			m.eventf("client %s: connection loop ended (%s); retrying in %s",
-				m.spec.Key, m.reason(), m.reconnect)
+				m.logKey(), m.reason(), m.reconnect)
 			if !sleep(ctx, m.reconnect) {
 				return
 			}
@@ -269,14 +386,14 @@ func (m *Manager) supervise(ctx context.Context) {
 		}
 
 		m.eventf("client %s: still not connected after %s; reconnecting with a fresh client",
-			m.spec.Key, m.reconnect)
+			m.logKey(), m.reconnect)
 		// Cancel the old generation and give it a moment to stop before a new
 		// client writes the same session file.
 		m.detach()
 		m.cancelRun()
 		if !waitWithin(ran, 5*time.Second) {
 			m.eventf("client %s: the previous connection did not stop in time; starting a new one anyway",
-				m.spec.Key)
+				m.logKey())
 		}
 	}
 }
@@ -306,9 +423,13 @@ func (m *Manager) buildUpdatesManager() *updates.Manager {
 	if m.automation == nil {
 		return nil
 	}
-	handler := newUpdateHandler(m.spec.Key, m.automation.NetworkKey, m.automation.Sink, m.now, m.eventf)
+	// The scope key is the account, never the server key: two accounts watching
+	// the same remote channel keep two cursors, two peer caches and two
+	// checkpoints.
+	scope := m.scopeKey()
+	handler := newUpdateHandler(scope, m.accountID, m.automation.NetworkKey, m.automation.Sink, m.now, m.eventf)
 
-	stateStore := recovery.NewStateStore(m.spec.Key, m.automation.State)
+	stateStore := recovery.NewStateStore(scope, m.automation.State)
 	read, accept := m.automation.Read, m.automation.Accept
 	if read == nil {
 		read = m.backfillRead
@@ -316,7 +437,7 @@ func (m *Manager) buildUpdatesManager() *updates.Manager {
 	if accept == nil {
 		accept = m.backfillAccept
 	}
-	bf := newBackfiller(m.spec.Key, m.automation.Checkpoints, read, accept, m.automation.BackfillLimit, m.eventf)
+	bf := m.buildBackfiller(read, accept)
 
 	return updates.New(updates.Config{
 		Handler:                         handler,
@@ -330,6 +451,17 @@ func (m *Manager) buildUpdatesManager() *updates.Manager {
 		MaxChannelDifferenceConcurrency: m.automation.MaxChannelDifferenceConcurrency,
 	})
 }
+
+// buildBackfiller wires the bounded gap backfill for this connection's account.
+// The checkpoint store is the account's own, so recovering a gap for one account
+// never advances another's high-water mark.
+func (m *Manager) buildBackfiller(read backfillReader, accept backfillAcceptor) *backfiller {
+	return newBackfiller(m.scopeKey(), m.automation.Checkpoints, read, accept,
+		m.automation.BackfillLimit, m.eventf)
+}
+
+// buildBackfillerForTest exposes the account-scoped backfiller to tests.
+func (m *Manager) buildBackfillerForTest() *backfiller { return m.buildBackfiller(nil, nil) }
 
 // runClient runs one client generation until it stops.
 func (m *Manager) runClient(ctx context.Context, client *telegram.Client) {
@@ -371,7 +503,7 @@ func (m *Manager) startUpdates(cbCtx context.Context, client *telegram.Client) {
 		userID = m.account.ID
 	}
 	m.mu.Unlock()
-	if mgr == nil || userID == 0 {
+	if mgr == nil || userID == 0 || m.verifyRemoteUser(userID) != nil {
 		return
 	}
 	go func() {
@@ -381,7 +513,7 @@ func (m *Manager) startUpdates(cbCtx context.Context, client *telegram.Client) {
 			IsBot:  false,
 			Forget: false,
 		}); err != nil && cbCtx.Err() == nil {
-			m.eventf("client %s: update manager stopped: %v", m.spec.Key, err)
+			m.eventf("client %s: update manager stopped: %v", m.logKey(), err)
 		}
 	}()
 }
@@ -525,7 +657,7 @@ func (m *Manager) emitLocked(phase tgapi.State) {
 	}
 	m.logged = phase
 
-	key := m.spec.Key
+	key := m.logKey()
 	remote := m.remoteLocked()
 	switch phase {
 	case tgapi.StateReady:
@@ -559,6 +691,16 @@ func (m *Manager) emitLocked(phase tgapi.State) {
 		}
 		m.logMu.Unlock()
 	}
+}
+
+// logKey is the identity a log line names. It is the opaque account id whenever
+// one is bound, so a log never identifies an account by a server key, a
+// username or a phone number.
+func (m *Manager) logKey() string {
+	if m.accountID != "" {
+		return m.accountID
+	}
+	return m.spec.Key
 }
 
 // reasonLocked renders the current problem without leaking credentials.
@@ -660,15 +802,7 @@ func (m *Manager) refreshAccount(ctx context.Context) {
 	user, err := api.Self(probeCtx)
 	switch {
 	case err == nil && user != nil:
-		m.mu.Lock()
-		m.state = tgapi.StateReady
-		m.lastErr = ""
-		m.lastDisconnect = ""
-		m.account = accountFromUser(user)
-		m.thisDC = m.client.Config().ThisDC
-		m.lastSuccess = time.Now().UTC()
-		m.emitLocked(m.state)
-		m.mu.Unlock()
+		_ = m.acceptRemoteUser(user, api.Config().ThisDC)
 	case err == nil:
 		m.mu.Lock()
 		m.state = tgapi.StateUnauthorized
@@ -685,6 +819,36 @@ func (m *Manager) refreshAccount(ctx context.Context) {
 	default:
 		m.setStateError(err)
 	}
+}
+
+// acceptRemoteUser records a successful Self response only after proving that
+// it still belongs to the persisted account. This runs before startUpdates, so
+// an account mismatch cannot become ready or ingest another user's updates.
+func (m *Manager) acceptRemoteUser(user *tg.User, thisDC int) error {
+	if user == nil {
+		return errors.New("gotdclient: Telegram returned no authenticated user")
+	}
+	if err := m.verifyRemoteUser(user.ID); err != nil {
+		m.mu.Lock()
+		m.state = tgapi.StateError
+		m.lastErr = err.Error()
+		m.lastDisconnect = m.lastErr
+		m.account = nil
+		m.emitLocked(m.state)
+		m.mu.Unlock()
+		return err
+	}
+
+	m.mu.Lock()
+	m.state = tgapi.StateReady
+	m.lastErr = ""
+	m.lastDisconnect = ""
+	m.account = accountFromUser(user)
+	m.thisDC = thisDC
+	m.lastSuccess = time.Now().UTC()
+	m.emitLocked(m.state)
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *Manager) setStateError(err error) {

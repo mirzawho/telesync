@@ -19,17 +19,29 @@ import {
 import * as React from "react"
 
 import { CategoryMultiSelect } from "@/components/category-multi-select"
+import { AccountCombobox } from "@/components/accounts/account-combobox"
 import { ChannelListPane } from "@/components/channel-explorer/channel-list"
 import { ChannelDeleteDialog } from "@/components/channel-explorer/channel-delete-dialog"
 import { ChannelInformationDialog, channelMessagePath } from "@/components/channel-explorer/channel-information-dialog"
 import { CreateChannelDialog } from "@/components/channel-explorer/create-channel-dialog"
+import { NoAccountsState } from "@/components/accounts/account-list"
+import {
+  scopeToOwnAccounts,
+} from "@/lib/account-channel-scope"
+import {
+  accountQuery,
+  migrateLegacyServerSelection,
+  parseAccountSelection,
+  toggleAccountSelection,
+  writeAccountSelection,
+} from "@/lib/account-filter"
 import { fullBleedSection, pageMeta } from "@/lib/page"
 import { filterChannels, toggleCategory } from "@/lib/channel-filter"
-import { parseServerSelection, toggleServerSelection, writeServerSelection } from "@/lib/channel-server-filter"
 import { deleteChannelForm, fileCategoriesForm } from "@/lib/channel-actions"
+import { accountApi, getMyAccount, listMyAccounts } from "@/lib/account-api"
+import { accountErrorText } from "@/lib/account-errors"
 import { EmptyState, ErrorState } from "@/components/states"
 import { SubmitButton } from "@/components/submit-button"
-import { TelegramServerCombobox } from "@/components/telegram-server-combobox"
 import { Button } from "@workspace/ui/components/button"
 import {
   Dialog,
@@ -58,6 +70,7 @@ import type {
   ChannelAvailability,
   ChannelDetail,
   FoundChannel,
+  TelegramAccount,
   TelegramServer,
 } from "@/lib/types"
 
@@ -161,17 +174,44 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
   }
   const canPickServer = servers.length > 0
 
+  // The reader's own accounts, and nothing else. This listing is what makes the
+  // workspace theirs: every channel below is scoped to it, and an administrator
+  // sees exactly what anybody else sees — their own accounts' channels.
+  let accounts: TelegramAccount[] = []
+  let accountsError: string | undefined
+  try {
+    const listed = await listMyAccounts(token)
+    accounts = listed.accounts
+  } catch (error) {
+    if (error instanceof ApiError && error.isAuthLost) {
+      throw redirect(
+        `${LOGIN_REDIRECT_TO}?expired=1&next=${encodeURIComponent(strip(`${url.pathname}${url.search}`))}`
+      )
+    }
+    accountsError =
+      error instanceof ApiError
+        ? accountErrorText(error.code, error.message)
+        : "بارگذاری حساب‌ها ناموفق بود."
+  }
+
+  const accountSelection = accountsError
+    ? parseAccountSelection(url.searchParams, accounts.map((account) => account.id))
+    : migrateLegacyServerSelection(url.searchParams, accounts).accountIds
+
   try {
     const listed = await listAll<Channel>(
       token,
       "/local/channels",
       (data) => (data as ChannelList).channels ?? [],
-      {},
+      accountQuery(accountSelection),
       Number.POSITIVE_INFINITY
     )
     availability = {
       state: "ready",
-      channels: listed.rows,
+      // The ownership gate: only rows reached through one of this reader's own
+      // accounts survive. A row with no account — a quarantined legacy record —
+      // is dropped rather than shown as though it were reachable.
+      channels: scopeToOwnAccounts(listed.rows, accounts),
       meta: {
         total: listed.meta.total,
         has_more: listed.meta.has_more,
@@ -232,6 +272,8 @@ export async function clientLoader({ request }: Route.LoaderArgs) {
     availability,
     categories: categoryList,
     filed,
+    accounts,
+    accountsError,
   }
 }
 
@@ -266,17 +308,23 @@ function explainJoinError(error: ApiError): string {
     case "channel_not_found":
       return `${error.message} — کانال پیدا نشد یا برای این حساب در دسترس نیست.`
     case "needs_auth":
-      return "حساب این سرور هنوز وارد نشده است؛ ابتدا سرور را وارد کنید."
-    case "not_connected":
+      return "این حساب به احراز هویت نیاز دارد؛ آن را دوباره متصل کنید."
     case "worker_unavailable":
     case "worker_timeout":
-      return `سرور تلگرام در دسترس نیست. ${error.message}`
+      return "ارتباط حساب تلگرام موقتاً در دسترس نیست؛ وضعیت حساب را بررسی کنید."
+    case "account_not_connected":
+    case "not_connected":
+      return "این حساب متصل نیست؛ ابتدا اتصال آن را برقرار کنید."
+    case "account_reconnecting":
+    case "reconnecting":
+      return "این حساب در حال اتصال دوباره است؛ کمی بعد تلاش کنید."
     case "rate_limited":
       return "تلگرام تعداد درخواست‌ها را محدود کرده است؛ کمی بعد دوباره تلاش کنید."
     case "worker_error":
       return `${error.message} برای کانال‌های خصوصی، دعوت‌نامه لازم است و این پنل آن را دور نمی‌زند.`
     case "forbidden":
-      return "شما مجوز افزودن کانال ندارید."
+    case "permission_denied":
+      return "این حساب اجازهٔ پیوستن به کانال را ندارد."
     default:
       return error.message
   }
@@ -300,17 +348,17 @@ export async function clientAction({
   if (intent === "define") {
     // One field, one query: the discovery route takes the same forms the others
     // do (an id, @username or a t.me link), so nothing here has to classify it.
-    const server = String(form.get("server") ?? "")
+    const accountID = String(form.get("account_id") ?? "").trim()
     const q = String(form.get("ref") ?? "").trim()
     const categoryIDs = parseIDList(form.getAll("category_ids"))
-    if (!server || !q) {
-      return { error: "شناسه، نام کاربری یا لینک کانال را وارد کنید.", intent }
+    if (!accountID || !q) {
+      return { error: "حساب و شناسهٔ کانال را انتخاب کنید.", intent }
     }
     let hits: FoundChannel[]
     try {
       const found = await apiRequest<{ channels: FoundChannel[] }>(
         "GET",
-        `/telegram/${encodeURIComponent(server)}/channels/find`,
+        accountApi.channelFind(accountID),
         { token, query: { q } }
       )
       hits = found.data.channels ?? []
@@ -335,7 +383,7 @@ export async function clientAction({
     try {
       await apiRequest<{ result: string }>(
         "POST",
-        `/telegram/${encodeURIComponent(server)}/channels/${encodeURIComponent(hit.id)}/join`,
+        accountApi.channelJoin(accountID, hit.id),
         { token }
       )
     } catch (error) {
@@ -367,16 +415,16 @@ export async function clientAction({
   }
 
   if (intent === "join") {
-    const server = String(form.get("server") ?? "")
+    const accountID = String(form.get("account_id") ?? "").trim()
     // The Join button posts the ref the channel resolved to, not the raw text.
     const ref = String(form.get("ref") ?? "")
-    if (!server || !ref) {
-      return { error: "شناسه کانال یا سرور نامعتبر است.", intent }
+    if (!accountID || !ref) {
+      return { error: "شناسهٔ کانال یا حساب نامعتبر است.", intent }
     }
     try {
       const { data } = await apiRequest<{ result: string }>(
         "POST",
-        `/telegram/${encodeURIComponent(server)}/channels/${encodeURIComponent(ref)}/join`,
+        accountApi.channelJoin(accountID, ref),
         { token }
       )
       return { ok: true, notice: describeJoin(data.result), intent }
@@ -474,8 +522,18 @@ export const meta = () => pageMeta("کانال‌ها")
 export const handle = fullBleedSection("کانال‌ها")
 
 export default function Channels({ loaderData, actionData }: Route.ComponentProps) {
-  const { categories, filed, availability, servers, server, serversError, canCreate, token } =
-    loaderData
+  const {
+    categories,
+    filed,
+    availability,
+    servers,
+    server,
+    serversError,
+    canCreate,
+    token,
+    accounts,
+    accountsError,
+  } = loaderData
   const params = useParams()
   const selectedId = parseLocalID(params.id)
   // The open channel's timeline is the child route at `channels/:id/messages`,
@@ -495,22 +553,32 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
   const categoryFilterIds = [
     ...new Set(searchParams.getAll("category_ids").flatMap(parseCategoryFilter)),
   ]
-  const serverKeys = [...new Set(servers.map((item) => item.key))]
-  const selectedServers = serversError
-    ? [...new Set(searchParams.getAll("server").map((key) => key.trim()).filter(Boolean))]
-    : parseServerSelection(searchParams, serverKeys)
   const [search, setSearch] = React.useState(q)
   React.useEffect(() => setSearch(q), [q])
 
-  // Drop stale/invalid keys only after the authoritative server list loaded.
-  // On a temporary API error retain the URL selection and show that failure.
+  // The account filter is the same idea as the server one, with its own default:
+  // no selection means every account the reader owns, which is the set they are
+  // asking to work with. An id that is not one of their own simply drops out.
+  const accountIds = [...new Set(accounts.map((account) => account.id))]
+  const selectedAccounts = accountsError
+    ? [
+        ...new Set(
+          searchParams
+            .getAll("account")
+            .map((id) => id.trim())
+            .filter(Boolean)
+        ),
+      ]
+    : migrateLegacyServerSelection(searchParams, accounts).accountIds
+  const hasConnectedAccount = accounts.some((account) => account.status === "connected")
+
   React.useEffect(() => {
-    if (serversError) return
-    const normalized = writeServerSelection(searchParams, selectedServers)
+    if (accountsError) return
+    const normalized = migrateLegacyServerSelection(searchParams, accounts).params
     if (normalized.toString() !== searchParams.toString()) {
       setSearchParams(normalized, { replace: true })
     }
-  }, [searchParams, selectedServers, setSearchParams, serversError])
+  }, [searchParams, accounts, setSearchParams, accountsError])
 
   const applySearch = (value: string) => {
     setSearch(value)
@@ -528,8 +596,8 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
     setSearchParams(next, { replace: true })
   }
 
-  const applyServers = (keys: string[]) => {
-    setSearchParams(writeServerSelection(searchParams, keys))
+  const applyAccounts = (ids: string[]) => {
+    setSearchParams(writeAccountSelection(searchParams, ids))
   }
 
   const clearFilters = () => {
@@ -537,10 +605,14 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
     const next = new URLSearchParams(searchParams)
     next.delete("q")
     next.delete("category_ids")
+    next.delete("account")
     setSearchParams(next, { replace: true })
   }
 
-  const filtersActive = q.trim() !== "" || categoryFilterIds.length > 0 || selectedServers.length > 0
+  const filtersActive =
+    q.trim() !== "" ||
+    categoryFilterIds.length > 0 ||
+    selectedAccounts.length > 0
   const createOpen = searchParams.get("create") === "1"
 
   const setCreateOpen = (open: boolean) => {
@@ -556,7 +628,7 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
           search,
           categoryIds: categoryFilterIds,
           filed,
-          serverKeys: selectedServers,
+          accountIds: selectedAccounts,
         })
       : []
 
@@ -574,8 +646,8 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
   const [editing, setEditing] = React.useState<Channel | null>(null)
   const [information, setInformation] = React.useState<Channel | null>(null)
 
-  const fetchChannelDetail = React.useCallback(async (clientKey: string, telegramChannelId: string, signal: AbortSignal) => {
-    const { data } = await apiRequest<{ channel: ChannelDetail }>("GET", `/telegram/${encodeURIComponent(clientKey)}/channels/${encodeURIComponent(telegramChannelId)}`, { token, signal })
+  const fetchChannelDetail = React.useCallback(async (accountID: string, telegramChannelId: string, signal: AbortSignal) => {
+    const { data } = await apiRequest<{ channel: ChannelDetail }>("GET", accountApi.channelDetail(accountID, telegramChannelId), { token, signal })
     return data.channel
   }, [token])
 
@@ -645,6 +717,19 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
   // channel is chosen, then its messages with a way back.
   const showMessages = selectedId !== null
 
+  // A reader with no connected account has nothing to reach through. This is
+  // said as "add an account" and never as a permission refusal: there is no
+  // administrator who can hand them somebody else's session, and sending them
+  // to one would be the wrong advice. A listing that failed to load is not the
+  // same thing and keeps the workspace's own error state.
+  if (shouldShowNoAccountsState(accounts, accountsError)) {
+    return (
+      <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center overflow-hidden">
+        <NoAccountsState onAdd={() => void navigate("/accounts")} />
+      </div>
+    )
+  }
+
   return (
     // The workspace is the whole content area, directly under the breadcrumb
     // bar: no page heading, no page column, no card around it. Each pane keeps
@@ -684,20 +769,21 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
               search={search}
               onSearchChange={applySearch}
               selectedCategories={categoryFilterIds}
-              servers={servers}
-              selectedServers={selectedServers}
-              onToggleServer={(key) => applyServers(toggleServerSelection(selectedServers, key, serverKeys))}
-              onSelectAllServers={() => applyServers([])}
-              serversError={serversError}
-              serversLoading={navigation.state === "loading"}
-              onRetryServers={() => window.location.reload()}
+              accounts={accounts}
+              selectedAccounts={selectedAccounts}
+              onToggleAccount={(id) =>
+                applyAccounts(toggleAccountSelection(selectedAccounts, id, accountIds))
+              }
+              onSelectAllAccounts={() => applyAccounts([])}
+              accountsError={accountsError}
+              showAccountControl={accounts.length > 0}
               onToggleCategory={(id) =>
                 applyCategories(toggleCategory(categoryFilterIds, id))
               }
               onAdd={() => setDefining(true)}
               onCreate={() => setCreateOpen(true)}
-              canCreate={canCreate}
-              canJoin={canCreate}
+              canCreate={canCreate && hasConnectedAccount}
+              canJoin={canCreate && hasConnectedAccount}
               onInformation={setInformation}
               onEditCategories={setEditing}
               onDelete={setConfirming}
@@ -721,6 +807,7 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
                 }
                 onAdd={() => setDefining(true)}
                 canJoin={canCreate}
+                hasConnectedAccount={hasConnectedAccount}
             />
           )}
         </div>
@@ -745,6 +832,10 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
         clientKey={information.client_key}
         telegramChannelId={String(information.channel_id)}
         localChannelId={information.id}
+        // The account this channel is reached through, from the channel's own
+        // record. The dialog reports that account's capabilities — never a set
+        // inferred from whichever server filter is on screen.
+        accountId={information.account_id}
         onOpenChange={(open) => !open && setInformation(null)}
         onView={() => {
           navigate(channelMessagePath(information.id, searchParams.toString()))
@@ -753,22 +844,24 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
         onEditCategories={() => { setInformation(null); setEditing(information) }}
         onDelete={() => { setInformation(null); setConfirming(information) }}
         fetchDetail={fetchChannelDetail}
+        fetchAccount={(accountID) => getMyAccount(token, accountID)}
+        token={token}
       />}
 
       <CreateChannelDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
         token={token}
-        servers={servers}
+        accounts={accounts.filter((account) => account.status === "connected")}
         canCreate={canCreate}
-        initialClientKey={selectedServers.length === 1 ? selectedServers[0] : undefined}
-        onCreated={(result, clientKey) => {
+        onCreated={(result, accountID) => {
           revalidator.revalidate()
-          if (result.locally_registered && result.local_channel_id && !result.status.toLowerCase().includes("partial")) {
-            const next = writeServerSelection(new URLSearchParams(searchParams), [clientKey])
-            next.delete("create")
-            navigate({ pathname: `/channels/${result.local_channel_id}/messages`, search: next.toString() })
-          }
+          const location = createdChannelNavigation(
+            result,
+            accountID,
+            new URLSearchParams(searchParams)
+          )
+          if (location) navigate(location)
         }}
       />
 
@@ -787,9 +880,7 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
 
       {defining && (
         <DefineChannelDialog
-          servers={servers}
-          server={server}
-          canPickServer={loaderData.canPickServer}
+          accounts={accounts}
           categories={categories}
           error={actionData?.intent === "define" ? actionData.error : undefined}
           pending={submitting}
@@ -798,6 +889,37 @@ export default function Channels({ loaderData, actionData }: Route.ComponentProp
       )}
     </div>
   )
+}
+
+export function shouldShowNoAccountsState(
+  accounts: TelegramAccount[],
+  accountsError?: string
+): boolean {
+  return !accountsError && accounts.length === 0
+}
+
+export function createdChannelNavigation(
+  result: {
+    locally_registered: boolean
+    local_channel_id: number | null
+    status: string
+  },
+  accountID: string,
+  currentParams: URLSearchParams
+): { pathname: string; search: string } | null {
+  if (
+    !result.locally_registered ||
+    !result.local_channel_id ||
+    result.status.toLowerCase().includes("partial")
+  ) {
+    return null
+  }
+  const next = writeAccountSelection(currentParams, [accountID])
+  next.delete("create")
+  return {
+    pathname: `/channels/${result.local_channel_id}/messages`,
+    search: next.toString(),
+  }
 }
 
 // The dialog is always mounted so its opening is animated; it is only ever
@@ -820,10 +942,12 @@ function WorkspaceEmptyState({
   hasChannels,
   onAdd,
   canJoin,
+  hasConnectedAccount,
 }: {
   hasChannels: boolean
   onAdd: () => void
   canJoin: boolean
+  hasConnectedAccount: boolean
 }) {
   return (
     <div className="flex flex-1 items-center justify-center p-6">
@@ -836,7 +960,7 @@ function WorkspaceEmptyState({
             : "کانال‌ها پس از پیوستن موفق به یک کانال در اینجا ظاهر می‌شوند."
         }
         action={canJoin ? (
-          <Button onClick={onAdd}>
+          <Button onClick={onAdd} disabled={!hasConnectedAccount}>
             <PlusIcon data-icon="inline-start" />
             پیوستن به کانال
           </Button>
@@ -848,23 +972,34 @@ function WorkspaceEmptyState({
 
 // explainSearchError maps the discovery route's failures onto advice.
 function explainSearchError(error: ApiError): string {
-  switch (error.code) {
+  return channelDiscoveryErrorText(error.code, error.message)
+}
+
+export function channelDiscoveryErrorText(code: string, _backendMessage = ""): string {
+  switch (code) {
     case "invalid_input":
-      return `${error.message} شناسه را به صورت عدد، @username یا لینک t.me وارد کنید.`
+      return "شناسه را به صورت عدد، @username یا لینک t.me وارد کنید."
     case "channel_not_found":
-      return "کانال پیدا نشد یا برای این حساب در دسترس نیست."
+      return "این کانال برای حساب انتخاب‌شده در دسترس نیست."
     case "needs_auth":
-      return "حساب این سرور وارد نشده است؛ ابتدا سرور را وارد کنید."
+    case "authentication_required":
+      return "این حساب به احراز هویت نیاز دارد؛ آن را دوباره متصل کنید."
+    case "account_not_connected":
     case "not_connected":
+      return "این حساب متصل نیست؛ ابتدا اتصال آن را برقرار کنید."
+    case "account_reconnecting":
+    case "reconnecting":
+      return "این حساب در حال اتصال دوباره است؛ کمی بعد تلاش کنید."
     case "worker_unavailable":
     case "worker_timeout":
-      return `سرور تلگرام در دسترس نیست. ${error.message}`
+      return "ارتباط حساب تلگرام موقتاً در دسترس نیست؛ وضعیت حساب را بررسی کنید."
     case "rate_limited":
       return "تلگرام تعداد درخواست‌ها را محدود کرده است؛ کمی بعد دوباره تلاش کنید."
     case "forbidden":
-      return "شما مجوز مشاهدهٔ کانال‌ها را ندارید."
+    case "permission_denied":
+      return "این حساب اجازهٔ مشاهدهٔ کانال را ندارد."
     default:
-      return error.message
+      return "جستجوی کانال با حساب انتخاب‌شده انجام نشد."
   }
 }
 
@@ -882,20 +1017,16 @@ async function fileChannel(
   )
 }
 
-// DefineChannelDialog adds one channel: it joins it on the chosen server and,
+// DefineChannelDialog joins on the explicitly selected personal account and,
 // when a category is chosen, files it there afterwards.
 function DefineChannelDialog({
-  servers,
-  server,
-  canPickServer,
+  accounts,
   categories,
   error,
   pending,
   onClose,
 }: {
-  servers: TelegramServer[]
-  server?: string
-  canPickServer: boolean
+  accounts: TelegramAccount[]
   categories: Category[]
   error?: string
   pending: boolean
@@ -903,7 +1034,8 @@ function DefineChannelDialog({
 }) {
   const submit = useSubmit()
   const [ref, setRef] = React.useState("")
-  const [chosenServer, setChosenServer] = React.useState(server ?? "")
+  const [chosenAccount, setChosenAccount] = React.useState("")
+  const availableAccounts = accounts.filter((account) => account.status === "connected")
   const [categoryIds, setCategoryIds] = React.useState<number[]>([])
   const [touched, setTouched] = React.useState(false)
   const refError =
@@ -917,7 +1049,7 @@ function DefineChannelDialog({
         <DialogHeader>
           <DialogTitle>پیوستن به کانال</DialogTitle>
           <DialogDescription>
-            کانال در سرور انتخاب‌شده پیدا و عضو می‌شود و در فهرست محلی ثبت
+            کانال در حساب انتخاب‌شده پیدا و عضو می‌شود و در فهرست محلی ثبت
             می‌گردد. اگر دسته‌ای انتخاب کنید، بعد از ثبت در همان دسته قرار
             می‌گیرد.
           </DialogDescription>
@@ -927,13 +1059,13 @@ function DefineChannelDialog({
           noValidate
           onSubmit={(event) => {
             event.preventDefault()
-            if (ref.trim() === "") {
+            if (ref.trim() === "" || !chosenAccount) {
               setTouched(true)
               return
             }
             const values: Record<string, string | string[]> = {
               intent: "define",
-              server: chosenServer,
+              account_id: chosenAccount,
               ref: ref.trim(),
             }
             if (categoryIds.length > 0) {
@@ -942,31 +1074,19 @@ function DefineChannelDialog({
             submit(values, { method: "post" })
           }}
         >
-          <Field>
-            <FieldLabel htmlFor="define-server" required>
-              سرور تلگرام
+          <Field data-invalid={touched && !chosenAccount ? "" : undefined}>
+            <FieldLabel htmlFor="define-account" required>
+              حساب تلگرام
             </FieldLabel>
-            {canPickServer ? (
-              <TelegramServerCombobox
-                id="define-server"
-                servers={servers}
-                value={chosenServer || undefined}
-                onChange={(key) => setChosenServer(key ?? "")}
-              />
-            ) : (
-              <>
-                <FieldControl
-                  id="define-server"
-                  dir="ltr"
-                  value={chosenServer}
-                  onChange={(event) => setChosenServer(event.target.value)}
-                  placeholder="official"
-                  required
-                />
-                <FieldDescription>
-                  فهرست سرورها در دسترس نیست؛ کلید اتصال را بنویسید.
-                </FieldDescription>
-              </>
+            <AccountCombobox
+              id="define-account"
+              accounts={availableAccounts}
+              value={chosenAccount || undefined}
+              onChange={(id) => setChosenAccount(id ?? "")}
+              placeholder="— حساب متصل را انتخاب کنید —"
+            />
+            {touched && !chosenAccount && (
+              <FieldError>حساب تلگرام را انتخاب کنید.</FieldError>
             )}
           </Field>
           <Field data-invalid={refError ? "" : undefined}>

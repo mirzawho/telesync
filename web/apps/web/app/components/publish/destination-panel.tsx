@@ -21,10 +21,10 @@ import { faDigits } from "@/components/persian-digits"
 import { Field, SearchableCheckList } from "@/components/publish/publish-primitives"
 import type { PublishingOptions, SiteOption } from "@/components/publish/publish-options"
 import { ErrorState, LoadingState } from "@/components/states"
-import { TelegramServerCombobox } from "@/components/telegram-server-combobox"
+import { AccountCombobox } from "@/components/accounts/account-combobox"
 import {
   setChannelIds,
-  setClientKey,
+  setAccountID,
   setPlatform,
   setSite,
   type PublishDraftState,
@@ -37,10 +37,11 @@ export interface DestinationPanelProps {
   state: PublishDraftState
   options: PublishingOptions
   onChange: ApplyChange
+  onRetryChannels?: () => void
   className?: string
 }
 
-export function DestinationPanel({ state, options, onChange, className }: DestinationPanelProps) {
+export function DestinationPanel({ state, options, onChange, onRetryChannels, className }: DestinationPanelProps) {
   return (
     <section
       data-panel="destination"
@@ -65,7 +66,12 @@ export function DestinationPanel({ state, options, onChange, className }: Destin
         </TabsList>
 
         <TabsContent value="telegram" className="mt-4 flex flex-col gap-5">
-          <TelegramDestinationSelector state={state} options={options} onChange={onChange} />
+          <TelegramDestinationSelector
+            state={state}
+            options={options}
+            onChange={onChange}
+            onRetryChannels={onRetryChannels}
+          />
         </TabsContent>
 
         <TabsContent value="wordpress" className="mt-4 flex flex-col gap-5">
@@ -84,32 +90,42 @@ function TelegramDestinationSelector({
   state,
   options,
   onChange,
+  onRetryChannels,
 }: {
   state: PublishDraftState
   options: PublishingOptions
   onChange: ApplyChange
+  onRetryChannels?: () => void
 }) {
   return (
     <>
       <Field
-        label="سرور تلگرام"
-        htmlFor="publish-server"
-        hint="پیام از حساب همین سرور ارسال می‌شود."
+        label="حساب تلگرام"
+        htmlFor="publish-account"
+        hint="پیام از حساب انتخاب‌شده ارسال می‌شود."
       >
-        <TelegramServerCombobox
-          id="publish-server"
-          servers={options.servers}
-          value={state.telegram.clientKey ?? undefined}
-          placeholder="سرور تلگرام را انتخاب کنید"
-          emptyText="سروری یافت نشد."
-          onChange={(key) => onChange((s) => setClientKey(s, key ?? null))}
+        <AccountCombobox
+          id="publish-account"
+          accounts={options.accounts.filter((account) => account.status === "connected")}
+          value={state.telegram.accountID ?? undefined}
+          placeholder="حساب تلگرام را انتخاب کنید"
+          emptyText="حسابی یافت نشد."
+          onChange={(id) => {
+            const account = options.accounts.find((item) => item.id === id && item.status === "connected")
+            onChange((s) => setAccountID(s, id ?? null, account?.server_key))
+          }}
         />
       </Field>
 
       {options.loading.channels && <LoadingState label="در حال بارگذاری کانال‌ها…" />}
-      {options.errors.channels && <ErrorState message={options.errors.channels} />}
+      {options.errors.channels && (
+        <ErrorState
+          message={options.errors.channels}
+          onRetry={onRetryChannels}
+        />
+      )}
 
-      {state.telegram.clientKey && !options.loading.channels && (
+      {state.telegram.accountID && !options.loading.channels && !options.errors.channels && (
         <Field
           label="کانال‌های مقصد"
           htmlFor="publish-channel-search"
@@ -130,7 +146,7 @@ function TelegramDestinationSelector({
               )
             }
             searchPlaceholder="جستجو در کانال‌ها…"
-            emptyText="هیچ کانالی برای ارسال پیام در دسترس نیست."
+            emptyText="کانالی با مجوز ارسال برای این حساب یافت نشد."
             noMatchText="کانالی با این جستجو یافت نشد."
             labelOf={(channel) => channel.title}
             detailOf={(channel) => (channel.username ? `@${channel.username}` : undefined)}

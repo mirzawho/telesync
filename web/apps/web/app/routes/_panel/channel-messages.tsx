@@ -21,15 +21,24 @@ export const handle = hiddenNavSection("کانال‌ها")
 type ChannelLookup =
   // clientKey is the record's Telegram client key; empty when the answer did
   // not carry it, in which case reaction images fall back to their icon.
-  | { state: "ok"; channel: ChannelDetail; clientKey: string }
+  // accountId is the record's owning account: the authoritative identity the
+  // messages are reached through. It is read here, from the record — never
+  // inferred from whichever server filter the workspace happens to show.
+  | {
+      state: "ok"
+      channel: ChannelDetail
+      clientKey: string
+      accountId: string
+    }
   | { state: "missing" }
   | { state: "unavailable"; message: string; code: string }
 
 // loadChannel reads the local record the route's id names. The record is the
-// authority on the Telegram channel id and the client the messages come from;
-// the route never accepts a Telegram id of its own. The service answers the
-// canonical channel object, whose `id` is the channel's Telegram id — the page
-// URL and the messages route keep the local id.
+// authority on the Telegram channel id, the account it belongs to and the
+// client the messages come from; the route never accepts a Telegram id of its
+// own. The service answers the canonical channel object, whose `id` is the
+// channel's Telegram id — the page URL and the messages route keep the local
+// id.
 async function loadChannel(
   token: string,
   id: number | null,
@@ -38,12 +47,13 @@ async function loadChannel(
   if (id === null) return { state: "missing" }
   try {
     // The record route wraps it: data.channel, not the record itself. The
-    // record's client_key names the Telegram client the channel lives in, which
-    // the public channel object does not carry; it is read here for the
-    // reaction images.
+    // record's client_key names the Telegram client the channel lives in and
+    // its account_id names who it belongs to; both are read here because the
+    // public channel object does not carry them.
     const { data } = await apiRequest<{
       channel?: ChannelDetail
       client_key?: string
+      account_id?: string
     }>("GET", `/local/channels/${id}`, { token })
     if (!data?.channel || typeof data.channel.id !== "string") {
       return {
@@ -56,6 +66,7 @@ async function loadChannel(
       state: "ok",
       channel: data.channel,
       clientKey: data.client_key ?? "",
+      accountId: data.account_id ?? data.channel.account_id ?? "",
     }
   } catch (error) {
     if (error instanceof ApiError) {
@@ -146,6 +157,7 @@ export default function ChannelMessages({
       channel={lookup.channel}
       channelId={localId}
       client={lookup.clientKey}
+      accountId={lookup.accountId}
       onBack={back}
     />
   )

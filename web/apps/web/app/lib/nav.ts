@@ -6,6 +6,7 @@ import {
   LayoutDashboardIcon,
   SendIcon,
   UserCogIcon,
+  UserRoundIcon,
   WorkflowIcon,
 } from "lucide-react"
 
@@ -39,10 +40,10 @@ interface NavItem {
 }
 
 // DOM order is the section order everywhere: the sidebar in this sequence, and
-// the phone's bar right to left in this RTL panel. The five existing
-// destinations keep their positions; automation is the overflow item, which
-// keeps the bar at five icons and puts automation one tap behind the "more"
-// affordance at its end.
+// the phone's bar right to left in this RTL panel. The five first-class
+// destinations keep their positions; the sections added after them — personal
+// accounts and automation — are overflow items, which keeps the bar at its five
+// 44px icons and puts them one tap behind the "more" affordance at its end.
 export const navItems: NavItem[] = [
   {
     to: "/dashboard",
@@ -81,6 +82,16 @@ export const navItems: NavItem[] = [
     icon: UserCogIcon,
     access: "users",
     placement: "primary",
+  },
+  {
+    to: "/accounts",
+    label: "حساب‌های من",
+    icon: UserRoundIcon,
+    // Every account owns their own Telegram accounts, so this destination has
+    // no permission behind it: the list is scoped to the caller by the API, not
+    // by a right that could be granted or withheld.
+    access: null,
+    placement: "overflow",
   },
   {
     to: "/automation",

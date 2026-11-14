@@ -1,7 +1,5 @@
 import {
   InfoIcon,
-  ChevronDownIcon,
-  LoaderCircleIcon,
   MoreHorizontalIcon,
   MoreVerticalIcon,
   PlusIcon,
@@ -12,8 +10,17 @@ import * as React from "react"
 import { Link, useSearchParams } from "react-router"
 
 import { ChannelAvatar } from "@/components/channel-avatar"
+import {
+  AccountMultiSelect,
+  AccountOriginLabel,
+} from "@/components/accounts/account-multi-select"
 import { SearchInput } from "@/components/search-input"
-import type { Category, Channel } from "@/lib/types"
+import {
+  accountOf,
+  accountOriginKey,
+  needsAccountOrigin,
+} from "@/lib/account-channel-scope"
+import type { Category, Channel, TelegramAccount } from "@/lib/types"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import {
@@ -24,11 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
 import { ScrollArea } from "@workspace/ui/components/scroll-area"
-import { Checkbox } from "@workspace/ui/components/checkbox"
 import { cn } from "@workspace/ui/lib/utils"
-import { Popover } from "@base-ui/react/popover"
-import { connectionOf, connectionLabels } from "@/lib/server-state"
-import type { TelegramServer } from "@/lib/types"
 
 // The channel list is a local workspace pane beside the message timeline — not
 // the application's navigation, which the sidebar keeps owning. It is search,
@@ -43,13 +46,12 @@ export function ChannelListPane({
   onSearchChange,
   selectedCategories,
   onToggleCategory,
-  servers = [],
-  selectedServers = [],
-  onToggleServer,
-  onSelectAllServers,
-  serversError,
-  serversLoading = false,
-  onRetryServers,
+  accounts = [],
+  selectedAccounts = [],
+  onToggleAccount,
+  onSelectAllAccounts,
+  accountsError,
+  showAccountControl = false,
   onAdd,
   onCreate,
   canCreate = true,
@@ -75,13 +77,16 @@ export function ChannelListPane({
   onSearchChange: (value: string) => void
   selectedCategories: number[]
   onToggleCategory: (id: number) => void
-  servers?: TelegramServer[]
-  selectedServers?: string[]
-  onToggleServer?: (key: string) => void
-  onSelectAllServers?: () => void
-  serversError?: string
-  serversLoading?: boolean
-  onRetryServers?: () => void
+  // accounts is the reader's own, and nothing else: it is what tells two rows
+  // of the same remote channel apart and what the account control offers.
+  accounts?: TelegramAccount[]
+  selectedAccounts?: string[]
+  onToggleAccount?: (id: string) => void
+  onSelectAllAccounts?: () => void
+  accountsError?: string
+  // showAccountControl is decided by the caller from `needsAccountControl`: the
+  // control earns its place only where several accounts share one server.
+  showAccountControl?: boolean
   onAdd: () => void
   onCreate?: () => void
   canCreate?: boolean
@@ -96,6 +101,9 @@ export function ChannelListPane({
   onClearFilters?: () => void
   className?: string
 }) {
+  // Every row carries its account as soon as one account could be mistaken for
+  // another. A single account needs no label: the row is unambiguous already.
+  const showOrigin = needsAccountOrigin(channels, accounts)
   return (
     <aside
       data-slot="channel-list-pane"
@@ -126,15 +134,15 @@ export function ChannelListPane({
           </DropdownMenu>}
         </div>
         <div data-slot="channel-filter-toolbar" dir="rtl" className="flex min-w-0 items-center gap-2">
-          <ServerMultiSelect
-            servers={servers}
-            selected={selectedServers}
-            onToggle={onToggleServer ?? (() => undefined)}
-            onSelectAll={onSelectAllServers ?? (() => undefined)}
-            error={serversError}
-            loading={serversLoading}
-            onRetry={onRetryServers}
-          />
+          {showAccountControl && (
+            <AccountMultiSelect
+              accounts={accounts}
+              selected={selectedAccounts}
+              onToggle={onToggleAccount ?? (() => undefined)}
+              onSelectAll={onSelectAllAccounts ?? (() => undefined)}
+              error={accountsError}
+            />
+          )}
           <ChannelCategoryChips
             categories={categories}
             selected={selectedCategories}
@@ -169,8 +177,13 @@ export function ChannelListPane({
           <ul className="flex flex-col gap-0.5 p-2">
             {channels.map((channel) => (
               <ChannelListItem
-                key={channel.id}
+                // The key is the account-scoped origin, so two rows for the same
+                // remote channel through two accounts can never collapse into
+                // one another in the list.
+                key={accountOriginKey(channel)}
                 channel={channel}
+                account={accountOf(channel, accounts)}
+                showAccountOrigin={showOrigin}
                 categories={filed[channel.id] ?? []}
                 categoryNames={categories}
                 selected={channel.id === selectedId}
@@ -183,105 +196,6 @@ export function ChannelListPane({
         )}
       </ScrollArea>
     </aside>
-  )
-}
-
-function ServerMultiSelect({
-  servers,
-  selected,
-  onToggle,
-  onSelectAll,
-  error,
-  loading,
-  onRetry,
-}: {
-  servers: TelegramServer[]
-  selected: string[]
-  onToggle: (key: string) => void
-  onSelectAll: () => void
-  error?: string
-  loading: boolean
-  onRetry?: () => void
-}) {
-  const [query, setQuery] = React.useState("")
-  const countLabel = new Intl.NumberFormat("fa").format(selected.length)
-  const selectedServer = selected.length === 1
-    ? servers.find((server) => server.key === selected[0])
-    : undefined
-  const triggerLabel = selected.length === 0
-    ? "همه سرورها"
-    : selected.length === 1
-      ? selectedServer?.key ?? selected[0]
-      : `${countLabel} سرور`
-  const matches = servers.filter((server) =>
-    `${server.key} ${connectionLabels[connectionOf(server)]}`
-      .toLocaleLowerCase("fa").includes(query.trim().toLocaleLowerCase("fa"))
-  )
-  const checked = (key: string) => selected.includes(key)
-  const allChecked = selected.length === 0
-
-  return (
-    <Popover.Root>
-      <Popover.Trigger
-        render={<Button
-          data-slot="server-multi-select"
-          variant="outline"
-          size="sm"
-          dir="ltr"
-          className="h-7 max-w-28 shrink-0 gap-1 px-2 rounded-full border-0 bg-muted"
-          aria-label={`فیلتر سرورها: ${triggerLabel}`}
-          disabled={loading}
-        />}
-      >
-        {loading ? <LoaderCircleIcon className="animate-spin" /> : null}
-        <span className="truncate" dir="auto">{error ? "سرورها نامشخص" : triggerLabel}</span>
-        <ChevronDownIcon className="size-3.5 shrink-0" />
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner side="bottom" align="start" sideOffset={5} className="z-50 max-w-[calc(100vw-1rem)] outline-none">
-          <Popover.Popup dir="rtl" className="w-[min(18rem,calc(100vw-1rem))] rounded-lg border bg-popover p-2 text-popover-foreground shadow-md">
-            <label className="sr-only" htmlFor="server-filter-search">جستجو در سرورها</label>
-            <input
-              id="server-filter-search"
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="جستجو در سرورها..."
-              className="mb-2 h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            {error ? (
-              <div className="flex items-center justify-between gap-2 py-2 text-xs text-destructive" role="alert">
-                <span>بارگذاری سرورها ناموفق بود.</span>
-                {onRetry && <button type="button" className="underline" onClick={onRetry}>تلاش دوباره</button>}
-              </div>
-            ) : servers.length === 0 ? (
-              <p className="py-2 text-center text-xs text-muted-foreground">سروری پیکربندی نشده است.</p>
-            ) : (
-              <>
-                <div className="max-h-52 overflow-y-auto" role="group" aria-label="سرورها">
-                  <button type="button" role="checkbox" aria-checked={allChecked} onClick={onSelectAll} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-right text-sm hover:bg-accent">
-                    <Checkbox checked={allChecked} tabIndex={-1} aria-hidden="true" />
-                    <span>همه سرورها</span>
-                  </button>
-                  <div className="my-1 border-t" />
-                  {matches.map((server) => (
-                    <button key={server.key} type="button" role="checkbox" aria-checked={checked(server.key)} onClick={() => onToggle(server.key)} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-right text-sm hover:bg-accent">
-                      <Checkbox checked={checked(server.key)} tabIndex={-1} aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate font-mono" dir="ltr">{server.key}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{connectionLabels[connectionOf(server)]}</span>
-                    </button>
-                  ))}
-                  {matches.length === 0 && <p className="py-3 text-center text-xs text-muted-foreground">سروری یافت نشد.</p>}
-                </div>
-                <div className="mt-1 border-t pt-1">
-                  <button type="button" onClick={onSelectAll} className="w-full rounded px-2 py-1.5 text-right text-xs text-muted-foreground hover:bg-accent hover:text-foreground">بازنشانی</button>
-                </div>
-              </>
-            )}
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
   )
 }
 
@@ -346,6 +260,8 @@ export function ChannelCategoryChips({
 // the current one.
 function ChannelListItem({
   channel,
+  account,
+  showAccountOrigin,
   categories,
   categoryNames,
   selected,
@@ -354,6 +270,11 @@ function ChannelListItem({
   onInformation,
 }: {
   channel: Channel
+  // account is the account this row is reached through, resolved from the
+  // row's own record. It is never taken from whichever server filter is on
+  // screen: a filter is a view over a list, not authority over a row.
+  account?: TelegramAccount
+  showAccountOrigin?: boolean
   categories: number[]
   categoryNames: Category[]
   selected: boolean
@@ -401,6 +322,15 @@ function ChannelListItem({
           <span className="text-muted-foreground truncate text-xs">
             {channel.username ? `@${channel.username}` : channel.client_key}
           </span>
+          {/* The account is named whenever one account could be mistaken for
+              another, so two rows of the same remote channel never look like
+              one entry twice. */}
+          {showAccountOrigin && (
+            <AccountOriginLabel
+              account={account}
+              className="text-muted-foreground/90 mt-0.5 truncate text-[0.7rem]"
+            />
+          )}
           {categories.length > 0 && (
             <span className="text-muted-foreground/80 mt-0.5 truncate text-[0.7rem]">
               {categories

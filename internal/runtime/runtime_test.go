@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,10 +15,13 @@ import (
 	"time"
 
 	"github.com/mirza/telesync/internal/appconfig"
+	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/gateway"
 	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/runtime"
+	"github.com/mirza/telesync/internal/supervisor"
 	"github.com/mirza/telesync/internal/tgapi"
+	"github.com/mirza/telesync/internal/worker"
 )
 
 // --- fakes ---
@@ -102,6 +106,18 @@ func (f *fakeSupervisor) Run(ctx context.Context, clients []appconfig.Client) er
 	f.clients = append([]appconfig.Client(nil), clients...)
 	f.mu.Unlock()
 	close(f.started)
+	<-ctx.Done()
+	close(f.stopped)
+	return nil
+}
+
+type fakeAccountSupervisor struct {
+	started chan []supervisor.AccountRef
+	stopped chan struct{}
+}
+
+func (f *fakeAccountSupervisor) RunAccounts(ctx context.Context, accounts []supervisor.AccountRef) error {
+	f.started <- append([]supervisor.AccountRef(nil), accounts...)
 	<-ctx.Done()
 	close(f.stopped)
 	return nil
@@ -196,10 +212,71 @@ func TestRegistryKeepsClientsApart(t *testing.T) {
 
 // --- daemon ---
 
+func TestDaemonStartsAccountRunnersInsteadOfConfiguredClientWorkers(t *testing.T) {
+	cfg := enabledClients("official")
+	legacy := &fakeSupervisor{started: make(chan struct{}), stopped: make(chan struct{})}
+	accounts := &fakeAccountSupervisor{
+		started: make(chan []supervisor.AccountRef, 1),
+		stopped: make(chan struct{}),
+	}
+	want := []supervisor.AccountRef{{
+		ID: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa", OwnerUserID: 17,
+		ServerKey: "official", NetworkType: supervisor.NetworkTelegram,
+		AppID: 123, APIHash: "from-the-configured-server",
+	}}
+	clientConn, serverConn := net.Pipe()
+	ln := newPipeListener(serverConn)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runtime.RunDaemon(ctx, runtime.DaemonOptions{
+			Config: cfg, Supervisor: legacy,
+			AccountSupervisor: accounts, AccountRunners: want,
+			Workers: map[string]gateway.Worker{},
+			Listen:  func(string) (net.Listener, error) { return ln, nil },
+		})
+	}()
+
+	select {
+	case got := <-accounts.started:
+		if len(got) != 1 || got[0] != want[0] {
+			cancel()
+			t.Fatalf("account runners = %+v, want %+v", got, want)
+		}
+	case <-time.After(5 * time.Second):
+		cancel()
+		_ = clientConn.Close()
+		t.Fatal("account supervisor was not started")
+	}
+	select {
+	case <-legacy.started:
+		cancel()
+		t.Fatal("the daemon also started configured-client workers")
+	default:
+	}
+
+	cancel()
+	_ = clientConn.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunDaemon: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunDaemon did not stop")
+	}
+	select {
+	case <-accounts.stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("account workers were not stopped")
+	}
+}
+
 func TestDaemonSupervisesAndServesTheGateway(t *testing.T) {
 	cfg := enabledClients("official")
 	cfg.API.RequestTimeout = time.Second
 	accounts := accountsFor(t, t.TempDir())
+	accountID := accounts.telegramAccount(t, "official", channelstore.NetworkTelegram)
 
 	sup := &fakeSupervisor{started: make(chan struct{}), stopped: make(chan struct{})}
 	clientConn, serverConn := net.Pipe()
@@ -212,10 +289,11 @@ func TestDaemonSupervisesAndServesTheGateway(t *testing.T) {
 			Config:     cfg,
 			Supervisor: sup,
 			Workers: map[string]gateway.Worker{
-				"official": &fakeUpstream{health: rpc.Health{Key: "official", State: rpc.StateConnected}},
+				accountID: &fakeUpstream{health: rpc.Health{Key: "official", State: rpc.StateConnected}},
 			},
-			Users:  accounts.store,
-			Tokens: accounts.tokens,
+			Channels: accounts.store,
+			Users:    accounts.store,
+			Tokens:   accounts.tokens,
 			Listen: func(addr string) (net.Listener, error) {
 				if addr != "127.0.0.1:8080" && addr != "" {
 					t.Logf("listen addr = %q", addr)
@@ -335,9 +413,21 @@ func TestDaemonDoesNotStartTheSupervisorTwice(t *testing.T) {
 // --- worker process ---
 
 type fakeManager struct {
-	mu      sync.Mutex
-	started bool
-	status  tgapi.Status
+	mu           sync.Mutex
+	started      bool
+	status       tgapi.Status
+	accountID    string
+	remoteUserID int64
+	serverKey    string
+	networkType  string
+}
+
+func (f *fakeManager) ValidateAccount(accountID string, remoteUserID int64, serverKey, networkType string) error {
+	if f.accountID != accountID || f.remoteUserID != remoteUserID ||
+		f.serverKey != serverKey || f.networkType != networkType {
+		return errors.New("fake manager account metadata mismatch")
+	}
+	return nil
 }
 
 func (f *fakeManager) Start(context.Context) {
@@ -455,6 +545,108 @@ func TestRunWorkerStartsTheClientAndServesRPC(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("RunWorker did not return")
+	}
+}
+
+func TestRunWorkerBuildsTheServiceFromTrustedAccountIdentity(t *testing.T) {
+	const accountID = "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	identity := worker.AccountIdentity{
+		ID:           accountID,
+		OwnerUserID:  7,
+		ServerKey:    "official",
+		NetworkType:  "telegram",
+		RemoteUserID: 1007,
+		SessionRef:   filepath.Join("/sessions", accountID+".box"),
+	}
+	manager := &fakeManager{
+		status:       tgapi.Status{State: tgapi.StateReady, ThisDC: 2, User: &tgapi.Account{ID: 1007}},
+		accountID:    identity.ID,
+		remoteUserID: identity.RemoteUserID,
+		serverKey:    identity.ServerKey,
+		networkType:  identity.NetworkType,
+	}
+	clientConn, serverConn := net.Pipe()
+	ln := newPipeListener(serverConn)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runtime.RunWorker(ctx, runtime.WorkerOptions{
+			Client: appconfig.Client{
+				Key: "official", Type: appconfig.Official, Enabled: true,
+				SessionPath: identity.SessionRef, RPCSocketPath: "/run/" + accountID + ".sock",
+			},
+			Account: &identity,
+			Manager: manager,
+			Listen:  func(string) (net.Listener, error) { return ln, nil },
+			PID:     101,
+		})
+	}()
+
+	upstream := rpc.NewClientWithDialer(func(context.Context, string, string) (net.Conn, error) {
+		return clientConn, nil
+	}, 2*time.Second)
+	defer upstream.Close()
+
+	var health rpc.Health
+	var err error
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		health, err = upstream.Health(context.Background())
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("Health over the account worker RPC: %v", err)
+	}
+	if health.AccountID != accountID || health.OwnerUserID != identity.OwnerUserID {
+		t.Fatalf("health identity = %q/%d, want %q/%d",
+			health.AccountID, health.OwnerUserID, accountID, identity.OwnerUserID)
+	}
+	if health.Key != identity.ServerKey || health.Type != string(appconfig.Official) {
+		t.Fatalf("health server metadata = %q/%q", health.Key, health.Type)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunWorker: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunWorker did not return")
+	}
+}
+
+func TestRunWorkerRejectsAccountMetadataThatDoesNotMatchTheServerDefinition(t *testing.T) {
+	const accountID = "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	identity := worker.AccountIdentity{
+		ID:           accountID,
+		OwnerUserID:  7,
+		ServerKey:    "another-server",
+		NetworkType:  "telegram",
+		RemoteUserID: 1007,
+		SessionRef:   filepath.Join("/sessions", accountID+".box"),
+	}
+	listenCalled := false
+	err := runtime.RunWorker(context.Background(), runtime.WorkerOptions{
+		Client: appconfig.Client{
+			Key: "official", Type: appconfig.Official, Enabled: true,
+			SessionPath: identity.SessionRef, RPCSocketPath: "/run/" + accountID + ".sock",
+		},
+		Account: &identity,
+		Manager: &fakeManager{},
+		Listen: func(string) (net.Listener, error) {
+			listenCalled = true
+			return nil, errors.New("must not listen")
+		},
+	})
+	if err == nil {
+		t.Fatal("an account bound to a different server definition must not start")
+	}
+	if listenCalled {
+		t.Fatal("the worker opened a socket before validating account metadata")
 	}
 }
 

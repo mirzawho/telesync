@@ -17,7 +17,10 @@ without it answers `/admin` with 503 and the command to build it.
 Three groups of routes, one credential policy:
 
 - **Telegram routes**, `/api/v1/telegram/{key}/...`, read live data from one
-  configured client. `{key}` is the client's `key` in the configuration file.
+  configured server definition. `{key}` is the server's `key` in the
+  configuration file; it does not select a user's Telegram session. Personal
+  account management and account-scoped Telegram operations use the routes
+  documented in [Telegram routes](generated/telegram.md).
 - **Local routes**, `/api/v1/local/...`, read and write this application's own
   SQLite data — categories, operator accounts and local channel records. Users
   and categories never contact Telegram and keep answering while every worker is
@@ -35,6 +38,8 @@ Three groups of routes, one credential policy:
   differs from Telegram's, is in [the local channels paragraph](manual/components/channels.md);
   what registering a WordPress site does, and what it refuses, is in
   [the WordPress sites paragraph](manual/components/wordpress.md).
+- [Personal-account login](identity.md): request fields, strict JSON handling,
+  server selection and the first authentication step.
 - [Examples](examples/README.md): every request the tests execute, and the ids
   they create.
 - [Generated facts](generated/facts.json): the JSON every generated page is

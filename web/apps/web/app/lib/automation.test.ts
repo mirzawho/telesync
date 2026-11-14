@@ -78,6 +78,9 @@ test("readWebhook maps every documented field", () => {
   const item = readWebhook(wireWebhook)
   assert.deepEqual(item, {
     id: 7,
+    // The wire record carries no account, so it reads as not bound — never as
+    // "whatever account is handy".
+    accountID: "",
     name: "گیرنده اخبار",
     description: "ارسال رویدادها",
     enabled: true,
@@ -235,6 +238,7 @@ const wireWorkflow = {
     {
       id: 1,
       destination_type: "telegram",
+      account_id: "acc_destination",
       client_key: "official",
       channel_id: -100999,
       site_id: 0,
@@ -245,6 +249,7 @@ const wireWorkflow = {
     {
       id: 2,
       destination_type: "wordpress",
+      account_id: "",
       client_key: "",
       channel_id: 0,
       site_id: 4,
@@ -361,6 +366,7 @@ const wireRun = {
     {
       id: 1,
       destination_type: "telegram",
+      account_id: "acc_destination",
       client_key: "official",
       channel_id: -100999,
       site_id: 0,
@@ -376,6 +382,7 @@ const wireRun = {
     {
       id: 2,
       destination_type: "wordpress",
+      account_id: "",
       client_key: "",
       channel_id: 0,
       site_id: 4,
@@ -708,6 +715,7 @@ test("a `from` that is not this area is never followed", () => {
 
 test("a webhook save posts exactly the documented fields, in snake_case", () => {
   const body = webhookBody({
+    accountID: "acc_01hxyzabcdefghijklmnopqrstuv",
     name: "  گیرنده  ",
     description: " توضیح ",
     enabled: true,
@@ -721,6 +729,7 @@ test("a webhook save posts exactly the documented fields, in snake_case", () => 
     sourceChannelIds: [3, 9],
   }) as Record<string, unknown>
   assert.deepEqual(Object.keys(body).sort(), [
+    "account_id",
     "allow_localhost",
     "auth_header",
     "auth_mode",
@@ -733,6 +742,11 @@ test("a webhook save posts exactly the documented fields, in snake_case", () => 
     "timeout_ms",
     "url",
   ])
+  assert.equal(
+    body.account_id,
+    "acc_01hxyzabcdefghijklmnopqrstuv",
+    "the account the webhook observes under"
+  )
   assert.equal(body.name, "گیرنده", "trimmed on the way out")
   assert.equal(body.url, "https://example.com/hook")
   assert.equal(body.auth_header, "X-Api-Key")
@@ -803,6 +817,7 @@ test("a webhook round-trips: what is posted is what is read back", () => {
 test("a workflow save posts managed_channel_id as a local id and one address per destination", () => {
   const body = workflowBody({
     managedChannelID: 5,
+    accountID: "acc_01hxyzabcdefghijklmnopqrstuv",
     enabled: false,
     aiEnabled: true,
     aiPrompt: "  لحن رسمی ",
@@ -811,6 +826,7 @@ test("a workflow save posts managed_channel_id as a local id and one address per
     destinations: [
       {
         type: "telegram",
+        accountID: "acc_destination",
         clientKey: "official",
         channelID: -100999,
         siteID: null,
@@ -819,6 +835,7 @@ test("a workflow save posts managed_channel_id as a local id and one address per
       },
       {
         type: "wordpress",
+        accountID: "",
         clientKey: "",
         channelID: null,
         siteID: 4,
@@ -828,6 +845,7 @@ test("a workflow save posts managed_channel_id as a local id and one address per
     ],
   }) as Record<string, unknown>
   assert.deepEqual(Object.keys(body).sort(), [
+    "account_id",
     "ai_enabled",
     "ai_prompt",
     "ai_publish_on_failure",
@@ -836,12 +854,18 @@ test("a workflow save posts managed_channel_id as a local id and one address per
     "enabled",
     "managed_channel_id",
   ])
+  assert.equal(
+    body.account_id,
+    "acc_01hxyzabcdefghijklmnopqrstuv",
+    "the account the workflow runs as"
+  )
   assert.equal(body.managed_channel_id, 5, "the local managed_channels.id")
   const destinations = body.destinations as Record<string, unknown>[]
   // A telegram destination is addressed by client_key + Telegram channel_id;
   // a wordpress one by site_id. The schema refuses a row that mixes them.
   assert.deepEqual(destinations[0], {
     destination_type: "telegram",
+    account_id: "acc_destination",
     client_key: "official",
     channel_id: -100999,
     site_id: 0,
@@ -851,6 +875,7 @@ test("a workflow save posts managed_channel_id as a local id and one address per
   })
   assert.deepEqual(destinations[1], {
     destination_type: "wordpress",
+    account_id: "",
     client_key: "",
     channel_id: 0,
     site_id: 4,
@@ -875,6 +900,7 @@ test("a destination's options survive an edit this panel has no editor for", () 
 test("a workflow round-trips: what is posted is what is read back", () => {
   const draft = {
     managedChannelID: 5,
+    accountID: "acc_source",
     enabled: true,
     aiEnabled: true,
     aiPrompt: "لحن رسمی",
@@ -883,6 +909,7 @@ test("a workflow round-trips: what is posted is what is read back", () => {
     destinations: [
       {
         type: "telegram" as const,
+        accountID: "acc_destination",
         clientKey: "official",
         channelID: -100999,
         siteID: null,
@@ -928,6 +955,7 @@ test("a workflow with no enabled destination cannot be switched on", () => {
       destinations: [
         {
           type: "telegram",
+          accountID: "acc_destination",
           clientKey: "official",
           channelID: -100999,
           siteID: null,

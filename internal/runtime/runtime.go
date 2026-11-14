@@ -12,14 +12,18 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountauth"
 	"github.com/mirza/telesync/internal/appconfig"
 	"github.com/mirza/telesync/internal/automation"
+	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/editing"
 	"github.com/mirza/telesync/internal/gateway"
 	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/sending"
+	"github.com/mirza/telesync/internal/supervisor"
 	"github.com/mirza/telesync/internal/tgapi"
 	"github.com/mirza/telesync/internal/worker"
 )
@@ -63,10 +67,11 @@ func Servers(cfg appconfig.Config, workers map[string]gateway.Worker) []gateway.
 		}
 		_, registered := workers[cl.Key]
 		out = append(out, gateway.ServerInfo{
-			Key:        cl.Key,
-			Type:       string(cl.Type),
-			Enabled:    true,
-			Registered: registered,
+			Key:          cl.Key,
+			Type:         string(cl.Type),
+			Enabled:      true,
+			Registered:   registered,
+			LoginMethods: []string{"phone"},
 		})
 	}
 	return out
@@ -84,6 +89,13 @@ type Supervisor interface {
 	Run(ctx context.Context, clients []appconfig.Client) error
 }
 
+// AccountSupervisor runs the account-keyed worker lifecycle. The legacy
+// Supervisor remains available only to deployments explicitly using the
+// configured-client compatibility path.
+type AccountSupervisor interface {
+	RunAccounts(ctx context.Context, accounts []supervisor.AccountRef) error
+}
+
 // DaemonOptions configures the daemon (supervisor + gateway) process.
 // BackgroundRunner drains the durable automation queue until its context ends.
 //
@@ -95,9 +107,19 @@ type BackgroundRunner interface {
 }
 
 type DaemonOptions struct {
-	Config     appconfig.Config
-	Supervisor Supervisor
-	Workers    map[string]gateway.Worker
+	Config              appconfig.Config
+	Supervisor          Supervisor
+	AccountSupervisor   AccountSupervisor
+	AccountRunners      []supervisor.AccountRef
+	AccountLogins       accountauth.LoginService
+	AccountAuthorized   func(context.Context, int64, accountauth.LoginAttempt)
+	AccountStatus       func(context.Context, channelstore.Account) string
+	StopAccount         func(context.Context, int64, string) error
+	ClearAccountSession func(context.Context, int64, channelstore.Account) error
+	Workers             map[string]gateway.Worker
+	// WorkerRegistry, when set, resolves the current account-keyed workers.
+	// Workers remains the static map used by the legacy configured-client path.
+	WorkerRegistry gateway.Registry
 	// Channels is the local managed-channel store. Nil disables join.
 	Channels gateway.ManagedStore
 	// Categories is the local category store. Nil disables the local category
@@ -220,7 +242,12 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 
 	handler := gateway.New(gateway.Config{
-		Workers:        registry(opts.Workers),
+		Workers: func() gateway.Registry {
+			if opts.WorkerRegistry != nil {
+				return opts.WorkerRegistry
+			}
+			return registry(opts.Workers)
+		}(),
 		Servers:        Servers(opts.Config, opts.Workers),
 		RequestTimeout: opts.Config.API.RequestTimeout,
 		Operator:       opts.Config.API.OperatorToken(),
@@ -231,7 +258,31 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			store, _ := opts.Channels.(gateway.ChannelCreationStore)
 			return store
 		}(),
-		Categories:      opts.Categories,
+		Categories: opts.Categories,
+		// Personal Telegram accounts are the owner of every Telegram resource
+		// this API serves, so the gateway gets the account repository and the
+		// account-scoped channel store. Without them a keyed route cannot say
+		// whose account it would act as, and refuses rather than guessing.
+		Accounts: func() gateway.AccountStore {
+			store, _ := opts.Channels.(gateway.AccountStore)
+			return store
+		}(),
+		Logins:              opts.AccountLogins,
+		AccountAuthorized:   opts.AccountAuthorized,
+		AccountStatus:       opts.AccountStatus,
+		StopAccount:         opts.StopAccount,
+		ClearAccountSession: opts.ClearAccountSession,
+		AccountChannels: func() gateway.AccountChannels {
+			store, _ := opts.Channels.(gateway.AccountChannels)
+			return store
+		}(),
+		Resolver: func() accountauth.AccountResolver {
+			store, ok := opts.Channels.(gateway.AccountStore)
+			if !ok {
+				return nil
+			}
+			return gateway.NewStoreAccountResolver(store)
+		}(),
 		Publishes:       opts.Publishes,
 		Send:            opts.Send,
 		Edit:            opts.Edit,
@@ -263,7 +314,9 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	defer cancel()
 
 	supervisorDone := make(chan error, 1)
-	if opts.Supervisor != nil {
+	if opts.AccountSupervisor != nil {
+		go func() { supervisorDone <- opts.AccountSupervisor.RunAccounts(ctx, opts.AccountRunners) }()
+	} else if opts.Supervisor != nil {
 		go func() { supervisorDone <- opts.Supervisor.Run(ctx, opts.Config.EnabledClients()) }()
 	} else {
 		supervisorDone <- nil
@@ -327,6 +380,9 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 type WorkerOptions struct {
 	Client  appconfig.Client
 	Manager WorkerManager
+	// Account is the trusted persistence record for an account worker. Nil is
+	// the legacy configured-client path. It is never populated from RPC input.
+	Account *worker.AccountIdentity
 	// Listen opens the worker socket. Defaults to worker.Listen(path).
 	Listen func(path string) (net.Listener, error)
 	PID    int
@@ -356,11 +412,36 @@ type WorkerManager interface {
 	Wait(ctx context.Context) error
 }
 
+// AccountWorkerManager proves that the Telegram manager uses the same
+// account/session identity the worker service was built from.
+type AccountWorkerManager interface {
+	ValidateAccount(accountID string, remoteUserID int64, serverKey, networkType string) error
+}
+
 // RunWorker runs exactly one Telegram client and its private RPC socket until
 // ctx ends.
 func RunWorker(ctx context.Context, opts WorkerOptions) error {
+	workerName := opts.Client.Key
+	if opts.Account != nil {
+		workerName = opts.Account.ID
+	}
 	if opts.Manager == nil {
-		return fmt.Errorf("runtime: client %q has no Telegram manager", opts.Client.Key)
+		return fmt.Errorf("runtime: worker %q has no Telegram manager", workerName)
+	}
+	if opts.Account != nil {
+		if err := validateAccountWorker(opts.Client, *opts.Account); err != nil {
+			return fmt.Errorf("runtime: account worker %s: %w", opts.Account.ID, err)
+		}
+		manager, ok := opts.Manager.(AccountWorkerManager)
+		if !ok {
+			return fmt.Errorf("runtime: account worker %s has a manager without account identity validation",
+				opts.Account.ID)
+		}
+		if err := manager.ValidateAccount(
+			opts.Account.ID, opts.Account.RemoteUserID, opts.Account.ServerKey, opts.Account.NetworkType,
+		); err != nil {
+			return fmt.Errorf("runtime: account worker %s: %w", opts.Account.ID, err)
+		}
 	}
 	logf := opts.Logf
 	if logf == nil {
@@ -373,18 +454,31 @@ func RunWorker(ctx context.Context, opts WorkerOptions) error {
 
 	ln, err := listen(opts.Client.RPCSocketPath)
 	if err != nil {
-		return fmt.Errorf("runtime: client %q: %w", opts.Client.Key, err)
+		return fmt.Errorf("runtime: worker %q: %w", workerName, err)
 	}
 	defer ln.Close()
 
-	svc := worker.NewService(opts.Client, opts.Manager, worker.Options{PID: opts.PID},
-		worker.WithLogf(logf))
+	var svc *worker.Service
+	if opts.Account != nil {
+		svc, err = worker.NewServiceForAccount(*opts.Account, opts.Manager, worker.Options{PID: opts.PID},
+			worker.WithLogf(logf))
+		if err != nil {
+			return fmt.Errorf("runtime: account worker %s: %w", opts.Account.ID, err)
+		}
+	} else {
+		svc = worker.NewService(opts.Client, opts.Manager, worker.Options{PID: opts.PID},
+			worker.WithLogf(logf))
+	}
 	handler := rpc.NewHandler(svc)
 
 	clientCtx, stopClient := context.WithCancel(ctx)
 	defer stopClient()
 	opts.Manager.Start(clientCtx)
-	logf("worker: client=%s pid=%d socket=%s started", opts.Client.Key, opts.PID, opts.Client.RPCSocketPath)
+	if opts.Account != nil {
+		logf("worker: account=%s pid=%d socket=%s started", workerName, opts.PID, opts.Client.RPCSocketPath)
+	} else {
+		logf("worker: client=%s pid=%d socket=%s started", workerName, opts.PID, opts.Client.RPCSocketPath)
+	}
 
 	err = worker.Serve(ctx, ln, handler)
 	stopClient()
@@ -395,6 +489,41 @@ func RunWorker(ctx context.Context, opts WorkerOptions) error {
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
-	logf("worker: client=%s stopped", opts.Client.Key)
+	if opts.Account != nil {
+		logf("worker: account=%s stopped", workerName)
+	} else {
+		logf("worker: client=%s stopped", workerName)
+	}
+	return nil
+}
+
+func validateAccountWorker(client appconfig.Client, account worker.AccountIdentity) error {
+	if err := account.Valid(); err != nil {
+		return err
+	}
+	if !client.Enabled {
+		return fmt.Errorf("the server definition is disabled")
+	}
+	if client.Key != account.ServerKey {
+		return fmt.Errorf("server definition does not match the account record")
+	}
+	if client.SessionPath != account.SessionRef || filepath.Clean(client.SessionPath) != account.SessionRef {
+		return fmt.Errorf("session path does not match the account record")
+	}
+	if client.RPCSocketPath == "" {
+		return fmt.Errorf("account worker has no private socket path")
+	}
+	switch account.NetworkType {
+	case worker.NetworkTelegram:
+		if client.Type != appconfig.Official || client.Server != nil {
+			return fmt.Errorf("official account network does not match its server definition")
+		}
+	case worker.NetworkCustom:
+		if client.Type != appconfig.Custom || client.Server == nil {
+			return fmt.Errorf("custom account network does not match its server definition")
+		}
+	default:
+		return fmt.Errorf("unknown account network type")
+	}
 	return nil
 }

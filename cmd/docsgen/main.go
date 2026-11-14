@@ -115,7 +115,9 @@ const (
 	// not a credential.
 	operatorToken = "docsgen-operator-token"
 	// accountPassword is the password of the probe accounts.
-	accountPassword = "example-doc-password"
+	accountPassword   = "example-doc-password"
+	docAdminAccount   = "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	docLimitedAccount = "acc_bbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
 type prober struct {
@@ -130,12 +132,6 @@ func (p *prober) seed(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := p.store.Upsert(ctx, channelstore.Channel{
-		ClientKey: "official", ChannelID: 1671633563, PeerType: channelstore.PeerChannel,
-		Title: "Documented channel", MembershipStatus: channelstore.StatusMember,
-	}); err != nil {
-		return err
-	}
 	admin, err := p.store.CreateUser(ctx, "Documented Administrator", "admin", hash, true)
 	if err != nil {
 		return err
@@ -147,9 +143,28 @@ func (p *prober) seed(ctx context.Context) error {
 	if _, err := p.store.CreateUser(ctx, "Documented Other User", "doc-other", hash, true); err != nil {
 		return err
 	}
+	for _, account := range []channelstore.Account{
+		{ID: docAdminAccount, OwnerUserID: admin.ID, ServerKey: "official",
+			NetworkType: channelstore.NetworkTelegram, RemoteUserID: 101,
+			Status: channelstore.AccountStatusConnected},
+		{ID: docLimitedAccount, OwnerUserID: limited.ID, ServerKey: "doc-client",
+			NetworkType: channelstore.NetworkTelegram, RemoteUserID: 102,
+			Status: channelstore.AccountStatusConnected},
+	} {
+		if _, err := p.store.Create(ctx, account); err != nil {
+			return err
+		}
+	}
+	officialChannel, err := p.store.UpsertFor(ctx, docAdminAccount, channelstore.Channel{
+		ClientKey: "official", ChannelID: 1671633563, PeerType: channelstore.PeerChannel,
+		Title: "Documented channel", MembershipStatus: channelstore.StatusMember,
+	})
+	if err != nil {
+		return err
+	}
 	// The record as the join route writes one: a snapshot of what the client
 	// reported, so the local channel detail documents a complete channel.
-	channel, err := p.store.Upsert(ctx, channelstore.Channel{
+	channel, err := p.store.UpsertFor(ctx, docAdminAccount, channelstore.Channel{
 		ClientKey: "doc-client", ChannelID: 1, PeerType: channelstore.PeerChannel,
 		Title: "Documented channel", MembershipStatus: channelstore.StatusMember,
 		AvatarAvailable: true, NoticesKnown: true,
@@ -163,8 +178,11 @@ func (p *prober) seed(ctx context.Context) error {
 		return err
 	}
 	if err := p.store.ReplacePermissions(ctx, admin.ID, channelstore.PermissionSet{
-		Global:     channelstore.GlobalPermissions(),
-		Channels:   []channelstore.ResourcePermissions{{ResourceID: channel.ID}},
+		Global: channelstore.GlobalPermissions(),
+		Channels: []channelstore.ResourcePermissions{
+			{ResourceID: channel.ID},
+			{ResourceID: officialChannel.ID},
+		},
 		Categories: []channelstore.ResourcePermissions{{ResourceID: category.ID}},
 	}); err != nil {
 		return err
@@ -189,16 +207,22 @@ func (p *prober) seed(ctx context.Context) error {
 		return err
 	}
 	p.handler = gateway.New(gateway.Config{
-		Now:     probeClock,
-		Workers: workerRegistry{},
+		Now: probeClock,
+		Workers: workerRegistry{
+			"official": documentedWorker{}, "doc-client": documentedWorker{},
+			docAdminAccount: documentedWorker{}, docLimitedAccount: documentedWorker{},
+		},
 		Servers: documentedServers(),
 		// The local channel record the join route writes: one documented row,
 		// so the local channel pages observe a complete channel. The generated
 		// exchanges byte-compare between runs, so this stays in memory rather
 		// than reading the database that records a join's own timestamps.
-		Channels: managedStore{},
+		Channels:        p.store,
+		Accounts:        p.store,
+		AccountChannels: p.store,
+		Resolver:        gateway.NewStoreAccountResolver(p.store),
 		Edit: &editing.Service{
-			Operations: p.store, Channels: managedStore{}, Staging: editStaging,
+			Operations: p.store, Channels: p.store, Staging: editStaging,
 			Jobs: queue.NewEnqueuer(p.store, 5), HistoryRetention: 30 * 24 * time.Hour,
 		},
 		Categories: p.store,

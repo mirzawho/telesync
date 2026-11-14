@@ -31,8 +31,8 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 | Caller | Request | Status | Shape |
 | --- | --- | --- | --- |
 | anonymous | `POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send` | 401 | `unauthorized` |
-| operator | `POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send` | 503 | `send_queue_unavailable` |
-| limited user | `POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send` | 403 | `publish_forbidden` |
+| operator | `POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send` | 403 | `forbidden` |
+| limited user | `POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send` | 404 | `account_not_owned` |
 | administrator | `POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send` | 503 | `send_queue_unavailable` |
 
 <details><summary>anonymous: POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send → 401</summary>
@@ -44,19 +44,19 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 </details>
 
-<details><summary>operator: POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send → 503</summary>
+<details><summary>operator: POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send → 403</summary>
 
 ```json
-{"error":{"code":"send_queue_unavailable","message":"Direct message sending is not configured.","request_id":"docsgen"}}
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 
 </details>
 
-<details><summary>limited user: POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send → 403</summary>
+<details><summary>limited user: POST /api/v1/telegram/official/channels/not-a-channel-id/messages/send → 404</summary>
 
 ```json
-{"error":{"code":"publish_forbidden","message":"Sending a message needs the content.publish permission.","request_id":"docsgen"}}
+{"error":{"code":"account_not_owned","message":"No account of yours is available for this server.","request_id":"docsgen"}}
 
 ```
 
@@ -66,6 +66,19 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 
 ```json
 {"error":{"code":"send_queue_unavailable","message":"Direct message sending is not configured.","request_id":"docsgen"}}
+
+```
+
+</details>
+
+### Responses captured from the documentation examples
+
+- `POST /api/v1/telegram/official/channels/1671633563/messages/send` as operator → `403`
+
+<details><summary>POST /api/v1/telegram/official/channels/1671633563/messages/send → 403</summary>
+
+```json
+{"error":{"code":"forbidden","message":"You do not have permission to perform this action.","request_id":"docsgen"}}
 
 ```
 

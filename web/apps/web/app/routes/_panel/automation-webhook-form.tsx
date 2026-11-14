@@ -27,6 +27,8 @@ import {
   type WebhookFieldErrors,
 } from "@/components/automation/webhook-form"
 import { canManageWebhooks } from "@/components/automation/webhook-access"
+import { listOwnedSourceChannels } from "@/components/automation/source-selection"
+import { listMyAccounts } from "@/lib/account-api"
 import {
   explainWebhookError,
   secretFieldErrorOf,
@@ -54,7 +56,7 @@ import {
   loginRedirect,
 } from "@/lib/automation-access"
 import { apiRequest, errorMessage } from "@/lib/api"
-import type { TelegramServer } from "@/lib/types"
+import type { TelegramAccount, TelegramServer } from "@/lib/types"
 import { PageShell, PageError, pageMeta, section } from "@/lib/page"
 import { requireSession } from "@/lib/session"
 
@@ -112,6 +114,9 @@ type LoaderData =
       // Local managed_channels.id values only: the picker offers the stored
       // channel rows and never a Telegram peer id.
       channels: SourceChannelOption[]
+      // The reader's own accounts. The webhook binds to one of them, and the
+      // channel list above is scoped to exactly this set.
+      accounts: TelegramAccount[]
       // The Telegram connections the source picker filters by. A channel's
       // connection is already known from the managed row's own client_key, so
       // this is a view over the record and not a second thing to store.
@@ -143,31 +148,16 @@ export async function clientLoader({
   if (!creating && id === null) return { status: "missing" }
 
   try {
+    // The reader's own accounts. A failure here is not a page failure: the form
+    // still opens, the account field says the listing is unavailable, and the
+    // source list stays scoped to whatever accounts are known.
+    const { accounts } = await listMyAccounts(token)
     const [channels, servers, localhostAllowed, webhook] = await Promise.all([
-      apiRequest<{
-        channels?: { id: number; title: string; client_key?: string }[]
-      }>(
-        "GET",
-        "/local/channels",
-        { token, query: { page: 1, per_page: 100 } }
-      )
-        .then((answer) => ({
-          rows: (answer.data?.channels ?? []).map((channel) => ({
-            id: channel.id,
-            label: channel.title,
-            clientKey: channel.client_key ?? "",
-          })),
-          error: null as string | null,
-        }))
+      listOwnedSourceChannels(token, accounts)
+        .then((rows) => ({ rows, error: null as string | null }))
         .catch((error) => {
-          // A lost session or a refusal is about the page, not about the list:
-          // it is rethrown and answered there. Anything else leaves the form
-          // usable and says which list it could not read.
           if (isAuthLost(error) || isForbidden(error)) throw error
-          return {
-            rows: [] as SourceChannelOption[],
-            error: errorMessage(error),
-          }
+          return { rows: [] as SourceChannelOption[], error: errorMessage(error) }
         }),
       // The connections a source channel belongs to. A failure here leaves the
       // picker empty rather than taking the whole page down with it: the source
@@ -198,6 +188,7 @@ export async function clientLoader({
       creating,
       webhook,
       channels: channels.rows,
+      accounts,
       servers,
       localhostAllowed,
       channelsError: channels.error,
@@ -265,6 +256,9 @@ export async function clientAction({
   }
 
   const values: Omit<WebhookDraft, "secret"> = {
+    // The account this webhook observes under. Opaque and server-generated; an
+    // empty submission means "not bound", never "any account".
+    accountID: String(form.get("account_id") ?? "").trim() || null,
     name: String(form.get("name") ?? ""),
     description: String(form.get("description") ?? ""),
     enabled: form.get("enabled") === "true",
@@ -392,6 +386,10 @@ export function webhookSubmitFields(
   return {
     intent,
     id: id === null ? "" : String(id),
+    // The account this webhook observes under, written with every save. Empty
+    // means not bound; it is never filled in from another record or from a
+    // server filter.
+    account_id: draft.accountID ?? "",
     name: draft.name,
     description: draft.description,
     enabled: String(draft.enabled),
@@ -658,6 +656,7 @@ export default function AutomationWebhookForm({
         record={record ? { id: record.id, hasSecret: record.hasSecret } : null}
         seed={seed}
         channels={loaderData.channels}
+        accounts={loaderData.accounts}
         servers={loaderData.servers}
         localhostAllowed={loaderData.localhostAllowed}
         channelsError={loaderData.channelsError}

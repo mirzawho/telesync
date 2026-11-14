@@ -109,7 +109,7 @@ func TestMigrationsUpgradeAVersionOneDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("categories unavailable after upgrade: %v", err)
 	}
-	if _, err := upgraded.AssignChannel(ctx, "official", "1234567890", cat.ID); err != nil {
+	if _, err := upgraded.AssignChannel(ctx, "legacy_official", "1234567890", cat.ID); err != nil {
 		t.Fatalf("assignment unavailable after upgrade: %v", err)
 	}
 	if err := upgraded.DeleteCategory(ctx, cat.ID); err != nil {
@@ -143,8 +143,13 @@ func TestSchemaRefusesADuplicateAssignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx,
-		`INSERT INTO managed_channels (client_key, channel_id, peer_type, membership_status, created_at, updated_at, last_synced_at)
-		 VALUES ('official', 42, 'channel', 'member', 'now', 'now', 'now')`); err != nil {
+		`INSERT INTO telegram_accounts (id, owner_user_id, server_key, network_type, status, created_at, updated_at)
+		 VALUES ('legacy_official', NULL, 'official', '', 'quarantined', 'now', 'now')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO managed_channels (account_id, client_key, channel_id, peer_type, membership_status, created_at, updated_at, last_synced_at)
+		 VALUES ('legacy_official', 'official', 42, 'channel', 'member', 'now', 'now', 'now')`); err != nil {
 		t.Fatal(err)
 	}
 	insert := `INSERT INTO user_channels_permission (user_id, channel_id, permission, effect, created_at, updated_at)

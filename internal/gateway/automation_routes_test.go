@@ -289,10 +289,10 @@ func TestRetryRefusesADeliveryThatCannotBeRetried(t *testing.T) {
 // TestWorkflowRoutesReachSQLite walks the whole workflow surface.
 func TestWorkflowRoutesReachSQLite(t *testing.T) {
 	e := newAutoEnv(t)
+	ownerToken := e.workflowOwnerToken(t)
 	source := e.channelWithID(t, 1001)
-	e.grantChannelView(t, e.defaults, source)
 
-	rec := e.call(t, defaultCaller, http.MethodGet, autoAPI+"/workflows", "")
+	rec := e.call(t, ownerToken, http.MethodGet, autoAPI+"/workflows", "")
 	autoOK(t, rec)
 	var empty autoWorkflowsBody
 	autoDecode(t, rec, &empty)
@@ -301,7 +301,7 @@ func TestWorkflowRoutesReachSQLite(t *testing.T) {
 	}
 
 	// POST creates.
-	rec = e.call(t, defaultCaller, http.MethodPost, autoAPI+"/workflows", autoJSON(t, map[string]any{
+	rec = e.call(t, ownerToken, http.MethodPost, autoAPI+"/workflows", autoJSON(t, map[string]any{
 		"managed_channel_id": source,
 		"enabled":            false,
 		"destinations":       []any{},
@@ -330,7 +330,7 @@ func TestWorkflowRoutesReachSQLite(t *testing.T) {
 	}
 
 	// GET one.
-	rec = e.call(t, defaultCaller, http.MethodGet, autoAPI+"/workflows/"+strconv.FormatInt(id, 10), "")
+	rec = e.call(t, ownerToken, http.MethodGet, autoAPI+"/workflows/"+strconv.FormatInt(id, 10), "")
 	autoOK(t, rec)
 	var one autoWorkflowBody
 	autoDecode(t, rec, &one)
@@ -339,12 +339,12 @@ func TestWorkflowRoutesReachSQLite(t *testing.T) {
 	}
 
 	// PATCH with a destination, then enable.
-	dest := e.channelWithID(t, 1002)
-	e.grantChannelView(t, e.defaults, source, dest)
-	rec = e.call(t, defaultCaller, http.MethodPatch, autoAPI+"/workflows/"+strconv.FormatInt(id, 10),
+	e.channelWithID(t, 1002)
+	rec = e.call(t, ownerToken, http.MethodPatch, autoAPI+"/workflows/"+strconv.FormatInt(id, 10),
 		autoJSON(t, map[string]any{
 			"destinations": []any{map[string]any{
 				"destination_type": "telegram",
+				"account_id":       e.accountID,
 				"client_key":       "official",
 				"channel_id":       1002,
 				"position":         0,
@@ -361,7 +361,7 @@ func TestWorkflowRoutesReachSQLite(t *testing.T) {
 		t.Errorf("destination = %+v", withDest.Workflow.Destinations[0])
 	}
 
-	rec = e.call(t, defaultCaller, http.MethodPatch, autoAPI+"/workflows/"+strconv.FormatInt(id, 10),
+	rec = e.call(t, ownerToken, http.MethodPatch, autoAPI+"/workflows/"+strconv.FormatInt(id, 10),
 		autoJSON(t, map[string]any{"enabled": true}))
 	autoOK(t, rec)
 	var enabled autoWorkflowBody
@@ -556,18 +556,19 @@ func TestWebhookConfigurationSurvivesANewRequest(t *testing.T) {
 // trip the mission names.
 func TestWorkflowEnablementSurvivesANewRequest(t *testing.T) {
 	e := newAutoEnv(t)
+	ownerToken := e.workflowOwnerToken(t)
 	source := e.channelWithID(t, 1001)
-	dest := e.channelWithID(t, 1002)
-	e.grantChannelView(t, e.defaults, source, dest)
+	e.channelWithID(t, 1002)
 	path := autoAPI + "/workflows"
 
 	// Create → Save.
-	rec := e.call(t, defaultCaller, http.MethodPost, path, autoJSON(t, map[string]any{
+	rec := e.call(t, ownerToken, http.MethodPost, path, autoJSON(t, map[string]any{
 		"managed_channel_id": source,
 		"enabled":            false,
 		"ai_enabled":         false,
 		"destinations": []any{map[string]any{
-			"destination_type": "telegram", "client_key": "official", "channel_id": 1002,
+			"destination_type": "telegram", "account_id": e.accountID,
+			"client_key": "official", "channel_id": 1002,
 		}},
 	}))
 	autoCreated(t, rec)
@@ -577,7 +578,7 @@ func TestWorkflowEnablementSurvivesANewRequest(t *testing.T) {
 	at := path + "/" + strconv.FormatInt(id, 10)
 
 	// GET.
-	rec = e.call(t, defaultCaller, http.MethodGet, at, "")
+	rec = e.call(t, ownerToken, http.MethodGet, at, "")
 	autoOK(t, rec)
 	var before autoWorkflowBody
 	autoDecode(t, rec, &before)
@@ -586,7 +587,7 @@ func TestWorkflowEnablementSurvivesANewRequest(t *testing.T) {
 	}
 
 	// Enable → Save.
-	rec = e.call(t, defaultCaller, http.MethodPatch, at, autoJSON(t, map[string]any{"enabled": true}))
+	rec = e.call(t, ownerToken, http.MethodPatch, at, autoJSON(t, map[string]any{"enabled": true}))
 	autoOK(t, rec)
 	var enabled autoWorkflowBody
 	autoDecode(t, rec, &enabled)
@@ -595,7 +596,7 @@ func TestWorkflowEnablementSurvivesANewRequest(t *testing.T) {
 	}
 
 	// GET.
-	rec = e.call(t, defaultCaller, http.MethodGet, at, "")
+	rec = e.call(t, ownerToken, http.MethodGet, at, "")
 	autoOK(t, rec)
 	var after autoWorkflowBody
 	autoDecode(t, rec, &after)

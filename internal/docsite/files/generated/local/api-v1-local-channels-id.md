@@ -68,16 +68,3 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 ```
 
 </details>
-
-### Responses captured from the documentation examples
-
-- `GET /api/v1/local/channels/1` as operator → `200`
-
-<details><summary>GET /api/v1/local/channels/1 → 200</summary>
-
-```json
-{"data":{"channel":{"id":"1","type":"channel","title":"Documented channel","avatar_available":true,"avatar_url":"/api/v1/local/channels/1/avatar","is_member":true,"is_managed":true,"membership_status":"member","permissions":{"new":false,"edit":false,"delete":false,"read":true},"verified":false,"scam":false,"fake":false,"participants_count":null},"client_key":"doc-client"},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
-
-```
-
-</details>

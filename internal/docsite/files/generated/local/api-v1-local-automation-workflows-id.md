@@ -151,7 +151,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>GET /api/v1/local/automation/workflows/1 → 200</summary>
 
 ```json
-{"data":{"workflow":{"id":1,"managed_channel_id":1,"enabled":false,"ai_enabled":false,"ai_prompt":"","ai_send_images":false,"ai_publish_on_failure":false,"config_revision":1,"destinations":[],"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z","channel":{"id":1,"client_key":"doc-client","telegram_channel_id":1,"title":"Documented channel","username":""}}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"workflow":{"id":1,"managed_channel_id":1,"enabled":false,"ai_enabled":false,"ai_prompt":"","ai_send_images":false,"ai_publish_on_failure":false,"config_revision":1,"destinations":[],"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z","channel":{"id":1,"client_key":"official","telegram_channel_id":1671633563,"title":"Documented channel","username":""}}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -225,7 +225,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>PATCH /api/v1/local/automation/workflows/1 → 200</summary>
 
 ```json
-{"data":{"workflow":{"id":1,"managed_channel_id":1,"enabled":false,"ai_enabled":true,"ai_prompt":"","ai_send_images":false,"ai_publish_on_failure":false,"config_revision":2,"destinations":[],"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z","channel":{"id":1,"client_key":"doc-client","telegram_channel_id":1,"title":"Documented channel","username":""}}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"workflow":{"id":1,"managed_channel_id":1,"enabled":false,"ai_enabled":true,"ai_prompt":"","ai_send_images":false,"ai_publish_on_failure":false,"config_revision":2,"destinations":[],"created_at":"2026-10-25T10:00:00Z","updated_at":"2026-10-25T10:00:00Z","channel":{"id":1,"client_key":"official","telegram_channel_id":1671633563,"title":"Documented channel","username":""}}},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 

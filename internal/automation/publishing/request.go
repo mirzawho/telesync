@@ -36,6 +36,9 @@ type RequestSource struct {
 // connection's own channel data.
 type RequestDestination struct {
 	ChannelID string `json:"channel_id"`
+	// AccountID is an internal binding supplied by the workflow adapter (or
+	// authenticated route context), never a request-body field.
+	AccountID string `json:"-"`
 }
 
 // RequestContent is the outgoing body exactly as it is to be sent.

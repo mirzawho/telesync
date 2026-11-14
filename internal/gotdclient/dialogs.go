@@ -75,6 +75,11 @@ func normalizeMessage(msg *tg.Message, users map[int64]*tg.User) tgapi.Message {
 			Height:            MediaHeight(msg.Media),
 			SupportsStreaming: MediaSupportsStreaming(msg.Media),
 			RoundMessage:      MediaRoundMessage(msg.Media),
+			StickerEmoji:      StickerEmoji(msg.Media),
+			StickerAnimated:   StickerAnimated(msg.Media),
+			StickerVideo:      StickerVideo(msg.Media),
+			StickerMask:       StickerMask(msg.Media),
+			StickerMaskCoords: StickerMaskCoords(msg.Media),
 		}
 	}
 	return out

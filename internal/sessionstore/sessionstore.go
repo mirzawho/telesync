@@ -116,6 +116,16 @@ type State struct {
 	Error       string
 }
 
+// String describes the state without ever carrying session bytes.
+//
+// The path is reported as its base name only: a full path can name a user or a
+// phone number, and session bytes never appear here at all.
+func (s State) String() string {
+	return fmt.Sprintf("State{file:%s exists:%t readable:%t has_auth_key:%t dc:%d saved_this_dc:%d permission:%s size:%d error:%q}",
+		filepath.Base(s.Path), s.Exists, s.Readable, s.HasAuthKey, s.DC, s.SavedThisDC,
+		s.Permission, s.Size, s.Error)
+}
+
 // Inspect reports the local state of the session file at path.
 func Inspect(path string) State {
 	st := State{Path: path}

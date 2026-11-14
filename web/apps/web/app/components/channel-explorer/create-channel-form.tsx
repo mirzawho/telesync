@@ -1,8 +1,8 @@
 import { CameraIcon, CheckIcon, Globe2Icon, LockKeyholeIcon, XIcon } from "lucide-react"
 import * as React from "react"
 
-import { TelegramServerCombobox } from "@/components/telegram-server-combobox"
-import type { TelegramServer } from "@/lib/types"
+import { AccountCombobox } from "@/components/accounts/account-combobox"
+import type { TelegramAccount } from "@/lib/types"
 import { Button } from "@workspace/ui/components/button"
 import { Field, FieldControl, FieldError, FieldLabel } from "@workspace/ui/components/field"
 import { DialogFooter } from "@workspace/ui/components/dialog"
@@ -10,7 +10,7 @@ import { Textarea } from "@workspace/ui/components/textarea"
 
 export type UsernameAvailability = { state: "claimed" | "unclaimed" | "unknown"; message?: string }
 export interface CreateChannelDraft {
-  clientKey: string
+  accountID: string
   title: string
   description: string
   visibility: "private" | "public"
@@ -18,12 +18,12 @@ export interface CreateChannelDraft {
   image?: File
 }
 export interface CreateChannelFormProps {
-  servers: TelegramServer[]
-  initialClientKey?: string
+  accounts: TelegramAccount[]
+  initialAccountID?: string
   pending?: boolean
   error?: string | null
   onSubmit: (draft: CreateChannelDraft) => void
-  onCheckUsername: (clientKey: string, username: string, signal: AbortSignal) => Promise<UsernameAvailability>
+  onCheckUsername: (accountID: string, username: string, signal: AbortSignal) => Promise<UsernameAvailability>
   onCancel?: () => void
   onDirtyChange?: (dirty: boolean) => void
   availabilityDebounceMs?: number
@@ -42,15 +42,15 @@ export function validateChannelImage(file: File): string | null {
   return null
 }
 
-export function createChannelSubmitIsValid(draft: Pick<CreateChannelDraft, "clientKey" | "title" | "visibility" | "username">): boolean {
-  return Boolean(draft.clientKey && draft.title.trim() && (draft.visibility === "private" || (draft.username?.trim() && !validatePublicUsername(draft.username))))
+export function createChannelSubmitIsValid(draft: Pick<CreateChannelDraft, "accountID" | "title" | "visibility" | "username">): boolean {
+  return Boolean(draft.accountID && draft.title.trim() && (draft.visibility === "private" || (draft.username?.trim() && !validatePublicUsername(draft.username))))
 }
 
 export function CreateChannelForm({
-  servers, initialClientKey, pending = false, error = null, onSubmit, onCheckUsername,
+  accounts, initialAccountID, pending = false, error = null, onSubmit, onCheckUsername,
   onCancel, onDirtyChange, availabilityDebounceMs = 400,
 }: CreateChannelFormProps) {
-  const [clientKey, setClientKey] = React.useState(initialClientKey)
+  const [accountID, setAccountID] = React.useState(initialAccountID)
   const [title, setTitle] = React.useState("")
   const [description, setDescription] = React.useState("")
   const [isPublic, setIsPublic] = React.useState(false)
@@ -77,33 +77,33 @@ export function CreateChannelForm({
   React.useEffect(() => {
     setAvailability(null)
     setAvailabilityFor("")
-    if (!isPublic || !clientKey || !username || validatePublicUsername(username)) {
+    if (!isPublic || !accountID || !username || validatePublicUsername(username)) {
       setChecking(false)
       return
     }
     const controller = new AbortController()
-    const checkKey = `${clientKey}:${username}`
+    const checkKey = `${accountID}:${username}`
     setChecking(true)
     const timer = window.setTimeout(() => {
-      onCheckUsername(clientKey, username.replace(/^@/, ""), controller.signal)
+      onCheckUsername(accountID, username.replace(/^@/, ""), controller.signal)
         .then((result) => { if (!controller.signal.aborted) { setAvailability(result); setAvailabilityFor(checkKey) } })
         .catch(() => { if (!controller.signal.aborted) { setAvailability({ state: "unknown" }); setAvailabilityFor(checkKey) } })
         .finally(() => { if (!controller.signal.aborted) setChecking(false) })
     }, availabilityDebounceMs)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [availabilityDebounceMs, clientKey, isPublic, onCheckUsername, username])
+  }, [accountID, availabilityDebounceMs, isPublic, onCheckUsername, username])
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setTouched(true)
     const visibility = isPublic ? "public" : "private"
-    if (!createChannelSubmitIsValid({ clientKey: clientKey ?? "", title, visibility, username })) return
-    onSubmit({ clientKey: clientKey!, title: title.trim(), description, visibility,
+    if (!createChannelSubmitIsValid({ accountID: accountID ?? "", title, visibility, username })) return
+    onSubmit({ accountID: accountID!, title: title.trim(), description, visibility,
       ...(isPublic ? { username: username.replace(/^@/, "") } : {}), ...(image ? { image } : {}) })
   }
 
-  const changeServer = (next: string | undefined) => {
-    setClientKey(next)
+  const changeAccount = (next: string | undefined) => {
+    setAccountID(next)
     setAvailability(null)
     setAvailabilityFor("")
     setChecking(false)
@@ -117,10 +117,10 @@ export function CreateChannelForm({
       setChecking(false)
     }
   }
-  const availabilityCurrent = availabilityFor === `${clientKey ?? ""}:${username}` ? availability : null
+  const availabilityCurrent = availabilityFor === `${accountID ?? ""}:${username}` ? availability : null
   React.useEffect(() => {
-    onDirtyChange?.(Boolean(title || description || username || image || clientKey !== initialClientKey))
-  }, [clientKey, description, image, initialClientKey, onDirtyChange, title, username])
+    onDirtyChange?.(Boolean(title || description || username || image || accountID !== initialAccountID))
+  }, [accountID, description, image, initialAccountID, onDirtyChange, title, username])
 
   const chooseImage = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -154,10 +154,10 @@ export function CreateChannelForm({
         {imageError && <p role="alert" className="max-w-sm text-center text-xs text-destructive">{imageError}</p>}
       </div>
 
-      <Field data-invalid={!clientKey ? "" : undefined}>
-        <FieldLabel htmlFor="create-channel-server" required>سرور تلگرام</FieldLabel>
-        <TelegramServerCombobox id="create-channel-server" servers={servers} value={clientKey} onChange={changeServer} disabled={pending} />
-        {!clientKey && <FieldError>سرور تلگرام را انتخاب کنید.</FieldError>}
+      <Field data-invalid={!accountID ? "" : undefined}>
+        <FieldLabel htmlFor="create-channel-account" required>حساب تلگرام</FieldLabel>
+        <AccountCombobox id="create-channel-account" accounts={accounts} value={accountID} onChange={changeAccount} disabled={pending} />
+        {!accountID && <FieldError>حساب تلگرام را انتخاب کنید.</FieldError>}
       </Field>
       <Field data-invalid={titleError ? "" : undefined}>
         <FieldLabel htmlFor="create-channel-title" required>نام کانال</FieldLabel>
@@ -201,7 +201,7 @@ export function CreateChannelForm({
     </div>
     <DialogFooter className="shrink-0 flex-row-reverse justify-start border-t px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
       <div className="flex flex-row-reverse gap-2">
-        <Button type="submit" disabled={pending || !clientKey} className="min-w-28">{pending ? "در حال ساخت…" : "ساخت کانال"}</Button>
+        <Button type="submit" disabled={pending || !accountID} className="min-w-28">{pending ? "در حال ساخت…" : "ساخت کانال"}</Button>
         {onCancel && <Button type="button" variant="outline" onClick={onCancel} disabled={pending}>انصراف</Button>}
       </div>
     </DialogFooter>

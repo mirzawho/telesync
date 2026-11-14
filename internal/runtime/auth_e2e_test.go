@@ -22,6 +22,8 @@ import (
 // is bound.
 func TestDaemonLoginEndToEnd(t *testing.T) {
 	accounts := accountsFor(t, t.TempDir())
+	accountID := accounts.telegramAccount(t, "official", channelstore.NetworkTelegram)
+	official := &fakeUpstream{health: rpc.Health{Key: "official", State: rpc.StateConnected}}
 	pipes := newPipeDialer()
 	defer pipes.Close()
 
@@ -34,11 +36,12 @@ func TestDaemonLoginEndToEnd(t *testing.T) {
 				Clients: []appconfig.Client{{Key: "official", Enabled: true}},
 			},
 			Workers: map[string]gateway.Worker{
-				"official": &fakeUpstream{health: rpc.Health{Key: "official", State: rpc.StateConnected}},
+				accountID: official,
 			},
-			Users:  accounts.store,
-			Tokens: accounts.tokens,
-			Listen: func(string) (net.Listener, error) { return pipes, nil },
+			Channels: accounts.store,
+			Users:    accounts.store,
+			Tokens:   accounts.tokens,
+			Listen:   func(string) (net.Listener, error) { return pipes, nil },
 		})
 	}()
 	t.Cleanup(func() {

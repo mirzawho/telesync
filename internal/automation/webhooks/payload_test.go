@@ -19,6 +19,8 @@ func messageEvent(media *rpc.Media) automation.MessageEvent {
 		Type:              automation.EventMessageCreated,
 		NetworkKey:        "official",
 		SourceClientKey:   "client-a",
+		AccountID:         testAccountID,
+		SourceAccountID:   testAccountID,
 		ManagedChannelID:  7,
 		TelegramChannelID: -1001234,
 		MessageID:         91,
@@ -38,7 +40,7 @@ func messageEvent(media *rpc.Media) automation.MessageEvent {
 			},
 			MediaURLPath: "/telegram/client-a/channels/-1001234/messages/91/media",
 		},
-	}
+	}.WithOwner(testOwnerUserID)
 }
 
 // The JSON keys are the contract with every receiver that already parses this

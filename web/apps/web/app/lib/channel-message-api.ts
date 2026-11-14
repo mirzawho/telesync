@@ -54,7 +54,7 @@ export interface SendAccepted {
   operation_id: string
   status: SendOperationStatus
   accepted_at: string
-  destination: { client_key: string; channel_id: string }
+  destination: { account_id: string; server_key?: string; channel_id: string }
   status_url: string
 }
 
@@ -63,7 +63,7 @@ export interface SendOperation {
   status: SendOperationStatus
   stage?: string
   attempt_count: number
-  destination: { client_key: string; channel_id: string }
+  destination: { account_id: string; server_key?: string; channel_id: string }
   accepted_at: string
   result?: { message_id: number }
   error?: OperationError
@@ -73,7 +73,7 @@ export interface EditAccepted {
   operation_id: string
   status: EditOperationStatus
   accepted_at: string
-  target: { client_key: string; channel_id: string; message_id: number }
+  target: { account_id: string; server_key?: string; channel_id: string; message_id: number }
   status_url: string
 }
 
@@ -82,7 +82,7 @@ export interface EditOperation {
   status: EditOperationStatus
   stage?: string
   attempt_count: number
-  target: { client_key: string; channel_id: string; message_id: number }
+  target: { account_id: string; server_key?: string; channel_id: string; message_id: number }
   accepted_at: string
   result?: { message_id: number; media_kind?: string }
   error?: OperationError
@@ -95,12 +95,12 @@ export interface DeleteMessageResult {
   message_id: number
 }
 
-function targetPath(clientKey: string, channelID: string | number): string {
+function targetPath(accountID: string, channelID: string | number): string {
   const remoteID = String(channelID)
-  if (!clientKey || !/^[1-9]\d*$/.test(remoteID)) {
-    throw new Error("شناسهٔ اتصال یا کانال تلگرام معتبر نیست.")
+  if (!/^acc_[0-9a-hjkmnp-tv-z]{26}$/.test(accountID) || !/^[1-9]\d*$/.test(remoteID)) {
+    throw new Error("شناسهٔ حساب یا کانال تلگرام معتبر نیست.")
   }
-  return `/telegram/${encodeURIComponent(clientKey)}/channels/${remoteID}/messages`
+  return `/telegram/accounts/${encodeURIComponent(accountID)}/channels/${remoteID}/messages`
 }
 
 function withMessage(path: string, messageID: number): string {
@@ -119,13 +119,13 @@ function requestBody(payload: ChannelMessagePayload | ChannelMessageEditPayload,
 }
 
 export async function sendChannelMessage(
-  clientKey: string,
+  accountID: string,
   channelID: string | number,
   payload: ChannelMessagePayload,
   idempotencyKey: string,
   options: { token?: string | null; signal?: AbortSignal; file?: File } = {}
 ) {
-  const path = `${targetPath(clientKey, channelID)}/send`
+  const path = `${targetPath(accountID, channelID)}/send`
   const { data } = await apiRequest<SendAccepted>("POST", path, {
     token: options.token,
     signal: options.signal,
@@ -136,25 +136,25 @@ export async function sendChannelMessage(
 }
 
 export async function getSendOperation(
-  clientKey: string,
+  accountID: string,
   channelID: string | number,
   operationID: string,
   options: { token?: string | null; signal?: AbortSignal } = {}
 ) {
-  const path = `${targetPath(clientKey, channelID)}/send/${encodeURIComponent(operationID)}`
+  const path = `${targetPath(accountID, channelID)}/send/${encodeURIComponent(operationID)}`
   const { data } = await apiRequest<SendOperation>("GET", path, options)
   return data
 }
 
 export async function editChannelMessage(
-  clientKey: string,
+  accountID: string,
   channelID: string | number,
   messageID: number,
   payload: ChannelMessageEditPayload,
   idempotencyKey: string,
   options: { token?: string | null; signal?: AbortSignal; file?: File } = {}
 ) {
-  const path = withMessage(targetPath(clientKey, channelID), messageID)
+  const path = withMessage(targetPath(accountID, channelID), messageID)
   const { data } = await apiRequest<EditAccepted>("PUT", path, {
     token: options.token,
     signal: options.signal,
@@ -165,24 +165,24 @@ export async function editChannelMessage(
 }
 
 export async function getEditOperation(
-  clientKey: string,
+  accountID: string,
   channelID: string | number,
   messageID: number,
   operationID: string,
   options: { token?: string | null; signal?: AbortSignal } = {}
 ) {
-  const path = `${withMessage(targetPath(clientKey, channelID), messageID)}/edit/${encodeURIComponent(operationID)}`
+  const path = `${withMessage(targetPath(accountID, channelID), messageID)}/edit/${encodeURIComponent(operationID)}`
   const { data } = await apiRequest<EditOperation>("GET", path, options)
   return data
 }
 
 export async function deleteChannelMessage(
-  clientKey: string,
+  accountID: string,
   channelID: string | number,
   messageID: number,
   options: { token?: string | null; signal?: AbortSignal } = {}
 ) {
-  const path = withMessage(targetPath(clientKey, channelID), messageID)
+  const path = withMessage(targetPath(accountID, channelID), messageID)
   const { data } = await apiRequest<DeleteMessageResult>("DELETE", path, options)
   return data
 }

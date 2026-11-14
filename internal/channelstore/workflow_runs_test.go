@@ -52,7 +52,8 @@ func (e *wfEnv) event(t *testing.T, messageID int64) string {
 		Payload: automation.MessagePayload{
 			Message: rpc.Message{ID: int(messageID), Text: "hello #news"},
 		},
-	})
+		AccountID: e.account,
+	}.WithOwner(e.user.ID))
 	if err != nil {
 		t.Fatalf("InsertMessageEvent: %v", err)
 	}
@@ -300,7 +301,7 @@ func TestEnsureWorkflowPublicationIsStableAcrossRetries(t *testing.T) {
 	}
 	dest := automation.WorkflowPublication{
 		DestinationType: string(automation.DestinationTelegram),
-		ClientKey:       "official", ChannelID: 555,
+		ClientKey:       "official", ChannelID: 555, AccountID: r.account,
 	}
 	first, created, err := r.store.EnsureWorkflowPublication(ctx, run.ID, dest)
 	if err != nil || !created {
@@ -326,6 +327,48 @@ func TestEnsureWorkflowPublicationIsStableAcrossRetries(t *testing.T) {
 	}
 	if again.RemoteMessageID != 321 {
 		t.Fatalf("remote message id = %d", again.RemoteMessageID)
+	}
+}
+
+func TestWorkflowPublicationIdentityIncludesDestinationAccountAcrossReopen(t *testing.T) {
+	r := newWFRun(t)
+	ctx := context.Background()
+	run, _, err := r.store.BeginWorkflowRun(ctx, channelstore.BeginWorkflowRunRequest{
+		WorkflowID: r.workflow.ID, EventID: r.eventID, SourceMessageID: 9, OriginalContent: "hello",
+	})
+	if err != nil {
+		t.Fatalf("BeginWorkflowRun: %v", err)
+	}
+	firstDest := automation.WorkflowPublication{
+		DestinationType: string(automation.DestinationTelegram),
+		ClientKey:       "official", ChannelID: 555, AccountID: r.account,
+	}
+	first, created, err := r.store.EnsureWorkflowPublication(ctx, run.ID, firstDest)
+	if err != nil || !created {
+		t.Fatalf("first publication: created=%v err=%v", created, err)
+	}
+	secondDest := firstDest
+	secondAccount := ownerAccount(t, r.store, r.user.ID, "official", channelstore.NetworkTelegram, 2)
+	secondDest.AccountID = secondAccount
+	second, created, err := r.store.EnsureWorkflowPublication(ctx, run.ID, secondDest)
+	if err != nil || !created {
+		t.Fatalf("second-account publication: created=%v err=%v", created, err)
+	}
+	if first.ID == second.ID {
+		t.Fatal("publications for different accounts shared one durable identity")
+	}
+
+	reopened, err := r.store.WorkflowPublications(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("WorkflowPublications after reopen: %v", err)
+	}
+	if len(reopened) != 2 || reopened[0].AccountID != r.account ||
+		reopened[1].AccountID != secondAccount {
+		t.Fatalf("reopened publications = %+v; destination account identities were not preserved", reopened)
+	}
+	retry, created, err := r.store.EnsureWorkflowPublication(ctx, run.ID, secondDest)
+	if err != nil || created || retry.ID != second.ID || retry.AccountID != secondDest.AccountID {
+		t.Fatalf("retry publication = %+v created=%v err=%v; want same account-bound row", retry, created, err)
 	}
 }
 

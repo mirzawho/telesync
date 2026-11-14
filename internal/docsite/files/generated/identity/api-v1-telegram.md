@@ -43,7 +43,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>operator: GET /api/v1/telegram → 200</summary>
 
 ```json
-{"data":{"servers":[{"key":"official","type":"official","enabled":true,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}},{"key":"doc-client","type":"official","enabled":true,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"servers":[{"key":"official","type":"official","enabled":true,"login_methods":null,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}},{"key":"doc-client","type":"official","enabled":true,"login_methods":null,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -61,7 +61,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>administrator: GET /api/v1/telegram → 200</summary>
 
 ```json
-{"data":{"servers":[{"key":"official","type":"official","enabled":true,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}},{"key":"doc-client","type":"official","enabled":true,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"servers":[{"key":"official","type":"official","enabled":true,"login_methods":null,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}},{"key":"doc-client","type":"official","enabled":true,"login_methods":null,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 
@@ -74,7 +74,7 @@ Each request below sent `not-a-valid-value` where the path has a variable, so a 
 <details><summary>GET /api/v1/telegram → 200</summary>
 
 ```json
-{"data":{"servers":[{"key":"official","type":"official","enabled":true,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}},{"key":"doc-client","type":"official","enabled":true,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
+{"data":{"servers":[{"key":"official","type":"official","enabled":true,"login_methods":null,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}},{"key":"doc-client","type":"official","enabled":true,"login_methods":null,"health_checkable":true,"state":"connected","authorized":true,"transport":"ready","last_success_at":null,"last_error":"","user":{"id":1,"first_name":"","last_name":"","username":""}}]},"meta":{"generated_at":"2026-10-25T10:00:00Z","request_id":"docsgen"}}
 
 ```
 

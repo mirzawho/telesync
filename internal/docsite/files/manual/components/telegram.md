@@ -47,6 +47,33 @@ registered.
 `last_error` for a timeout is one fixed sentence; the underlying error goes to
 the daemon log, never to the response.
 
+## Personal Telegram accounts
+
+The server key identifies a configured Telegram or Cat backend; it does not
+identify a user's Telegram session. Personal sessions belong to the signed-in
+user and are managed at `/api/v1/me/telegram-accounts`. These routes expose
+only the caller's accounts. An operator credential is not a user account and
+cannot manage personal sessions.
+
+The login flow is separate from Telesync application sign-in. A login attempt
+is owned by the authenticated user; codes and 2FA passwords are submitted only
+to that attempt and are never part of its response. The server's reported code
+delivery method is authoritative—clients must not assume SMS. Login methods
+must be offered only when the server explicitly advertises support.
+
+Telegram data routes that act as a personal account name its opaque
+`account_id`, for example
+`/api/v1/telegram/accounts/{account_id}/channels`. The server verifies account
+ownership before checking application permissions and routing to that account's
+worker. A Telegram channel's remote ID is not proof that it is registered to
+the selected account; channel permissions are resolved through the local
+managed-channel record.
+
+Account IDs are opaque and owner-scoped. A caller cannot use an account ID to
+inspect another user's account; the API returns not-found for an ID that is not
+the caller's. Deletion is distinct from changing an account's connection status,
+and neither operation transfers channels or automation to another account.
+
 ## The dashboard's server status
 
 `GET /api/v1/telegram` feeds the channel pages' server selector; it needs a

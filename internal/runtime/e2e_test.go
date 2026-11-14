@@ -22,6 +22,7 @@ import (
 	"github.com/gotd/td/transport"
 
 	"github.com/mirza/telesync/internal/appconfig"
+	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/gateway"
 	"github.com/mirza/telesync/internal/gotdclient"
 	"github.com/mirza/telesync/internal/profile"
@@ -295,6 +296,7 @@ func TestDaemonToWorkerToMTProtoEndToEnd(t *testing.T) {
 	defer gwPipe.Close()
 	gwDone := make(chan error, 1)
 	accounts := accountsFor(t, dir)
+	accountID := accounts.telegramAccount(t, "the-cat", channelstore.NetworkCustom)
 	go func() {
 		gwDone <- runtime.RunDaemon(ctx, runtime.DaemonOptions{
 			Config: appconfig.Config{
@@ -302,7 +304,8 @@ func TestDaemonToWorkerToMTProtoEndToEnd(t *testing.T) {
 				Clients: []appconfig.Client{cl},
 			},
 			Supervisor: nil,
-			Workers:    map[string]gateway.Worker{"the-cat": upstream},
+			Workers:    map[string]gateway.Worker{accountID: upstream},
+			Channels:   accounts.store,
 			Users:      accounts.store,
 			Tokens:     accounts.tokens,
 			Listen: func(string) (net.Listener, error) {

@@ -385,17 +385,21 @@ func routeHandlers(proj *project) map[string]map[string]handlerRef {
 		"/healthz": {http.MethodGet: h("gatewayHealth")},
 		// The documentation routes are served by gateway.Server.docs through
 		// requireAuth; the probe reaches the site handler directly.
-		"/docs":                                                 {http.MethodGet: h("docs")},
-		"/docs/{path}":                                          {http.MethodGet: h("docs")},
-		"/api/v1/auth/login":                                    {http.MethodPost: h("login")},
-		"/api/v1/auth/me":                                       {http.MethodGet: h("me")},
-		"/api/v1/telegram":                                      {http.MethodGet: h("servers")},
-		"/api/v1/telegram/{key}/health":                         {http.MethodGet: h("health")},
-		"/api/v1/telegram/{key}/profile":                        {http.MethodGet: h("profile")},
-		"/api/v1/telegram/{key}/channels":                       {http.MethodGet: h("channels")},
-		"/api/v1/telegram/{key}/channels/find":                  {http.MethodGet: h("find")},
-		"/api/v1/telegram/{key}/channels/{channel_id}":          {http.MethodGet: h("channel")},
-		"/api/v1/telegram/{key}/channels/{channel_id}/messages": {http.MethodGet: h("messages")},
+		"/docs":              {http.MethodGet: h("docs")},
+		"/docs/{path}":       {http.MethodGet: h("docs")},
+		"/api/v1/auth/login": {http.MethodPost: h("login")},
+		"/api/v1/auth/me":    {http.MethodGet: h("me")},
+		"/api/v1/telegram":   {http.MethodGet: h("servers")},
+		// Login start is documented from its request type and response, but its
+		// probe is skipped because replaying it against a live login service
+		// would send a real authentication challenge.
+		"/api/v1/me/telegram-accounts/login/start":                                  {http.MethodPost: h("startLogin")},
+		"/api/v1/telegram/{key}/health":                                             {http.MethodGet: h("health")},
+		"/api/v1/telegram/{key}/profile":                                            {http.MethodGet: h("profile")},
+		"/api/v1/telegram/{key}/channels":                                           {http.MethodGet: h("channels")},
+		"/api/v1/telegram/{key}/channels/find":                                      {http.MethodGet: h("find")},
+		"/api/v1/telegram/{key}/channels/{channel_id}":                              {http.MethodGet: h("channel")},
+		"/api/v1/telegram/{key}/channels/{channel_id}/messages":                     {http.MethodGet: h("messages")},
 		"/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}":        {http.MethodGet: h("message"), http.MethodDelete: h("deleteTelegramMessage")},
 		"/api/v1/telegram/{key}/channels/{channel_id}/messages/{message_id}/media":  {http.MethodGet: h("media")},
 		"/api/v1/telegram/{key}/channels/{channel_id}/messages/send":                {http.MethodPost: h("sendTelegramMessage")},

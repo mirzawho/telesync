@@ -47,6 +47,8 @@ GET /docs
 
 GET /api/v1/telegram
 
+GET /api/v1/me/telegram-accounts
+
 # --- telegram: health and profile ----------------------------------------
 
 GET /api/v1/telegram/official/health
@@ -185,13 +187,6 @@ Content-Type: application/json
 
 	{
 	  "category_ids": []
-	}
-
-POST /api/v1/local/channels/1/leave
-Content-Type: application/json
-
-	{
-	  "telegram": false
 	}
 
 # --- local: wordpress ----------------------------------------------------
@@ -349,3 +344,12 @@ Content-Type: application/json
 GET /api/v1/local/automation/workflows/{{workflow}}/runs
 
 DELETE /api/v1/local/automation/workflows/{{workflow}}
+
+# Remove the documented channel only after the examples that use it as a
+# publishing and automation source have completed.
+POST /api/v1/local/channels/1/leave
+Content-Type: application/json
+
+	{
+	  "telegram": false
+	}

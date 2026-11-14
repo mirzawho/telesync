@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/gateway"
 	"github.com/mirza/telesync/internal/rpc"
@@ -37,6 +38,7 @@ func channelsEnv(t *testing.T, workers ...string) (*accountEnv, map[string]*fake
 type localChannelJSON struct {
 	ID                int64  `json:"id"`
 	ClientKey         string `json:"client_key"`
+	AccountID         string `json:"account_id"`
 	ChannelID         int64  `json:"channel_id"`
 	Type              string `json:"type"`
 	Title             string `json:"title"`
@@ -91,7 +93,12 @@ const localChannelsPath = "/api/v1/local/channels"
 
 func (e *accountEnv) localRow(t *testing.T, key string, telegramID int64, title, username string) channelstore.Channel {
 	t.Helper()
-	row, err := e.store.Upsert(context.Background(), channelstore.Channel{
+	account, ok := e.testEnv.account[key]
+	if !ok {
+		t.Fatalf("no fixture account for server key %q", key)
+	}
+	row, err := e.store.RegisterForAccount(context.Background(), channelstore.Channel{
+		AccountID:         account.ID,
 		ClientKey:         key,
 		ChannelID:         telegramID,
 		PeerType:          channelstore.PeerChannel,
@@ -101,7 +108,7 @@ func (e *accountEnv) localRow(t *testing.T, key string, telegramID int64, title,
 		AvatarPhotoID:     77,
 		MembershipStatus:  channelstore.StatusMember,
 		ParticipantsCount: intPtr(1234),
-	})
+	}, channelstore.WithOwner(account.OwnerUserID))
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -132,6 +139,132 @@ func TestLocalChannelsListPaginatesSearchesAndReportsTotals(t *testing.T) {
 	ch := found.Data.Channels[0]
 	if ch.ClientKey != "the-cat" || ch.ChannelID != 900 {
 		t.Fatalf("channel = %+v", ch)
+	}
+}
+
+func TestLocalChannelListUnionsOnlyOwnedAccountsAndFiltersByAccount(t *testing.T) {
+	env, _ := channelsEnv(t)
+	ctx := context.Background()
+	nextRemoteID := int64(10)
+	newAccount := func(owner int64, status string) channelstore.Account {
+		t.Helper()
+		id, err := accountid.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := env.store.Create(ctx, channelstore.Account{
+			ID: id, OwnerUserID: owner, ServerKey: "official", NetworkType: channelstore.NetworkTelegram,
+			RemoteUserID: nextRemoteID, Status: status,
+		})
+		nextRemoteID++
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		return a
+	}
+	register := func(account channelstore.Account, title string) channelstore.Channel {
+		t.Helper()
+		row, err := env.store.RegisterForAccount(ctx, channelstore.Channel{
+			AccountID: account.ID, ClientKey: account.ServerKey, ChannelID: 777,
+			PeerType: channelstore.PeerChannel, Title: title, MembershipStatus: channelstore.StatusMember,
+		}, channelstore.WithOwner(account.OwnerUserID))
+		if err != nil {
+			t.Fatalf("register: %v", err)
+		}
+		return row
+	}
+	first := register(newAccount(env.defaults.user.ID, channelstore.AccountStatusConnected), "Shared A")
+	second := register(newAccount(env.defaults.user.ID, channelstore.AccountStatusDisconnected), "Shared B")
+	foreign := env.account(t, "local-list-foreign", channelstore.GlobalPermissions()...)
+	foreignRow := register(newAccount(foreign.user.ID, channelstore.AccountStatusConnected), "Foreign")
+
+	all := decode[localChannelPage](t, env.send(t, defaultCaller, http.MethodGet, localChannelsPath, ""))
+	if all.Meta.Total != 2 || len(all.Data.Channels) != 2 {
+		t.Fatalf("all owned channels = %d/%d, want 2/2", all.Meta.Total, len(all.Data.Channels))
+	}
+	ids := map[int64]bool{}
+	for _, ch := range all.Data.Channels {
+		ids[ch.ID] = true
+	}
+	if !ids[first.ID] || !ids[second.ID] {
+		t.Fatalf("same remote channel registrations collapsed: got local ids %v", ids)
+	}
+
+	filtered := decode[localChannelPage](t, env.send(t, defaultCaller, http.MethodGet,
+		localChannelsPath+"?account_ids="+first.AccountID+","+second.AccountID, ""))
+	if filtered.Meta.Total != 2 || len(filtered.Data.Channels) != 2 {
+		t.Fatalf("account-filtered channels = %+v", filtered)
+	}
+	for _, ch := range filtered.Data.Channels {
+		if ch.AccountID != first.AccountID && ch.AccountID != second.AccountID {
+			t.Fatalf("account filter returned an unselected account: %+v", ch)
+		}
+	}
+	foreignFilter := decode[localChannelPage](t, env.send(t, defaultCaller, http.MethodGet,
+		localChannelsPath+"?account_ids="+foreignRow.AccountID, ""))
+	if foreignFilter.Meta.Total != 0 || len(foreignFilter.Data.Channels) != 0 {
+		t.Fatalf("foreign account filter exposed rows: %+v", foreignFilter)
+	}
+	unknownID, err := accountid.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknownFilter := decode[localChannelPage](t, env.send(t, defaultCaller, http.MethodGet,
+		localChannelsPath+"?account_ids="+unknownID, ""))
+	if unknownFilter.Meta.Total != 0 || len(unknownFilter.Data.Channels) != 0 {
+		t.Fatalf("unknown account filter exposed rows: %+v", unknownFilter)
+	}
+}
+
+func TestLocalChannelDetailAndHistoryResolveStoredAccountAndEnforceOwner(t *testing.T) {
+	env, _ := channelsEnv(t)
+	ctx := context.Background()
+	makeRegistered := func(owner channelstore.User, remoteID int64) (channelstore.Channel, *fakeWorker) {
+		t.Helper()
+		id, err := accountid.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		account, err := env.store.Create(ctx, channelstore.Account{
+			ID: id, OwnerUserID: owner.ID, ServerKey: "official", NetworkType: channelstore.NetworkTelegram,
+			RemoteUserID: remoteID, Status: channelstore.AccountStatusDisconnected,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		row, err := env.store.RegisterForAccount(ctx, channelstore.Channel{
+			AccountID: account.ID, ClientKey: "official", ChannelID: 900,
+			PeerType: channelstore.PeerChannel, Title: "Stored", MembershipStatus: channelstore.StatusMember,
+		}, channelstore.WithOwner(owner.ID))
+		if err != nil {
+			t.Fatalf("register: %v", err)
+		}
+		worker := readyWorker()
+		env.workers[account.ID] = worker
+		return row, worker
+	}
+	owned, ownWorker := makeRegistered(env.defaults.user, 901)
+	ownedSecond, secondWorker := makeRegistered(env.defaults.user, 903)
+	foreign, foreignWorker := makeRegistered(env.account(t, "local-detail-foreign", channelstore.GlobalPermissions()...).user, 902)
+
+	if resp := env.send(t, defaultCaller, http.MethodGet, fmt.Sprintf("%s/%d?account_ids=wrong", localChannelsPath, owned.ID), ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("detail must use the stored account, not a query filter: %d", resp.StatusCode)
+	}
+	if ownWorker.callCount() != 1 {
+		t.Fatalf("stored account worker calls = %d, want 1", ownWorker.callCount())
+	}
+	if resp := env.send(t, defaultCaller, http.MethodGet, fmt.Sprintf("%s/%d/messages", localChannelsPath, ownedSecond.ID), ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("owned history = %d, want 200", resp.StatusCode)
+	}
+	if secondWorker.lastChan != 900 || ownWorker.callCount() != 1 {
+		t.Fatalf("history did not use the row's stored account: first calls=%d second channel=%d",
+			ownWorker.callCount(), secondWorker.lastChan)
+	}
+	if resp := env.send(t, defaultCaller, http.MethodGet, fmt.Sprintf("%s/%d/messages", localChannelsPath, foreign.ID), ""); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("foreign local history = %d, want 404", resp.StatusCode)
+	}
+	if foreignWorker.callCount() != 0 {
+		t.Fatalf("foreign account worker was called %d times", foreignWorker.callCount())
 	}
 }
 

@@ -137,8 +137,9 @@ const storedWorkflow = {
   config_revision: 1,
   destinations: [
     {
-      id: 1,
-      type: "telegram",
+    id: 1,
+    type: "telegram",
+    accountID: "acc_destination",
       client_key: "official",
       channel_id: 200,
       site_id: 0,
@@ -201,6 +202,7 @@ const tabTags = (markup: string) =>
 const webhookItem = (id: number, name: string): WebhookItem => ({
   id,
   name,
+  accountID: "acc_fixture000000000000000",
   description: "",
   enabled: true,
   url: "https://example.test/hooks",
@@ -226,6 +228,7 @@ const webhookItem = (id: number, name: string): WebhookItem => ({
 const workflowItem = (id: number, title: string): WorkflowItem => ({
   id,
   managedChannelID: id,
+  accountID: "acc_fixture000000000000000",
   channel: {
     id,
     title,
@@ -243,6 +246,7 @@ const workflowItem = (id: number, title: string): WorkflowItem => ({
     {
       id: 1,
       type: "telegram",
+      accountID: "acc_destination",
       clientKey: "official",
       channelID: 200,
       siteID: 0,

@@ -18,6 +18,7 @@ import (
 	"github.com/gotd/log/logslog"
 
 	"github.com/gotd/td/exchange"
+	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/dcs"
 	"github.com/gotd/td/tg"
@@ -46,7 +47,7 @@ type Spec struct {
 	AppHash     string
 	Phone       string
 	SessionPath string
-	Session     *sessionstore.Store
+	Session     session.Storage
 
 	// Custom-only fields; zero for the official profile.
 	DC         int

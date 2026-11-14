@@ -47,6 +47,15 @@ var _ webhooks.Store = (*fakeStore)(nil)
 func (f *fakeStore) CreateWebhook(ctx context.Context, createdBy int64, rec automation.Webhook, secret *secrets.Box) (automation.Webhook, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Delivery-handler fixtures use one explicitly bound fake account. This
+	// mirrors the production store deriving the binding from the persisted
+	// account record rather than leaving a runnable, ownerless webhook.
+	if rec.OwnerUserID == 0 {
+		rec.OwnerUserID = testOwnerUserID
+	}
+	if rec.AccountID == "" {
+		rec.AccountID = testAccountID
+	}
 	f.nextHook++
 	rec.ID = f.nextHook
 	rec.CreatedAt = time.Now().UTC()

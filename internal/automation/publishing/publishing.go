@@ -24,6 +24,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/secrets"
@@ -38,7 +39,18 @@ import (
 // account and its grants again at execution time.
 type Actor struct {
 	UserID int64
-	Auth   *channelstore.Authorizer
+	// AccountID is the user-owned Telegram/Cat account the work runs under. It
+	// is what a background job is bound to, so a send recorded for one user's
+	// account is never delivered through another's session. Empty means no
+	// account has been resolved, and work that names no account is refused
+	// rather than run as somebody else.
+	AccountID string
+	Auth      *channelstore.Authorizer
+}
+
+// Owner is the actor's ownership binding, in the shape the durable queue takes.
+func (a Actor) Owner() automation.Owner {
+	return automation.Owner{OwnerUserID: a.UserID, AccountID: a.AccountID}
 }
 
 // Worker is the upstream operation set one publication needs from a client. It
@@ -77,6 +89,14 @@ func (f RegistryFunc) Worker(key string) (Worker, bool) { return f(key) }
 type ManagedChannels interface {
 	Get(ctx context.Context, clientKey string, channelID int64) (channelstore.Channel, bool, error)
 	GetByID(ctx context.Context, id int64) (channelstore.Channel, bool, error)
+	AccountOwner(ctx context.Context, accountID string) (int64, bool, error)
+}
+
+// AccountManagedChannels resolves a local registration without crossing
+// personal-account boundaries. Account-scoped publishing must use this lookup;
+// the server-key lookup above remains only for legacy, unscoped publications.
+type AccountManagedChannels interface {
+	GetForAccount(ctx context.Context, accountID string, channelID int64) (channelstore.Channel, bool, error)
 }
 
 // PublishRecords is the durable record of publishing attempts: what makes a

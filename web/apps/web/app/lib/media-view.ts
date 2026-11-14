@@ -9,18 +9,18 @@ import type { MessageMedia } from "@/lib/types"
 // MediaKind is the small set of shapes this panel knows how to draw. An
 // attachment the panel has no drawing for is "other" and is described rather
 // than misrendered.
-export type MediaKind = "image" | "video" | "audio" | "document" | "other"
+export type MediaKind = "image" | "video" | "audio" | "sticker" | "document" | "other"
 
 // INLINE_KINDS are the kinds shown as their content in the message card. Every
 // other kind is shown as an attachment with its name and a download.
 export const INLINE_KINDS: ReadonlySet<MediaKind> = new Set([
   "image",
   "video",
+  "sticker",
 ])
 
-// mediaKind classifies one attachment by the type the API reported. The MIME
-// type is deliberately not consulted: it describes the bytes, and the API has
-// already named what kind of media this is.
+// mediaKind classifies one attachment by the API's semantic type. MIME is
+// consulted only to choose a browser renderer for a known native sticker.
 export function mediaKind(media: MessageMedia): MediaKind {
   switch (media.type) {
     case "photo":
@@ -32,6 +32,12 @@ export function mediaKind(media: MessageMedia): MediaKind {
     case "audio":
     case "voice":
       return "audio"
+    case "sticker":
+      // MIME is used only after the API has semantically identified a sticker;
+      // a generic WebP/WebM document remains a document.
+      if (media.mime_type === "image/webp") return "image"
+      if (media.mime_type === "video/webm") return "video"
+      return "sticker"
     case "document":
       return "document"
     default:

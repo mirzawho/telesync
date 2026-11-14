@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/automation/publishing"
 	"github.com/mirza/telesync/internal/automation/queue"
@@ -83,6 +84,9 @@ type harness struct {
 	sender  *publishing.Service
 	service *sending.Service
 	user    channelstore.User
+	// accountID is the user-owned account a send runs under. Background work
+	// is refused unless it names one, so every harness actor carries it.
+	accountID string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -104,6 +108,22 @@ func newHarnessLimit(t *testing.T, max int64) *harness {
 	user, err := store.CreateUser(ctx, "Sender", "sender", "not-a-password-hash", true)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
+	}
+	// A send is background work and the durable queue refuses it unless it
+	// names the account it runs under. The account is created here rather than
+	// invented as a string, so the binding the queue enforces is the real one.
+	accountID, err := accountid.New()
+	if err != nil {
+		t.Fatalf("accountid.New: %v", err)
+	}
+	if _, err := store.Create(ctx, channelstore.Account{
+		ID:          accountID,
+		OwnerUserID: user.ID,
+		ServerKey:   "cat",
+		NetworkType: channelstore.NetworkCustom,
+		Status:      channelstore.AccountStatusConnected,
+	}); err != nil {
+		t.Fatalf("Create account: %v", err)
 	}
 	if _, err := store.Upsert(ctx, channelstore.Channel{
 		ClientKey: "cat", ChannelID: 98, PeerType: channelstore.PeerChannel,
@@ -147,7 +167,8 @@ func newHarnessLimit(t *testing.T, max int64) *harness {
 			HistoryRetention: 30 * 24 * time.Hour,
 			Logf:             t.Logf,
 		},
-		user: user,
+		user:      user,
+		accountID: accountID,
 	}
 }
 
@@ -157,7 +178,7 @@ func (h *harness) actor(t *testing.T) publishing.Actor {
 	if err != nil {
 		t.Fatalf("AuthorizerFor: %v", err)
 	}
-	return publishing.Actor{UserID: h.user.ID, Auth: authr}
+	return publishing.Actor{UserID: h.user.ID, AccountID: h.accountID, Auth: authr}
 }
 
 // jobFor is the queue's claim of one accepted send, as a worker receives it.
@@ -165,6 +186,7 @@ func jobFor(op channelstore.SendOperation, attempt int) automation.Job {
 	return automation.Job{
 		ID: 1, EventID: op.PublicID, Kind: automation.JobTelegramMessageSend,
 		Attempt: attempt, MaxAttempts: 5,
+		Owner: automation.Owner{OwnerUserID: op.UserID, AccountID: op.AccountID},
 	}
 }
 
@@ -610,6 +632,38 @@ func TestRAMissingAttachmentIsAFailureNotADelivery(t *testing.T) {
 	}
 }
 
+func TestSendRefusesAttachmentWhoseSidecarNamesAnotherOwner(t *testing.T) {
+	for name, ownerRecord := range map[string]string{
+		"wrong user":    `{"owner_user_id":999,"account_id":"`,
+		"wrong account": `{"owner_user_id":`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			got := h.accept(t, mediaSend("document", pdfBytes))
+			var wrongRecord string
+			switch name {
+			case "wrong user":
+				wrongRecord = ownerRecord + h.accountID + `"}`
+			case "wrong account":
+				wrongRecord = ownerRecord + strconv.FormatInt(h.user.ID, 10) + `,"account_id":"acc_other"}`
+			}
+			if err := os.WriteFile(filepath.Join(h.dir, got.Operation.MediaStagingName+".own"),
+				[]byte(wrongRecord), 0o600); err != nil {
+				t.Fatalf("replace owner sidecar: %v", err)
+			}
+
+			err := h.service.Execute(context.Background(), jobFor(got.Operation, 1))
+			var jobErr *automation.JobError
+			if !errors.As(err, &jobErr) || jobErr.Retryable {
+				t.Fatalf("Execute error = %v, want a permanent ownership failure", err)
+			}
+			if len(h.worker.sends) != 0 {
+				t.Fatalf("sent %d messages with media owned by another user/account", len(h.worker.sends))
+			}
+		})
+	}
+}
+
 // Test S. A send that is already answered is not answered again. A second
 // worker picking it up is an expired lease, not new work.
 func TestSAnAnsweredSendIsNotSentTwice(t *testing.T) {
@@ -696,7 +750,7 @@ func TestWCleanupRemovesWhatNothingClaimsAndKeepsWhatIsStillNeeded(t *testing.T)
 	h := newHarness(t)
 	needed := h.accept(t, mediaSend("document", pdfBytes))
 	orphan, err := h.stage.Write(context.Background(), strings.NewReader("nobody claims this"),
-		staging.Meta{OriginalName: "orphan.bin"})
+		staging.Meta{OriginalName: "orphan.bin", OwnerUserID: h.actor(t).UserID, AccountID: h.actor(t).AccountID})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -720,13 +774,16 @@ func TestWCleanupRemovesWhatNothingClaimsAndKeepsWhatIsStillNeeded(t *testing.T)
 // with message edits, so it must keep files another durable operation owns.
 func TestCleanupKeepingPreservesOtherOperationsAttachments(t *testing.T) {
 	h := newHarness(t)
+	// An active send supplies the owner scope this cleanup is allowed to sweep;
+	// the edit attachment remains protected by the additional keep set.
+	h.accept(t, mediaSend("document", pdfBytes))
 	other, err := h.stage.Write(context.Background(), strings.NewReader("owned by an edit"),
-		staging.Meta{OriginalName: "replacement.bin"})
+		staging.Meta{OriginalName: "replacement.bin", OwnerUserID: h.actor(t).UserID, AccountID: h.actor(t).AccountID})
 	if err != nil {
 		t.Fatalf("Write other operation: %v", err)
 	}
 	orphan, err := h.stage.Write(context.Background(), strings.NewReader("nobody claims this"),
-		staging.Meta{OriginalName: "orphan.bin"})
+		staging.Meta{OriginalName: "orphan.bin", OwnerUserID: h.actor(t).UserID, AccountID: h.actor(t).AccountID})
 	if err != nil {
 		t.Fatalf("Write orphan: %v", err)
 	}
@@ -743,6 +800,22 @@ func TestCleanupKeepingPreservesOtherOperationsAttachments(t *testing.T) {
 	}
 	if _, err := h.stage.ReadAll(orphan.Name); !errors.Is(err, staging.ErrNotFound) {
 		t.Fatalf("the orphan is still there: %v", err)
+	}
+}
+
+func TestCleanupDoesNotRemoveAnotherAccountsUnclaimedMedia(t *testing.T) {
+	h := newHarness(t)
+	other, err := h.stage.Write(context.Background(), strings.NewReader("other account's active upload"),
+		staging.Meta{OriginalName: "other.bin", OwnerUserID: h.user.ID + 100, AccountID: "acc_other"})
+	if err != nil {
+		t.Fatalf("Write other account media: %v", err)
+	}
+
+	if _, err := h.service.Cleanup(context.Background()); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if _, err := h.stage.ReadAll(other.Name); err != nil {
+		t.Fatalf("cleanup removed another account's active upload: %v", err)
 	}
 }
 

@@ -28,17 +28,22 @@ import (
 // must send, what they are refused for, and what the answer does and does not
 // claim. Nothing here is allowed to send to Telegram during the request.
 
-// recordingJobs is a queue that remembers what it was asked to schedule.
+// recordingJobs is a queue that remembers what it was asked to schedule, and
+// the owner it was scheduled for. The owner is what a background job is bound
+// to, so a test that ignores it would not notice a send recorded with no
+// account — which the real queue refuses.
 type recordingJobs struct {
 	enqueued []string
+	owners   []automation.Owner
 	fail     error
 }
 
-func (j *recordingJobs) EnqueueMessageSend(_ context.Context, operationID string, _ int64) error {
+func (j *recordingJobs) EnqueueMessageSend(_ context.Context, operationID string, _ int64, owner automation.Owner) error {
 	if j.fail != nil {
 		return j.fail
 	}
 	j.enqueued = append(j.enqueued, operationID)
+	j.owners = append(j.owners, owner)
 	return nil
 }
 
@@ -225,6 +230,61 @@ func TestATextOnlySendIsAcceptedForBackgroundDelivery(t *testing.T) {
 	}
 	if len(s.jobs.enqueued) != 1 {
 		t.Fatalf("%d jobs were scheduled, want 1", len(s.jobs.enqueued))
+	}
+}
+
+func TestAccountScopedSendResponsesNameTheAccountAndKeepTheServerKeyInformational(t *testing.T) {
+	s := sendEnv(t)
+	s.grantSendPublish(t)
+	s.channelRow(t, "cat", 98)
+	accountID := s.testEnv.account["cat"].ID
+	path := "/api/v1/telegram/accounts/" + accountID + "/channels/98/messages/send"
+
+	resp := s.send(t, s.defaults.token, http.MethodPost, path, jsonSend("hello"))
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("send status = %d, body=%s", resp.StatusCode, readBody(t, resp))
+	}
+	var accepted struct {
+		Data struct {
+			OperationID string `json:"operation_id"`
+			Destination struct {
+				AccountID string `json:"account_id"`
+				ClientKey string `json:"client_key"`
+				ChannelID string `json:"channel_id"`
+			} `json:"destination"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&accepted); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if accepted.Data.OperationID == "" || accepted.Data.Destination.AccountID != accountID ||
+		accepted.Data.Destination.ClientKey != "cat" || accepted.Data.Destination.ChannelID != "98" {
+		t.Fatalf("accepted account destination = %+v, want account %s and informational server key cat",
+			accepted.Data.Destination, accountID)
+	}
+
+	statusPath := path + "/" + accepted.Data.OperationID
+	status := s.send(t, s.defaults.token, http.MethodGet, statusPath, "")
+	defer status.Body.Close()
+	if status.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", status.StatusCode, readBody(t, status))
+	}
+	var polled struct {
+		Data struct {
+			Destination struct {
+				AccountID string `json:"account_id"`
+				ClientKey string `json:"client_key"`
+			} `json:"destination"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(status.Body).Decode(&polled); err != nil {
+		t.Fatal(err)
+	}
+	if polled.Data.Destination.AccountID != accountID || polled.Data.Destination.ClientKey != "cat" {
+		t.Fatalf("status destination = %+v, want account %s and informational server key cat",
+			polled.Data.Destination, accountID)
 	}
 }
 

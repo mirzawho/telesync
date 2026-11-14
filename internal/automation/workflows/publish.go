@@ -151,6 +151,7 @@ func (h *Handler) destinationsFor(ctx context.Context, workflow automation.Workf
 			ClientKey:       dest.ClientKey,
 			ChannelID:       dest.ChannelID,
 			SiteID:          dest.SiteID,
+			AccountID:       dest.AccountID,
 		})
 		if err != nil {
 			return nil, err
@@ -172,7 +173,7 @@ func (h *Handler) publishOne(ctx context.Context, workflow automation.Workflow, 
 		}
 	}
 
-	res, err := h.Publisher.Publish(ctx, automation.PublishRequest{
+	request := automation.PublishRequest{
 		Source: automation.SourceRef{
 			ManagedChannelID:  event.ManagedChannelID,
 			ClientKey:         event.SourceClientKey,
@@ -184,6 +185,7 @@ func (h *Handler) publishOne(ctx context.Context, workflow automation.Workflow, 
 			ClientKey: pub.ClientKey,
 			ChannelID: pub.ChannelID,
 			SiteID:    pub.SiteID,
+			AccountID: pub.AccountID,
 			Options:   options,
 		},
 		Text:     p.content,
@@ -194,7 +196,21 @@ func (h *Handler) publishOne(ctx context.Context, workflow automation.Workflow, 
 		Options:        automation.PublishOptions{},
 		IdempotencyKey: idempotencyKey(event, workflow.ID, pub),
 		UserID:         authorID,
-	})
+	}
+	var res automation.PublishResult
+	var err error
+	if pub.DestinationType == string(automation.DestinationTelegram) &&
+		strings.TrimSpace(pub.AccountID) == "" {
+		// A pre-binding publication is historical data, not permission to choose
+		// an account from its server key or current registration. Keep the result
+		// row and stop this run until an explicit account selection is made.
+		res = automation.PublishResult{
+			Outcome: automation.PublishFailed, ErrorCode: "account_selection_required",
+			ErrorMessage: "The Telegram destination has no selected account and remains paused.",
+		}
+	} else {
+		res, err = h.Publisher.Publish(ctx, request)
+	}
 	if err != nil && res.ErrorCode == "" {
 		res.ErrorCode = "publish_failed"
 		res.ErrorMessage = errMessage(err)
@@ -233,9 +249,9 @@ func idempotencyKey(event automation.MessageEvent, workflowID int64, pub automat
 		sourceItem = "group:" + strconv.FormatInt(*event.GroupedID, 10)
 	}
 	identity := strings.Join([]string{
-		"workflow-publication-v2", event.NetworkKey,
+		"workflow-publication-v3", event.NetworkKey,
 		strconv.FormatInt(event.TelegramChannelID, 10), sourceItem,
-		strconv.FormatInt(workflowID, 10), pub.DestinationType, pub.ClientKey,
+		strconv.FormatInt(workflowID, 10), pub.DestinationType, pub.AccountID, pub.ClientKey,
 		strconv.FormatInt(pub.ChannelID, 10), strconv.FormatInt(pub.SiteID, 10),
 	}, "\x00")
 	sum := sha256.Sum256([]byte(identity))
@@ -249,7 +265,8 @@ func idempotencyKey(event automation.MessageEvent, workflowID int64, pub automat
 // removed since then has no options left and publishes with the defaults.
 func optionsFor(workflow automation.Workflow, pub automation.WorkflowPublication) map[string]any {
 	for _, dest := range workflow.Destinations {
-		if dest.DestinationType == pub.DestinationType && dest.ClientKey == pub.ClientKey &&
+		if dest.DestinationType == pub.DestinationType && dest.AccountID == pub.AccountID &&
+			dest.ClientKey == pub.ClientKey &&
 			dest.ChannelID == pub.ChannelID && dest.SiteID == pub.SiteID {
 			out := make(map[string]any, len(dest.Options)+1)
 			for k, v := range dest.Options {
@@ -320,7 +337,7 @@ func publishRetryable(code string) bool {
 		publishing.CodePublishUnsupported, publishing.CodePublishMediaTooLarge,
 		publishing.CodePublishConflict, publishing.CodeInvalidInput,
 		publishing.CodePublishWordPressAuth, publishing.CodePublishWordPressForbidden,
-		publishing.CodePublishWordPressIncompatible:
+		publishing.CodePublishWordPressIncompatible, "account_selection_required":
 		return false
 	default:
 		return true

@@ -83,10 +83,16 @@ func wantIDs(t *testing.T, what string, got []int64, want ...int64) {
 // --- channels: local namespace ---
 
 func TestALimitedAccountSeesAndReachesOnlyItsOwnLocalChannel(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
-	a := env.channelRow(t, "official", 1001)
-	b := env.channelRow(t, "official", 1002)
+	// The registry is keyed by account id: a request resolves the caller's own
+	// account first and then the worker that serves it. Registering under the
+	// server key would be the old shared-connection world.
+	env := newAccountEnv(t, registry{})
 	who := env.account(t, "test")
+	w := readyWorker()
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, w)
+	env.workers[acc] = w
+	a := env.ownedChannelRow(t, acc, "official", 1001)
+	b := env.ownedChannelRow(t, acc, "official", 1002)
 	env.grantChannels(t, who, allow(a.ID))
 
 	raw := bodyOf(env.send(t, who.token, http.MethodGet, localChannelsPath, ""))
@@ -131,10 +137,11 @@ func TestALimitedAccountSeesAndReachesOnlyItsOwnLocalChannel(t *testing.T) {
 }
 
 func TestSearchOfLocalChannelsDoesNotLeakNames(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
-	a := env.channelRow(t, "official", 1001)
-	env.channelRow(t, "official", 1002) // title "Channel 1002"
+	env := newAccountEnv(t, registry{})
 	who := env.account(t, "test")
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
+	a := env.ownedChannelRow(t, acc, "official", 1001)
+	env.ownedChannelRow(t, acc, "official", 1002) // title "Channel 1002"
 	env.grantChannels(t, who, allow(a.ID))
 
 	ids, total := channelIDsOf(t, bodyOf(env.send(t, who.token, http.MethodGet, localChannelsPath+"?q=1002", "")), "channels")
@@ -150,10 +157,11 @@ func TestSearchOfLocalChannelsDoesNotLeakNames(t *testing.T) {
 func TestALimitedAccountCannotReachAnotherTelegramChannelByID(t *testing.T) {
 	listed := dialogsOpensWith(1001, 1002)
 	listed.messages = rpc.MessagePage{Messages: []rpc.Message{{ID: 5, Text: "hello"}}}
-	env := newAccountEnv(t, registry{"official": listed})
-	a := env.channelRow(t, "official", 1001)
-	env.channelRow(t, "official", 1002)
+	env := newAccountEnv(t, registry{})
 	who := env.account(t, "test")
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
+	a := env.ownedChannelRow(t, acc, "official", 1001)
+	env.ownedChannelRow(t, acc, "official", 1002)
 	env.grantChannels(t, who, allow(a.ID))
 
 	tele := "/api/v1/telegram/official/channels"
@@ -177,7 +185,9 @@ func TestALimitedAccountCannotReachAnotherTelegramChannelByID(t *testing.T) {
 // --- categories ---
 
 func TestALimitedAccountReachesOnlyItsOwnCategoryAndItsChannels(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
+	env := newAccountEnv(t, registry{})
+	who := env.account(t, "test")
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
 	ctx := context.Background()
 	catA, err := env.store.CreateCategory(ctx, "Alpha", "")
 	if err != nil {
@@ -187,15 +197,14 @@ func TestALimitedAccountReachesOnlyItsOwnCategoryAndItsChannels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chA := env.channelRow(t, "official", 2001)
-	chB := env.channelRow(t, "official", 2002)
+	chA := env.ownedChannelRow(t, acc, "official", 2001)
+	chB := env.ownedChannelRow(t, acc, "official", 2002)
 	if err := env.store.ReplaceCategories(ctx, chA.ClientKey, chA.ChannelID, []int64{catA.ID, catB.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := env.store.ReplaceCategories(ctx, chB.ClientKey, chB.ChannelID, []int64{catB.ID}); err != nil {
 		t.Fatal(err)
 	}
-	who := env.account(t, "test")
 	env.grantCategories(t, who, allowAll(catA.ID))
 	env.grantChannels(t, who, allow(chA.ID), allow(chB.ID))
 
@@ -253,20 +262,21 @@ func TestALimitedAccountReachesOnlyItsOwnCategoryAndItsChannels(t *testing.T) {
 }
 
 func TestACategoriesChannelListHidesChannelsTheCallerMayNotSee(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
+	env := newAccountEnv(t, registry{})
+	who := env.account(t, "test")
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
 	ctx := context.Background()
 	cat, err := env.store.CreateCategory(ctx, "Shared", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := env.channelRow(t, "official", 3001)
-	b := env.channelRow(t, "official", 3002)
+	a := env.ownedChannelRow(t, acc, "official", 3001)
+	b := env.ownedChannelRow(t, acc, "official", 3002)
 	for _, ch := range []channelstore.Channel{a, b} {
-		if err := env.store.ReplaceCategories(ctx, ch.ClientKey, ch.ChannelID, []int64{cat.ID}); err != nil {
+		if err := env.store.ReplaceCategories(ctx, acc, ch.ChannelID, []int64{cat.ID}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	who := env.account(t, "test")
 	env.grantCategories(t, who, allow(cat.ID))
 	env.grantChannels(t, who, allow(a.ID))
 
@@ -300,33 +310,34 @@ func TestACategoriesChannelListHidesChannelsTheCallerMayNotSee(t *testing.T) {
 }
 
 func TestAccessToAParentCategoryDoesNotExposeItsOtherChannels(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
+	env := newAccountEnv(t, registry{})
+	who := env.account(t, "test")
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
 	ctx := context.Background()
 	cat, err := env.store.CreateCategory(ctx, "Shared", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := env.channelRow(t, "official", 3001)
-	b := env.channelRow(t, "official", 3002)
+	a := env.ownedChannelRow(t, acc, "official", 3001)
+	b := env.ownedChannelRow(t, acc, "official", 3002)
 	for _, ch := range []channelstore.Channel{a, b} {
 		if err := env.store.ReplaceCategories(ctx, ch.ClientKey, ch.ChannelID, []int64{cat.ID}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// A category grant alone must not admit one of its channels.
-	who := env.account(t, "test")
 	env.grantCategories(t, who, allow(cat.ID))
 	if resp := env.send(t, who.token, http.MethodGet, localChannelsPath+"/"+strconv.FormatInt(a.ID, 10), ""); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("channel through a category grant = %d, want 403", resp.StatusCode)
 	}
 	// A channel grant alone must not admit one of its categories.
-	other := env.account(t, "other")
-	env.grantChannels(t, other, allow(a.ID))
-	if resp := env.send(t, other.token, http.MethodGet, categoriesPath+"/"+strconv.FormatInt(cat.ID, 10), ""); resp.StatusCode != http.StatusForbidden {
+	env.grantCategories(t, who)
+	env.grantChannels(t, who, allow(a.ID))
+	if resp := env.send(t, who.token, http.MethodGet, categoriesPath+"/"+strconv.FormatInt(cat.ID, 10), ""); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("category through a channel grant = %d, want 403", resp.StatusCode)
 	}
 	// Filing a channel under a category the caller may not see is refused.
-	if resp := env.send(t, other.token, http.MethodPut,
+	if resp := env.send(t, who.token, http.MethodPut,
 		localChannelsPath+"/"+strconv.FormatInt(a.ID, 10)+"/categories",
 		`{"category_ids":[`+strconv.FormatInt(cat.ID, 10)+`]}`); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("filing under an unseen category = %d, want 403", resp.StatusCode)
@@ -468,11 +479,12 @@ func TestALimitedAccountSeesAndReachesOnlyItsOwnWordPressSite(t *testing.T) {
 // --- the account API: an empty assignment means "no access beyond the global" ---
 
 func TestAnEmptyAssignmentNeverMeansEveryResource(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
-	a := env.channelRow(t, "official", 1001)
-	env.channelRow(t, "official", 1002)
-
+	env := newAccountEnv(t, registry{})
 	who := env.account(t, "test")
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
+	a := env.ownedChannelRow(t, acc, "official", 1001)
+	env.ownedChannelRow(t, acc, "official", 1002)
+
 	resp := env.send(t, defaultCaller, http.MethodPut, "/api/v1/local/users/"+strconv.FormatInt(who.user.ID, 10)+"/permissions",
 		`{"global_permissions":["channels.view"],"channel_permissions":[]}`)
 	if resp.StatusCode != http.StatusOK {
@@ -500,9 +512,10 @@ func TestAnEmptyAssignmentNeverMeansEveryResource(t *testing.T) {
 }
 
 func TestRevokingAChannelGrantTakesEffectOnTheNextRequest(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
-	a := env.channelRow(t, "official", 1001)
+	env := newAccountEnv(t, registry{})
 	who := env.account(t, "test")
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
+	a := env.ownedChannelRow(t, acc, "official", 1001)
 	env.grantChannels(t, who, allow(a.ID))
 	if resp := env.send(t, who.token, http.MethodGet, localChannelsPath+"/"+strconv.FormatInt(a.ID, 10), ""); resp.StatusCode != http.StatusOK {
 		t.Fatalf("granted = %d", resp.StatusCode)
@@ -516,10 +529,11 @@ func TestRevokingAChannelGrantTakesEffectOnTheNextRequest(t *testing.T) {
 func TestAChannelDenyOverridesTheGlobalViewOnEveryRoute(t *testing.T) {
 	listed := dialogsOpensWith(1001, 1002)
 	listed.messages = rpc.MessagePage{Messages: []rpc.Message{{ID: 5, Text: "hello"}}}
-	env := newAccountEnv(t, registry{"official": listed})
-	env.channelRow(t, "official", 1001)
+	env := newAccountEnv(t, registry{})
 	who := env.account(t, "test", channelstore.PermissionChannelsView)
-	b := env.channelRow(t, "official", 1002)
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
+	env.ownedChannelRow(t, acc, "official", 1001)
+	b := env.ownedChannelRow(t, acc, "official", 1002)
 	env.grantChannels(t, who, deny(b.ID))
 
 	ids, total := channelIDsOf(t, bodyOf(env.send(t, who.token, http.MethodGet, localChannelsPath, "")), "channels")
@@ -548,14 +562,15 @@ func TestAChannelDenyOverridesTheGlobalViewOnEveryRoute(t *testing.T) {
 // --- write rights never outrun the view ---
 
 func TestAnUpdateOrDeleteGrantWithoutViewDoesNotRevealTheResource(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
+	env := newAccountEnv(t, registry{})
+	who := env.account(t, "test")
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
 	ctx := context.Background()
-	a := env.channelRow(t, "official", 1001)
+	a := env.ownedChannelRow(t, acc, "official", 1001)
 	cat, err := env.store.CreateCategory(ctx, "Alpha", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	who := env.account(t, "test")
 	env.grantChannels(t, who, channelstore.ResourcePermissions{ResourceID: a.ID, Permissions: []channelstore.ResourcePermission{
 		{Action: channelstore.ActionUpdate, Effect: channelstore.EffectAllow},
 		{Action: channelstore.ActionDelete, Effect: channelstore.EffectAllow},
@@ -581,9 +596,10 @@ func TestAnUpdateOrDeleteGrantWithoutViewDoesNotRevealTheResource(t *testing.T) 
 }
 
 func TestAnExplicitViewDenyTakesAwayTheUpdateGrantToo(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
-	a := env.channelRow(t, "official", 1001)
+	env := newAccountEnv(t, registry{})
 	who := env.account(t, "test", channelstore.PermissionChannelsView)
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
+	a := env.ownedChannelRow(t, acc, "official", 1001)
 	env.grantChannels(t, who, deny(a.ID))
 	if resp := env.send(t, who.token, http.MethodPost, localChannelsPath+"/"+strconv.FormatInt(a.ID, 10)+"/leave", ""); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("leave under a view deny = %d, want 403", resp.StatusCode)
@@ -591,9 +607,10 @@ func TestAnExplicitViewDenyTakesAwayTheUpdateGrantToo(t *testing.T) {
 }
 
 func TestTheOperatorTokenIsTheOnlyExplicitBypass(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
-	a := env.channelRow(t, "official", 1001)
+	env := newAccountEnv(t, registry{})
 	plain := env.account(t, "test")
+	acc := env.sessionAccount(t, plain, "official", channelstore.NetworkTelegram, readyWorker())
+	a := env.ownedChannelRow(t, acc, "official", 1001)
 	if resp := env.send(t, plain.token, http.MethodGet, localChannelsPath+"/"+strconv.FormatInt(a.ID, 10), ""); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("account with no permission = %d, want 403", resp.StatusCode)
 	}
@@ -606,10 +623,11 @@ func TestTheOperatorTokenIsTheOnlyExplicitBypass(t *testing.T) {
 
 func TestRefusedResourcesAreNeverFetchedUpstream(t *testing.T) {
 	listed := dialogsOpensWith(1001, 1002)
-	env := newAccountEnv(t, registry{"official": listed})
-	a := env.channelRow(t, "official", 1001)
-	b := env.channelRow(t, "official", 1002)
+	env := newAccountEnv(t, registry{})
 	who := env.account(t, "test")
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
+	a := env.ownedChannelRow(t, acc, "official", 1001)
+	b := env.ownedChannelRow(t, acc, "official", 1002)
 	env.grantChannels(t, who, allow(a.ID))
 
 	// The channel the caller may see is served normally, so a refused one is
@@ -645,9 +663,13 @@ func TestRefusedResourcesAreNeverFetchedUpstream(t *testing.T) {
 // that, then asks the channel API as `test`.
 
 func TestTheReportedScenarioThroughThePermissionAPI(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
-	a := env.channelRow(t, "official", 1001) // Channel A
-	b := env.channelRow(t, "official", 1002) // Channel B
+	env := newAccountEnv(t, registry{})
+	admin := env.account(t, "admin", channelstore.PermissionUsersView, channelstore.PermissionUsersManage,
+		channelstore.PermissionChannelsView, channelstore.PermissionChannelsCreate,
+		channelstore.PermissionCategoriesView, channelstore.PermissionCategoriesCreate)
+	acc := env.sessionAccount(t, admin, "official", channelstore.NetworkTelegram, readyWorker())
+	a := env.ownedChannelRow(t, acc, "official", 1001) // Channel A
+	b := env.ownedChannelRow(t, acc, "official", 1002) // Channel B
 
 	hash, err := auth.HashPassword("password-test")
 	if err != nil {
@@ -657,9 +679,6 @@ func TestTheReportedScenarioThroughThePermissionAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin := env.account(t, "admin", channelstore.PermissionUsersView, channelstore.PermissionUsersManage,
-		channelstore.PermissionChannelsView, channelstore.PermissionChannelsCreate,
-		channelstore.PermissionCategoriesView, channelstore.PermissionCategoriesCreate)
 
 	// 1. The dialog loads the user, with the permissions it currently has.
 	loaded := bodyOf(env.send(t, admin.token, http.MethodGet, "/api/v1/local/users/"+strconv.FormatInt(testUser.ID, 10), ""))
@@ -755,10 +774,11 @@ func TestTheReportedScenarioThroughThePermissionAPI(t *testing.T) {
 }
 
 func TestACallerWithNoAssignmentSelectsNothing(t *testing.T) {
-	env := newAccountEnv(t, registry{"official": readyWorker()})
-	env.channelRow(t, "official", 1001)
-	env.channelRow(t, "official", 1002)
+	env := newAccountEnv(t, registry{})
 	who := env.account(t, "test")
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
+	env.ownedChannelRow(t, acc, "official", 1001)
+	env.ownedChannelRow(t, acc, "official", 1002)
 	ids, total := channelIDsOf(t, bodyOf(env.send(t, who.token, http.MethodGet, localChannelsPath, "")), "channels")
 	if len(ids) != 0 || total != 0 {
 		t.Fatalf("no assignment = %v (total %d), want nothing", ids, total)
@@ -772,8 +792,9 @@ func TestSavingChannelPermissionsKeepsTheStoredSiteGrants(t *testing.T) {
 	env := newWPEnv(t)
 	site := createSite(t, env, "https://one.example.com")
 	who := env.account(t, "test", channelstore.PermissionWordPressView)
+	acc := env.sessionAccount(t, who, "official", channelstore.NetworkTelegram, readyWorker())
 	env.setWordPress(t, who, allow(site))
-	ch := env.channelRow(t, "official", 1001)
+	ch := env.ownedChannelRow(t, acc, "official", 1001)
 
 	// The administrators dialog's body: channels only, no wordpress key.
 	body := fmt.Sprintf(`{"global_permissions":[],"channel_permissions":[{"channel_id":%d,"permissions":{"view":"allow"}}],"category_permissions":[]}`, ch.ID)

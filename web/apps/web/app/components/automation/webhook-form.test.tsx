@@ -50,6 +50,7 @@ import {
   webhookDraftOf,
   type WebhookDraft,
 } from "@/lib/automation"
+import type { TelegramAccount } from "@/lib/types"
 
 // --- harness ----------------------------------------------------------------
 
@@ -157,11 +158,24 @@ const storedWebhook = (over: Record<string, unknown> = {}) => ({
 
 const answerEditor = (call: Call, webhook: Record<string, unknown>) => {
   if (call.path === "/api/v1/auth/me") return ok(me)
+  if (call.path === "/api/v1/me/telegram-accounts") {
+    return ok({ accounts: [TEST_ACCOUNT, TEST_ACCOUNT_TWO] })
+  }
   if (call.path === "/api/v1/local/channels") {
     return ok({
       channels: [
-        { id: 3, title: "کانال خبری", client_key: "official" },
-        { id: 9, title: "کانال ورزشی", client_key: "official" },
+        {
+          id: 3,
+          title: "کانال خبری",
+          client_key: "official",
+          account_id: TEST_ACCOUNT.id,
+        },
+        {
+          id: 9,
+          title: "کانال ورزشی",
+          client_key: "official",
+          account_id: TEST_ACCOUNT_TWO.id,
+        },
       ],
     })
   }
@@ -173,18 +187,6 @@ const answerEditor = (call: Call, webhook: Record<string, unknown>) => {
   }
   return refuse(404, "not_found", "no such route " + call.path)
 }
-
-// --- markup helpers ---------------------------------------------------------
-
-const html = (node: React.ReactNode) =>
-  renderToStaticMarkup(
-    <MemoryRouter initialEntries={["/automation/webhooks/new"]}>{node}</MemoryRouter>
-  )
-
-const channels: SourceChannelOption[] = [
-  { id: 3, label: "کانال خبری", clientKey: "official" },
-  { id: 9, label: "کانال ورزشی", clientKey: "official" },
-]
 
 // A Telegram connection as the gateway reports one. The source picker filters
 // channels by its key, so the tests can put channels on more than one.
@@ -200,7 +202,43 @@ const telegramServer = (key: string) => ({
   last_error: "",
 })
 
+// Two accounts of the caller's own, both on the official server: exactly the
+// case where a source picker must say which account a channel came from.
+const TEST_ACCOUNT: TelegramAccount = {
+  id: "acc_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  server_key: "official",
+  network_type: "telegram",
+  remote_display_name: "حساب نخست",
+  status: "connected",
+}
+
+const TEST_ACCOUNT_TWO: TelegramAccount = {
+  id: "acc_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+  server_key: "official",
+  network_type: "telegram",
+  remote_display_name: "حساب دوم",
+  status: "connected",
+}
+
+// The same rows, as the picker reads them: scoped to the accounts the caller
+// owns, so a channel belonging to somebody else is never on the list.
+const channels: SourceChannelOption[] = [
+  {
+    id: 3,
+    label: "کانال خبری",
+    clientKey: "official",
+    accountId: TEST_ACCOUNT.id,
+  },
+  {
+    id: 9,
+    label: "کانال ورزشی",
+    clientKey: "official",
+    accountId: TEST_ACCOUNT_TWO.id,
+  },
+]
+
 const createSeed = (): WebhookDraft => ({
+  accountID: null,
   name: "",
   description: "",
   enabled: true,
@@ -216,6 +254,7 @@ const createSeed = (): WebhookDraft => ({
 })
 
 const editSeed = (): WebhookDraft => ({
+  accountID: null,
   name: "گیرنده اخبار",
   description: "رویدادهای خبری",
   enabled: true,
@@ -229,6 +268,13 @@ const editSeed = (): WebhookDraft => ({
   allowLocalhost: false,
   sourceChannelIds: [3],
 })
+
+// The form's own markup, inside the router the page runs under: the account
+// picker and the source picker both carry links and state that read the URL.
+const html = (node: React.ReactNode) =>
+  renderToStaticMarkup(
+    <MemoryRouter initialEntries={["/automation/webhooks/new"]}>{node}</MemoryRouter>
+  )
 
 const render = (over: Partial<React.ComponentProps<typeof WebhookForm>> = {}) =>
   html(
@@ -496,6 +542,7 @@ test("an untouched secret posts no secret key and an explicit clear posts an emp
 
 test("a create posts exactly the fields the contract names", async () => {
   const draft: WebhookDraft = {
+    accountID: null,
     name: " گیرنده اخبار ",
     description: " رویدادها ",
     enabled: false,
@@ -524,6 +571,7 @@ test("a create posts exactly the fields the contract names", async () => {
   assert.deepEqual(
     Object.keys(post?.body as object).sort(),
     [
+      "account_id",
       "allow_localhost",
       "auth_header",
       "auth_mode",
@@ -538,6 +586,11 @@ test("a create posts exactly the fields the contract names", async () => {
       "url",
     ],
     "the payload is snake_case and carries nothing extra"
+  )
+  assert.equal(
+    post?.body?.account_id,
+    "",
+    "an unbound webhook posts an empty account, never a guessed one"
   )
   assert.equal(result.ok, true)
   assert.equal(result.intent, "create")
@@ -767,9 +820,23 @@ test("a create page loads the channels and no record", async () => {
   assert.equal(data.status, "ok")
   assert.equal(data.creating, true)
   assert.equal(data.webhook, null)
+  // Each row keeps the account it came from: that is what tells two rows on the
+  // same server apart and what the source picker filters by.
   assert.deepEqual(data.channels, [
-    { id: 3, label: "کانال خبری", clientKey: "official" },
-    { id: 9, label: "کانال ورزشی", clientKey: "official" },
+    {
+      id: 3,
+      label: "کانال خبری",
+      clientKey: "official",
+      accountId: TEST_ACCOUNT.id,
+      detail: "official",
+    },
+    {
+      id: 9,
+      label: "کانال ورزشی",
+      clientKey: "official",
+      accountId: TEST_ACCOUNT_TWO.id,
+      detail: "official",
+    },
   ])
   assert.equal(
     data.channels?.every((channel) => Number.isInteger(channel.id) && channel.id > 0),
@@ -842,6 +909,7 @@ test("the page is wired to the router, guard included", () => {
               creating: true,
               webhook: null,
               channels,
+              accounts: [],
               servers: [],
               localhostAllowed: true,
               channelsError: null,

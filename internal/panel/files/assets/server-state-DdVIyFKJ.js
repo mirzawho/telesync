@@ -1,1 +1,0 @@
-function e(e){return e.state===`starting`||e.transport===`connecting`?`connecting`:e.state===`connected`&&e.transport===`ready`?e.authorized===!1?`needs_login`:`connected`:`error`}var t={connecting:`در حال اتصال`,connected:`متصل`,error:`خطا در اتصال`,needs_login:`نیازمند ورود`};export{e as n,t};

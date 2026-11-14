@@ -80,6 +80,26 @@ func (m *Manager) SendMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 	}
 
 	sent := sentMessageOf(updates, req.Text)
+	if req.Media != nil && req.Media.Kind == tgapi.SendMediaSticker {
+		if sent == nil {
+			return tgapi.SendResult{}, tgapi.ErrSendOutcomeUnknown
+		}
+		if MediaType(sent.Media) != "sticker" {
+			// Some Telegram send responses contain only the new message id.
+			// Read it back through the destination account before deciding
+			// whether the operation achieved native sticker semantics.
+			verified, readErr := m.channelMessage(ctx, tgapi.Channel{ID: ch.ID}, sent.ID)
+			if readErr != nil {
+				return tgapi.SendResult{}, tgapi.ErrSendOutcomeUnknown
+			}
+			if err := verifyStickerResult(verified); err != nil {
+				return tgapi.SendResult{}, err
+			}
+			sent = verified
+		} else if err := verifyStickerResult(sent); err != nil {
+			return tgapi.SendResult{}, err
+		}
+	}
 	result := tgapi.SendResult{
 		ChannelID:          ch.ID,
 		UnsendableEntities: dropped,
@@ -89,6 +109,16 @@ func (m *Manager) SendMessage(ctx context.Context, ref tgapi.ChannelRef, req tga
 		result.Message = &normalized
 	}
 	return result, nil
+}
+
+func verifyStickerResult(sent *tg.Message) error {
+	if sent == nil || MediaType(sent.Media) != "sticker" {
+		// The send may already have reached Telegram, so the caller must
+		// reconcile the destination before retrying. An upload or an update
+		// without a native sticker representation is not verified success.
+		return tgapi.ErrSendOutcomeUnknown
+	}
+	return nil
 }
 
 // sendMediaInput builds the media object of one outgoing attachment.
@@ -149,6 +179,34 @@ func sendMediaInput(file tg.InputFileClass, m *tgapi.SendMedia) (tg.InputMediaCl
 			&tg.DocumentAttributeVideo{Duration: float64(m.Duration), W: m.Width, H: m.Height, RoundMessage: true},
 		}
 
+	case tgapi.SendMediaSticker:
+		if err := validateStickerFormat(m); err != nil {
+			return nil, err
+		}
+		doc.MimeType = m.MimeType
+		stickerAttr := &tg.DocumentAttributeSticker{
+			Alt:        m.StickerEmoji,
+			Mask:       m.StickerMask,
+			Stickerset: &tg.InputStickerSetEmpty{},
+		}
+		if coords := m.StickerMaskCoords; coords != nil {
+			stickerAttr.SetMaskCoords(tg.MaskCoords{
+				N: coords.N, X: coords.X, Y: coords.Y, Zoom: coords.Zoom,
+			})
+		}
+		doc.Attributes = []tg.DocumentAttributeClass{stickerAttr}
+		if m.StickerVideo {
+			doc.Attributes = append(doc.Attributes, &tg.DocumentAttributeVideo{
+				Duration: float64(m.Duration), W: m.Width, H: m.Height,
+				SupportsStreaming: true,
+			})
+		} else if m.StickerAnimated {
+			doc.Attributes = append(doc.Attributes, &tg.DocumentAttributeAnimated{})
+		} else if m.Width > 0 && m.Height > 0 {
+			doc.Attributes = append(doc.Attributes, &tg.DocumentAttributeImageSize{W: m.Width, H: m.Height})
+		}
+		doc.ForceFile = false
+
 	case tgapi.SendMediaDocument, "":
 		doc.MimeType = m.MimeType
 		doc.Attributes = []tg.DocumentAttributeClass{
@@ -162,6 +220,25 @@ func sendMediaInput(file tg.InputFileClass, m *tgapi.SendMedia) (tg.InputMediaCl
 		return nil, fmt.Errorf("%w: media kind %q", tgapi.ErrSendUnsupported, m.Kind)
 	}
 	return doc, nil
+}
+
+func validateStickerFormat(m *tgapi.SendMedia) error {
+	if m.StickerVideo {
+		if m.MimeType != "video/webm" {
+			return fmt.Errorf("%w: unsupported video sticker MIME type", tgapi.ErrSendUnsupported)
+		}
+		return nil
+	}
+	if m.StickerAnimated {
+		if m.MimeType != "application/x-tgsticker" {
+			return fmt.Errorf("%w: unsupported animated sticker MIME type", tgapi.ErrSendUnsupported)
+		}
+		return nil
+	}
+	if m.MimeType != "image/webp" {
+		return fmt.Errorf("%w: unsupported static sticker MIME type", tgapi.ErrSendUnsupported)
+	}
+	return nil
 }
 
 // defaultAudioMIME is the content type an audio attachment is sent under when

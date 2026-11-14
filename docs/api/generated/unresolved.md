@@ -81,7 +81,7 @@ The success body could not be named from the source (the handler writes more tha
 No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).
 
 - `health (gateway.go)`
-- `probe: anonymous → unauthorized, operator → 200, limited user → 200, administrator → 200`
+- `probe: anonymous → unauthorized, operator → forbidden, limited user → account_not_owned, administrator → 200`
 ## `GET /docs`
 
 The success body could not be named from the source (the handler writes more than one shape, or none).
@@ -126,6 +126,12 @@ No permission check was found in the handler or the package functions it calls. 
 The success body could not be named from the source (the handler writes more than one shape, or none).
 
 - `createWordPressSite (wordpress.go)`
+## `POST /api/v1/me/telegram-accounts/login/start`
+
+No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).
+
+- `startLogin (telegram_accounts.go)`
+- `probe: `
 ## `PUT /api/v1/local/categories/{id}`
 
 No permission check was found in the handler or the package functions it calls. Whether a credential alone is enough for this route must be confirmed by hand (and by the probe exchange below).

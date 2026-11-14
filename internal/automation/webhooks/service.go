@@ -239,8 +239,16 @@ func (s *Service) RetryDelivery(ctx context.Context, webhookID, deliveryID int64
 // as a conflict, because retrying either is how the same message is published
 // twice.
 func (s *Service) reschedule(ctx context.Context, delivery automation.WebhookDelivery) error {
+	owner := automation.Owner{OwnerUserID: delivery.OwnerUserID, AccountID: delivery.AccountID}
+	if !owner.Bound() {
+		// A delivery recorded before accounts existed names no owner, and there
+		// is no account it may legitimately run under. Refusing is the safe
+		// answer: silently reopening it would invent an execution identity.
+		return fmt.Errorf("%w: this delivery has no owning account and cannot be retried until an operator resolves its ownership",
+			automation.ErrConflict)
+	}
 	if s.reopen != nil {
-		err := s.reopen(ctx, delivery.EventID, automation.JobWebhookDelivery, delivery.WebhookID)
+		err := s.reopen(ctx, delivery.EventID, automation.JobWebhookDelivery, delivery.WebhookID, owner)
 		switch {
 		case err == nil:
 			return nil
@@ -253,7 +261,7 @@ func (s *Service) reschedule(ctx context.Context, delivery automation.WebhookDel
 		}
 	}
 	if s.cfg.Jobs != nil {
-		return s.cfg.Jobs.EnqueueWebhookDelivery(ctx, delivery.EventID, delivery.WebhookID)
+		return s.cfg.Jobs.EnqueueWebhookDelivery(ctx, delivery.EventID, delivery.WebhookID, owner)
 	}
 	return nil
 }
@@ -448,6 +456,7 @@ func recordOf(in automation.WebhookInput) (automation.Webhook, error) {
 		MaxAttempts:      in.MaxAttempts,
 		AllowLocalhost:   in.AllowLocalhost,
 		SourceChannelIDs: append([]int64{}, in.SourceChannelIDs...),
+		AccountID:        strings.TrimSpace(in.AccountID),
 	}
 	if rec.Method == "" {
 		rec.Method = http.MethodPost

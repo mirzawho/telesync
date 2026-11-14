@@ -78,13 +78,16 @@ type Staging interface {
 	Limit() int64
 	Write(context.Context, io.Reader, staging.Meta) (staging.File, error)
 	Open(string) (io.ReadCloser, error)
+	OpenFor(context.Context, int64, string, string) (io.ReadCloser, error)
 	ReadAll(string) ([]byte, error)
+	ReadFor(context.Context, int64, string, string) ([]byte, error)
 	Remove(string) error
 	Reconcile(func(string) bool) (int, error)
+	ReconcileOwnedKeeping(context.Context, []string, []staging.OwnerFilter) (int, error)
 	SweepPartials(time.Duration) (int, error)
 }
 type Jobs interface {
-	EnqueueMessageEdit(context.Context, string, int64) error
+	EnqueueMessageEdit(context.Context, string, int64, automation.Owner) error
 }
 
 type Service struct {
@@ -111,11 +114,11 @@ func (s *Service) StagingLimit() int64 {
 }
 
 // StageAttachment reuses direct-send streaming, size limits and content sniffing.
-func (s *Service) StageAttachment(ctx context.Context, a *sending.Attachment) (*sending.Staged, error) {
+func (s *Service) StageAttachment(ctx context.Context, owner publishing.Actor, a *sending.Attachment) (*sending.Staged, error) {
 	if s == nil || s.Staging == nil {
 		return nil, errors.New("editing: staging is unavailable")
 	}
-	return (&sending.Service{Staging: s.Staging}).StageAttachment(ctx, a)
+	return (&sending.Service{Staging: s.Staging}).StageAttachment(ctx, owner, a)
 }
 
 func (s *Service) DiscardStaged(a *sending.Staged) {
@@ -145,7 +148,7 @@ func (s *Service) Accept(ctx context.Context, actor publishing.Actor, in AcceptI
 	var staged *sending.Staged
 	if hasFile {
 		var err error
-		staged, err = s.StageAttachment(ctx, in.Attachment)
+		staged, err = s.StageAttachment(ctx, actor, in.Attachment)
 		if err != nil {
 			return Accepted{}, err
 		}
@@ -196,7 +199,7 @@ func (s *Service) Accept(ctx context.Context, actor publishing.Actor, in AcceptI
 		return Accepted{Operation: op}, nil
 	}
 	keep = true
-	if err := s.Jobs.EnqueueMessageEdit(ctx, op.PublicID, targetQueueKey(in.ClientKey, in.DestinationChannelID, in.TargetMessageID)); err != nil {
+	if err := s.Jobs.EnqueueMessageEdit(ctx, op.PublicID, targetQueueKey(in.ClientKey, in.DestinationChannelID, in.TargetMessageID), actor.Owner()); err != nil {
 		_ = s.Operations.DeleteMessageEditOperation(ctx, op.ID)
 		keep = false
 		return Accepted{}, &publishing.Error{Status: 503, Code: CodeEditQueueUnavailable, Message: "The edit could not be scheduled and has not been accepted."}
@@ -274,7 +277,7 @@ func (s *Service) Cleanup(ctx context.Context) error {
 	}
 	for _, op := range active {
 		if s.Staging != nil {
-			rc, openErr := s.Staging.Open(op.MediaStagingName)
+			rc, openErr := s.Staging.OpenFor(ctx, op.UserID, op.AccountID, op.MediaStagingName)
 			if openErr == nil {
 				_ = rc.Close()
 				continue
@@ -366,7 +369,7 @@ func (s *Service) Execute(ctx context.Context, job automation.Job) error {
 	}
 	var media *rpc.SendMedia
 	if request.Media != nil {
-		data, err := s.Staging.ReadAll(op.MediaStagingName)
+		data, err := s.Staging.ReadFor(ctx, op.UserID, op.AccountID, op.MediaStagingName)
 		if err != nil {
 			return fail(CodeEditMediaMissing, "The staged attachment is missing.")
 		}

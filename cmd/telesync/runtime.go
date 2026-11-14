@@ -12,8 +12,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountauth"
 	"github.com/mirza/telesync/internal/appconfig"
 	"github.com/mirza/telesync/internal/auth"
 	"github.com/mirza/telesync/internal/automation"
@@ -27,6 +29,7 @@ import (
 	"github.com/mirza/telesync/internal/avatarcache"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/cli"
+	"github.com/mirza/telesync/internal/daemonlock"
 	"github.com/mirza/telesync/internal/docsite"
 	"github.com/mirza/telesync/internal/editing"
 	"github.com/mirza/telesync/internal/gateway"
@@ -37,7 +40,9 @@ import (
 	"github.com/mirza/telesync/internal/profile"
 	"github.com/mirza/telesync/internal/rpc"
 	"github.com/mirza/telesync/internal/runtime"
+	"github.com/mirza/telesync/internal/secrets"
 	"github.com/mirza/telesync/internal/sending"
+	"github.com/mirza/telesync/internal/sessionstore"
 	"github.com/mirza/telesync/internal/staging"
 	"github.com/mirza/telesync/internal/supervisor"
 	"github.com/mirza/telesync/internal/wordpress"
@@ -55,6 +60,9 @@ func runtimeDeps(logger *log.Logger, logw io.Writer) cli.RuntimeDeps {
 			return runDaemon(ctx, req, logger)
 		},
 		Worker: func(ctx context.Context, req cli.RuntimeRequest) error {
+			if req.AccountID != "" {
+				return runAccountWorkerProcess(ctx, req.AccountID, req.Config, logger, logw)
+			}
 			return runWorkerProcess(ctx, req.Client, req.Config, logger, logw)
 		},
 		Login: func(ctx context.Context, req cli.RuntimeRequest) (login.Result, error) {
@@ -117,11 +125,11 @@ func newSendService(
 // editWorkers resolves each background edit to the worker belonging to its
 // client key. It never substitutes another connection when one is unavailable.
 type editWorkers struct {
-	workers map[string]gateway.Worker
+	workers gateway.Registry
 }
 
 func (r editWorkers) EditMessage(ctx context.Context, clientKey string, req rpc.EditRequest) (rpc.EditResult, error) {
-	w, ok := r.workers[clientKey]
+	w, ok := r.workers.Worker(clientKey)
 	if !ok || w == nil {
 		return rpc.EditResult{}, rpc.ErrUnavailable
 	}
@@ -129,11 +137,225 @@ func (r editWorkers) EditMessage(ctx context.Context, clientKey string, req rpc.
 }
 
 func (r editWorkers) Message(ctx context.Context, clientKey string, channelID int64, messageID int) (rpc.MessagePage, error) {
-	w, ok := r.workers[clientKey]
+	w, ok := r.workers.Worker(clientKey)
 	if !ok || w == nil {
 		return rpc.MessagePage{}, rpc.ErrUnavailable
 	}
 	return w.Message(ctx, channelID, messageID)
+}
+
+// accountWorkerRegistry is the daemon's live account_id -> worker map. Login
+// completion adds to it only after persistence has confirmed authorization;
+// account removal drops the worker only after its Runner has stopped.
+type accountWorkerRegistry struct {
+	mu      sync.RWMutex
+	workers map[string]gateway.Worker
+}
+
+func newAccountWorkerRegistry() *accountWorkerRegistry {
+	return &accountWorkerRegistry{workers: make(map[string]gateway.Worker)}
+}
+
+func (r *accountWorkerRegistry) Worker(accountID string) (gateway.Worker, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	w, ok := r.workers[accountID]
+	return w, ok
+}
+
+func (r *accountWorkerRegistry) register(accountID string, w gateway.Worker) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.workers[accountID] = w
+}
+
+func (r *accountWorkerRegistry) remove(accountID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.workers, accountID)
+}
+
+const accountSessionKeyVersion = 1
+
+func accountLoginService(
+	cfg appconfig.Config,
+	store *channelstore.Store,
+	encrypter *secrets.Encrypter,
+) (*accountauth.Service, error) {
+	factory, err := gotdclient.NewAccountAuthFactory(gotdclient.AccountAuthFactoryConfig{
+		ResolveSpec: func(attempt accountauth.LoginAttempt) (*profile.Spec, error) {
+			cl, ok := cfg.Find(attempt.ServerKey)
+			if !ok || !cl.Enabled {
+				return nil, errors.New("the selected server definition is unavailable")
+			}
+			switch attempt.NetworkType {
+			case channelstore.NetworkTelegram:
+				if cl.Type != appconfig.Official || cl.Server != nil {
+					return nil, errors.New("the selected server definition does not match the network")
+				}
+			case channelstore.NetworkCustom:
+				if cl.Type != appconfig.Custom || cl.Server == nil {
+					return nil, errors.New("the selected server definition does not match the network")
+				}
+			default:
+				return nil, errors.New("the login attempt has an unknown network")
+			}
+			return profile.FromClient(cl)
+		},
+		SessionDir: cfg.Runtime.SessionDir,
+		Encrypter:  encrypter,
+		KeyVersion: accountSessionKeyVersion,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configure the account MTProto login adapter: %w", err)
+	}
+	service, err := accountauth.New(accountauth.Config{
+		Attempts: loginAttemptStoreAdapter{store: store.LoginAttempts()},
+		MTProto:  factory,
+		Accounts: newAccountSessionHandoff(
+			store, cfg.Runtime.SessionDir, encrypter, accountSessionKeyVersion,
+		),
+		// The gateway has no QR display/confirm routes, so advertising QR would
+		// strand a login after the token was created.
+		QRSupported: false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configure account login service: %w", err)
+	}
+	return service, nil
+}
+
+func accountRunnerRef(cfg appconfig.Config, account channelstore.Account) (supervisor.AccountRef, error) {
+	if account.OwnerUserID <= 0 || account.RemoteUserID <= 0 {
+		return supervisor.AccountRef{}, errors.New("account has no verified owner or remote identity")
+	}
+	cl, ok := cfg.Find(account.ServerKey)
+	if !ok || !cl.Enabled {
+		return supervisor.AccountRef{}, errors.New("account server definition is unavailable")
+	}
+	ref := supervisor.AccountRef{
+		ID: account.ID, OwnerUserID: account.OwnerUserID, ServerKey: account.ServerKey,
+		NetworkType: account.NetworkType, AppID: cl.AppID, APIHash: cl.APIHash,
+	}
+	switch account.NetworkType {
+	case channelstore.NetworkTelegram:
+		if cl.Type != appconfig.Official || cl.Server != nil {
+			return supervisor.AccountRef{}, errors.New("account does not match its official server definition")
+		}
+	case channelstore.NetworkCustom:
+		if cl.Type != appconfig.Custom || cl.Server == nil {
+			return supervisor.AccountRef{}, errors.New("account does not match its custom server definition")
+		}
+		ref.Server = &supervisor.Server{
+			Host: cl.Server.Host, Port: cl.Server.Port, DCID: cl.Server.DCID,
+			RSAPublicKeyPath: cl.Server.RSAPublicKeyPath,
+			Transport:        cl.Server.Transport, Routing: cl.Server.Routing,
+			Obfuscated: cl.Server.Obfuscated,
+		}
+	default:
+		return supervisor.AccountRef{}, errors.New("account has an unknown network type")
+	}
+	if err := ref.Valid(); err != nil {
+		return supervisor.AccountRef{}, err
+	}
+	return ref, nil
+}
+
+func accountWorkerSocket(cfg appconfig.Config, accountID string) (string, error) {
+	paths, err := supervisor.AccountPaths(
+		cfg.Runtime.RunDir, cfg.Runtime.SessionDir, cfg.Runtime.PeerDir, accountID,
+	)
+	if err != nil {
+		return "", err
+	}
+	return paths.SocketPath, nil
+}
+
+func (r *accountWorkerRegistry) addRunner(
+	cfg appconfig.Config,
+	sup *supervisor.Supervisor,
+	account channelstore.Account,
+	requestTimeout time.Duration,
+) error {
+	ref, err := accountRunnerRef(cfg, account)
+	if err != nil {
+		return err
+	}
+	socket, err := accountWorkerSocket(cfg, account.ID)
+	if err != nil {
+		return err
+	}
+	r.register(account.ID, rpc.NewClient(socket, requestTimeout))
+	if err := sup.Add(ref); err != nil && !errors.Is(err, supervisor.ErrWorkerBudgetExhausted) {
+		r.remove(account.ID)
+		return err
+	}
+	return nil
+}
+
+func accountRunnerStatus(
+	ctx context.Context,
+	account channelstore.Account,
+	sup *supervisor.Supervisor,
+	workers gateway.Registry,
+) string {
+	state, exists := sup.AccountState(account.ID)
+	if !exists {
+		switch account.Status {
+		case channelstore.AccountStatusConnecting,
+			channelstore.AccountStatusAuthenticationRequired,
+			channelstore.AccountStatusDisabled,
+			channelstore.AccountStatusRemoved:
+			return account.Status
+		default:
+			return channelstore.AccountStatusDisconnected
+		}
+	}
+	switch state.Phase {
+	case supervisor.PhaseStarting, supervisor.PhaseDeferred:
+		return channelstore.AccountStatusConnecting
+	case supervisor.PhaseBackoff:
+		return channelstore.AccountStatusReconnecting
+	case supervisor.PhaseFailed:
+		return channelstore.AccountStatusError
+	case supervisor.PhaseStopped:
+		return channelstore.AccountStatusDisconnected
+	case supervisor.PhaseRunning:
+		worker, ok := workers.Worker(account.ID)
+		if !ok {
+			return channelstore.AccountStatusError
+		}
+		health, err := worker.Health(ctx)
+		if err != nil {
+			return channelstore.AccountStatusReconnecting
+		}
+		wantType := ""
+		switch account.NetworkType {
+		case channelstore.NetworkTelegram:
+			wantType = string(appconfig.Official)
+		case channelstore.NetworkCustom:
+			wantType = string(appconfig.Custom)
+		}
+		if health.AccountID != account.ID || health.OwnerUserID != account.OwnerUserID ||
+			health.Key != account.ServerKey || health.Type != wantType {
+			return channelstore.AccountStatusError
+		}
+		if health.Authorized && health.State == rpc.StateConnected {
+			return channelstore.AccountStatusConnected
+		}
+		switch health.State {
+		case rpc.StateNeedsAuth:
+			return channelstore.AccountStatusAuthenticationRequired
+		case rpc.StateStarting:
+			return channelstore.AccountStatusConnecting
+		case rpc.StateError:
+			return channelstore.AccountStatusError
+		default:
+			return channelstore.AccountStatusReconnecting
+		}
+	default:
+		return channelstore.AccountStatusError
+	}
 }
 
 // runDaemon supervises worker processes and serves the public API.
@@ -162,12 +384,111 @@ func newBackgroundPublisher(
 	}
 }
 
+// accountSessionStore is the persistence the login service needs, with the two
+// additional methods required to turn its on-disk AccountBox into the durable
+// session fields used by startup Runner discovery.
+type accountSessionStore interface {
+	accountauth.AccountStore
+	ByID(ctx context.Context, ownerUserID int64, id string) (channelstore.Account, error)
+	UpdateSession(ctx context.Context, ownerUserID int64, id string, box secrets.Box, keyVersion int) error
+}
+
+// accountSessionHandoff copies the completed login's sealed AccountBox into the
+// account row before marking that account connected. AccountBox remains the
+// gotd session.Storage; SQLite's sealed copy is what lets startup select only
+// accounts that have durable, account-bound session state.
+type accountSessionHandoff struct {
+	store      accountSessionStore
+	sessionDir string
+	encrypter  *secrets.Encrypter
+	keyVersion int
+}
+
+func newAccountSessionHandoff(
+	store accountSessionStore,
+	sessionDir string,
+	encrypter *secrets.Encrypter,
+	keyVersion int,
+) *accountSessionHandoff {
+	return &accountSessionHandoff{
+		store:      store,
+		sessionDir: sessionDir,
+		encrypter:  encrypter,
+		keyVersion: keyVersion,
+	}
+}
+
+func (h *accountSessionHandoff) CreatePending(
+	ctx context.Context,
+	ownerUserID int64,
+	accountID, serverKey, networkType string,
+) error {
+	return h.store.CreatePending(ctx, ownerUserID, accountID, serverKey, networkType)
+}
+
+func (h *accountSessionHandoff) CompletePending(
+	ctx context.Context,
+	ownerUserID int64,
+	accountID string,
+	user accountauth.AuthorizedUser,
+) error {
+	if h == nil || h.store == nil || h.encrypter == nil || h.keyVersion < 1 {
+		return errors.New("account session handoff is not configured")
+	}
+	account, err := h.store.ByID(ctx, ownerUserID, accountID)
+	if err != nil {
+		return fmt.Errorf("read the pending account identity: %w", err)
+	}
+	box, err := sessionstore.NewAccountBox(sessionstore.AccountBoxConfig{
+		Dir:         h.sessionDir,
+		AccountID:   accountID,
+		Encrypter:   h.encrypter,
+		KeyVersion:  h.keyVersion,
+		NetworkKey:  account.ServerKey,
+		NetworkType: account.NetworkType,
+	})
+	if err != nil {
+		return fmt.Errorf("open the account-bound session store: %w", err)
+	}
+	plaintext, err := box.OpenFile(box.Path())
+	if err != nil {
+		return fmt.Errorf("read the completed account session: %w", err)
+	}
+	sealed, err := h.encrypter.SealWithAAD(plaintext, sessionstore.AccountAAD(accountID, h.keyVersion))
+	if err != nil {
+		return fmt.Errorf("seal the completed account session for persistence: %w", err)
+	}
+	if err := h.store.UpdateSession(ctx, ownerUserID, accountID, sealed, h.keyVersion); err != nil {
+		return fmt.Errorf("persist the completed account session: %w", err)
+	}
+	if err := h.store.CompletePending(ctx, ownerUserID, accountID, user); err != nil {
+		return fmt.Errorf("complete the pending account: %w", err)
+	}
+	return nil
+}
+
+func (h *accountSessionHandoff) ReleasePending(ctx context.Context, ownerUserID int64, accountID string) error {
+	return h.store.ReleasePending(ctx, ownerUserID, accountID)
+}
+
 func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) error {
 	cfg := req.Config
-	workers := make(map[string]gateway.Worker, len(cfg.Clients))
-	for _, cl := range cfg.EnabledClients() {
-		workers[cl.Key] = rpc.NewClient(cl.RPCSocketPath, cfg.API.RequestTimeout)
+	// A persistence directory belongs to one daemon. Without this process lock,
+	// two daemons could race account restoration, queue leases and SQLite writes
+	// even if they listen on different API addresses or use different socket
+	// directories.
+	persistenceLock, err := daemonlock.Acquire(filepath.Join(cfg.Runtime.DataDir, "daemon.lock"))
+	if err != nil {
+		return fmt.Errorf("lock the persistence directory: %w", err)
 	}
+	defer persistenceLock.Close()
+
+	accountEncrypter, err := cfg.Accounts.Encrypter()
+	if err != nil {
+		return fmt.Errorf("configure account session encryption: %w", err)
+	}
+
+	accountWorkers := newAccountWorkerRegistry()
 
 	// The database and the avatar cache belong to the daemon, not to a worker:
 	// one process owns them, so the selection and the cache cannot diverge
@@ -178,6 +499,19 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 		return fmt.Errorf("open the channel database: %w", err)
 	}
 	defer store.Close()
+
+	loginService, err := accountLoginService(cfg, store, accountEncrypter)
+	if err != nil {
+		return err
+	}
+	loginRecovery, err := loginService.Recover(ctx)
+	if err != nil {
+		return fmt.Errorf("recover interrupted account logins: %w", err)
+	}
+	if loginRecovery.Incomplete+loginRecovery.Purged > 0 {
+		logger.Printf("daemon: account login recovery settled %d incomplete attempt(s), released %d pending account(s), purged %d old attempt(s)",
+			loginRecovery.Incomplete, loginRecovery.AccountsReleased, loginRecovery.Purged)
+	}
 
 	cache, err := avatarcache.Open(cfg.Runtime.CacheDir, avatarcache.Options{
 		TTL:  cfg.Runtime.AvatarTTL,
@@ -195,6 +529,8 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 	opts := supervisor.Options{
 		ConfigPath:          req.ConfigPath,
 		RunDir:              cfg.Runtime.RunDir,
+		SessionDir:          cfg.Runtime.SessionDir,
+		PeerDir:             cfg.Runtime.PeerDir,
 		RestartInitialDelay: cfg.Runtime.RestartInitialDelay,
 		RestartMaxDelay:     cfg.Runtime.RestartMaxDelay,
 		MaxRestartAttempts:  cfg.Runtime.MaxRestartAttempts,
@@ -211,7 +547,82 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 	}
 	opts.BinaryPath = self
 
-	sup := supervisor.New(opts, execLauncher{}, socketProber{timeout: 2 * time.Second})
+	sup := supervisor.New(opts, execLauncher{}, accountSocketProber{timeout: 2 * time.Second})
+
+	runnerRecords, err := store.ListRunnerAccounts(ctx)
+	if err != nil {
+		return fmt.Errorf("discover persisted account Runners: %w", err)
+	}
+	runnerRefs := make([]supervisor.AccountRef, 0, len(runnerRecords))
+	for _, account := range runnerRecords {
+		ref, err := accountRunnerRef(cfg, account)
+		if err != nil {
+			logger.Printf("daemon: account=%s is not restorable with the configured server definition: %v",
+				account.ID, err)
+			continue
+		}
+		socket, err := accountWorkerSocket(cfg, account.ID)
+		if err != nil {
+			logger.Printf("daemon: account=%s has invalid private worker paths: %v", account.ID, err)
+			continue
+		}
+		accountWorkers.register(account.ID, rpc.NewClient(socket, cfg.API.RequestTimeout))
+		runnerRefs = append(runnerRefs, ref)
+	}
+
+	accountAuthorized := func(ctx context.Context, owner int64, attempt accountauth.LoginAttempt) {
+		if attempt.OwnerUserID != owner || attempt.AccountID == "" {
+			logger.Printf("daemon: authorized login has no matching owner/account identity")
+			return
+		}
+		account, err := store.ByID(ctx, owner, attempt.AccountID)
+		if err != nil {
+			logger.Printf("daemon: account=%s authorized login could not be loaded: %v", attempt.AccountID, err)
+			return
+		}
+		if account.Status != channelstore.AccountStatusConnected ||
+			account.ServerKey != attempt.ServerKey || account.RemoteUserID <= 0 {
+			logger.Printf("daemon: account=%s authorized login is not eligible for Runner startup", account.ID)
+			return
+		}
+		if err := accountWorkers.addRunner(cfg, sup, account, cfg.API.RequestTimeout); err != nil {
+			logger.Printf("daemon: account=%s Runner startup could not be registered: %v", account.ID, err)
+			return
+		}
+		logger.Printf("daemon: account=%s Runner registered after authorization", account.ID)
+	}
+	stopAccount := func(ctx context.Context, owner int64, accountID string) error {
+		if _, err := store.ByID(ctx, owner, accountID); err != nil {
+			return err
+		}
+		err := sup.Remove(accountID)
+		if err != nil && !errors.Is(err, supervisor.ErrAccountNotSupervised) {
+			return err
+		}
+		accountWorkers.remove(accountID)
+		return nil
+	}
+	clearAccountSession := func(ctx context.Context, owner int64, account channelstore.Account) error {
+		if err := store.ClearSession(ctx, owner, account.ID); err != nil {
+			return err
+		}
+		keyVersion := account.SessionEncKeyVersion
+		if keyVersion < 1 {
+			keyVersion = accountSessionKeyVersion
+		}
+		box, err := sessionstore.NewAccountBox(sessionstore.AccountBoxConfig{
+			Dir: cfg.Runtime.SessionDir, AccountID: account.ID,
+			Encrypter: accountEncrypter, KeyVersion: keyVersion,
+			NetworkKey: account.ServerKey, NetworkType: account.NetworkType,
+		})
+		if err != nil {
+			return err
+		}
+		return box.Discard()
+	}
+	accountStatus := func(ctx context.Context, account channelstore.Account) string {
+		return accountRunnerStatus(ctx, account, sup, accountWorkers)
+	}
 
 	// Access tokens are issued by the daemon; a missing key is a startup error
 	// rather than a silent fallback to "login does not work".
@@ -263,11 +674,11 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 	// goes out through too: the destination, its permissions, how a message is
 	// built and what a failure means are shared with a publish, and only where
 	// the content came from differs.
-	registry := publishing.RegistryFunc(func(key string) (publishing.Worker, bool) {
-		w, ok := workers[key]
+	publishingRegistry := publishing.RegistryFunc(func(accountID string) (publishing.Worker, bool) {
+		w, ok := accountWorkers.Worker(accountID)
 		return w, ok
 	})
-	publisher := newBackgroundPublisher(registry, store, seal, logger.Printf)
+	publisher := newBackgroundPublisher(publishingRegistry, store, seal, logger.Printf)
 
 	var (
 		autoWebhooks  automation.WebhookService
@@ -298,7 +709,22 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 		ingestHandler := rpc.NewAutomationHandler(
 			events.NewRPCIngestBackend(
 				events.NewIngestor(store, enqueuer, store, store, store),
-				events.LocalIDsFunc(store.LocalIDsByChannelID),
+				// The lookup is account-scoped on purpose: two users watching the
+				// same remote channel hold two registrations, and an observation
+				// must resolve to the row belonging to the account that saw it.
+				// Resolving by remote channel id alone would hand one user's
+				// messages to the other's automation.
+				events.ChannelLookupFunc(func(ctx context.Context, accountID, clientKey string, channelID int64) (events.ChannelRegistration, bool, error) {
+					id, ownerUserID, ok, err := store.ManagedChannelForAccount(ctx, accountID, clientKey, channelID)
+					if err != nil || !ok {
+						return events.ChannelRegistration{}, ok, err
+					}
+					return events.ChannelRegistration{
+						ManagedChannelID: id,
+						AccountID:        accountID,
+						OwnerUserID:      ownerUserID,
+					}, true, nil
+				}),
 			),
 			recovery.NewStateBackend(store),
 		)
@@ -351,7 +777,7 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 			AI:        processor,
 			Outbound:  store,
 			Networks:  networkKeys{config: cfg},
-			Workers:   registry,
+			Workers:   publishingRegistry,
 			Logf:      logger.Printf,
 		}
 		autoWorkflows = &workflows.Service{Store: store, Terms: publisher, Logf: logger.Printf}
@@ -384,7 +810,7 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 		jobHandlers[automation.JobTelegramMessageSend] = sendService.Execute
 		editService = &editing.Service{
 			Sender:           publisher,
-			Editor:           editWorkers{workers: workers},
+			Editor:           editWorkers{workers: accountWorkers},
 			Channels:         store,
 			Operations:       store,
 			Staging:          area,
@@ -434,16 +860,22 @@ func runDaemon(ctx context.Context, req cli.RuntimeRequest, logger *log.Logger) 
 	}
 
 	return runtime.RunDaemon(ctx, runtime.DaemonOptions{
-		Config:     cfg,
-		Supervisor: sup,
-		Workers:    workers,
-		Channels:   store,
-		Categories: store,
-		Publishes:  store,
-		Send:       sendService,
-		Edit:       editService,
-		Users:      store,
-		WordPress:  store,
+		Config:              cfg,
+		AccountSupervisor:   sup,
+		AccountRunners:      runnerRefs,
+		WorkerRegistry:      accountWorkers,
+		AccountLogins:       loginService,
+		AccountAuthorized:   accountAuthorized,
+		AccountStatus:       accountStatus,
+		StopAccount:         stopAccount,
+		ClearAccountSession: clearAccountSession,
+		Channels:            store,
+		Categories:          store,
+		Publishes:           store,
+		Send:                sendService,
+		Edit:                editService,
+		Users:               store,
+		WordPress:           store,
 		// The daemon's own client: public https hosts only, every connection
 		// checked at dial time, no redirects, bounded time and body.
 		WordPressClient:     wordpress.NewClient(),
@@ -495,6 +927,161 @@ func (n networkKeys) NetworkKey(clientKey string) (string, bool) {
 //
 // reconnect is the operator's retry interval from runtime.reconnect; it is 0
 // when the configuration was not available, which keeps the manager's default.
+type accountWorkerMaterial struct {
+	Client   appconfig.Client
+	Identity worker.AccountIdentity
+	Spec     *profile.Spec
+}
+
+func loadAccountWorker(ctx context.Context, cfg appconfig.Config, accountID string) (accountWorkerMaterial, error) {
+	if cfg.Runtime.DataDir == "" {
+		return accountWorkerMaterial{}, errors.New("account worker: the database directory is not configured")
+	}
+	store, err := channelstore.Open(filepath.Join(cfg.Runtime.DataDir, "channels.db"), channelstore.Options{})
+	if err != nil {
+		return accountWorkerMaterial{}, fmt.Errorf("open the account database: %w", err)
+	}
+	defer store.Close()
+
+	account, err := store.AccountForRunner(ctx, accountID)
+	if err != nil {
+		return accountWorkerMaterial{}, fmt.Errorf("load account %s: %w", accountID, err)
+	}
+	cl, ok := cfg.Find(account.ServerKey)
+	if !ok || !cl.Enabled {
+		return accountWorkerMaterial{}, fmt.Errorf("account %s names an unavailable server definition", accountID)
+	}
+	switch account.NetworkType {
+	case channelstore.NetworkTelegram:
+		if cl.Type != appconfig.Official || cl.Server != nil {
+			return accountWorkerMaterial{}, fmt.Errorf("account %s does not match its official server definition", accountID)
+		}
+	case channelstore.NetworkCustom:
+		if cl.Type != appconfig.Custom || cl.Server == nil {
+			return accountWorkerMaterial{}, fmt.Errorf("account %s does not match its custom server definition", accountID)
+		}
+	default:
+		return accountWorkerMaterial{}, fmt.Errorf("account %s has an unknown network type", accountID)
+	}
+
+	paths, err := supervisor.AccountPaths(
+		cfg.Runtime.RunDir, cfg.Runtime.SessionDir, cfg.Runtime.PeerDir, account.ID,
+	)
+	if err != nil {
+		return accountWorkerMaterial{}, fmt.Errorf("derive account worker paths: %w", err)
+	}
+	cl.SessionPath = paths.SessionPath
+	cl.RPCSocketPath = paths.SocketPath
+	cl.PeerCachePath = paths.PeerCachePath
+
+	encrypter, err := cfg.Accounts.Encrypter()
+	if err != nil {
+		return accountWorkerMaterial{}, fmt.Errorf("configure account session encryption: %w", err)
+	}
+	box, err := sessionstore.NewAccountBox(sessionstore.AccountBoxConfig{
+		Dir:         cfg.Runtime.SessionDir,
+		AccountID:   account.ID,
+		Encrypter:   encrypter,
+		KeyVersion:  account.SessionEncKeyVersion,
+		NetworkKey:  account.ServerKey,
+		NetworkType: account.NetworkType,
+	})
+	if err != nil {
+		return accountWorkerMaterial{}, fmt.Errorf("open the sealed account session: %w", err)
+	}
+	currentSession, err := box.LoadSession(ctx)
+	switch {
+	case errors.Is(err, sessionstore.ErrSessionNotFound):
+		if err := box.WriteBox(account.Session); err != nil {
+			return accountWorkerMaterial{}, fmt.Errorf("restore the sealed session for account %s: %w", account.ID, err)
+		}
+	case err != nil:
+		return accountWorkerMaterial{}, fmt.Errorf("read the account session for %s: %w", account.ID, err)
+	default:
+		// The worker's sealed file is flushed by gotd as it evolves. Prefer
+		// that current session after a restart, then refresh SQLite's copy so
+		// the next restoration has the same durable state.
+		sealed, err := encrypter.SealWithAAD(
+			string(currentSession), sessionstore.AccountAAD(account.ID, account.SessionEncKeyVersion),
+		)
+		if err != nil {
+			return accountWorkerMaterial{}, fmt.Errorf("seal the current session for account %s: %w", account.ID, err)
+		}
+		if err := store.UpdateSession(ctx, account.OwnerUserID, account.ID, sealed, account.SessionEncKeyVersion); err != nil {
+			return accountWorkerMaterial{}, fmt.Errorf("persist the current session for account %s: %w", account.ID, err)
+		}
+	}
+	spec, err := profile.FromClient(cl)
+	if err != nil {
+		return accountWorkerMaterial{}, fmt.Errorf("resolve account %s server profile: %w", account.ID, err)
+	}
+	spec.Session = box
+
+	return accountWorkerMaterial{
+		Client: cl,
+		Identity: worker.AccountIdentity{
+			ID: account.ID, OwnerUserID: account.OwnerUserID, ServerKey: account.ServerKey,
+			NetworkType: account.NetworkType, RemoteUserID: account.RemoteUserID,
+			SessionRef: paths.SessionPath, PhoneMasked: account.PhoneNumberMasked,
+			RemoteUsername: account.RemoteUsername,
+		},
+		Spec: spec,
+	}, nil
+}
+
+func runAccountWorkerProcess(
+	ctx context.Context,
+	accountID string,
+	cfg appconfig.Config,
+	logger *log.Logger,
+	logw io.Writer,
+) error {
+	material, err := loadAccountWorker(ctx, cfg, accountID)
+	if err != nil {
+		return err
+	}
+	verbose := os.Getenv("TELESYNC_DEBUG") != ""
+	mgrLog := logw
+	if mgrLog != nil && !verbose {
+		mgrLog = io.Discard
+	}
+	peers, err := peerstore.Open(material.Client.PeerCachePath)
+	if err != nil {
+		return fmt.Errorf("open the account peer cache: %w", err)
+	}
+
+	var automationOptions *gotdclient.AutomationOptions
+	if cfg.Automation.Enabled {
+		client := rpc.NewAutomationClient(automationSocketPath(cfg), cfg.API.RequestTimeout)
+		automationOptions = &gotdclient.AutomationOptions{
+			Sink:        client,
+			State:       recovery.NewStatePersistence(client),
+			Checkpoints: recovery.NewCheckpointPersistence(client),
+			NetworkKey:  material.Client.NetworkKey(),
+		}
+	}
+	manager := gotdclient.NewManager(material.Spec, gotdclient.ManagerOptions{
+		AccountID:    material.Identity.ID,
+		RemoteUserID: material.Identity.RemoteUserID,
+		Log:          mgrLog,
+		Verbose:      verbose,
+		Peers:        peers,
+		Reconnect:    cfg.Runtime.Reconnect,
+		OnEvent: func(format string, args ...any) {
+			logger.Printf("telegram: "+format, args...)
+		},
+		Automation: automationOptions,
+	})
+	return runtime.RunWorker(ctx, runtime.WorkerOptions{
+		Client:  material.Client,
+		Account: &material.Identity,
+		Manager: manager,
+		Listen:  worker.Listen,
+		PID:     os.Getpid(),
+		Logf:    logger.Printf,
+	})
+}
+
 func runWorkerProcess(ctx context.Context, cl appconfig.Client, cfg appconfig.Config,
 	logger *log.Logger, logw io.Writer) error {
 
@@ -605,4 +1192,42 @@ func (p socketProber) Ready(ctx context.Context, socketPath string) error {
 	defer client.Close()
 	_, err := client.Health(ctx)
 	return err
+}
+
+// accountSocketProber requires the ready socket to prove the exact persisted
+// account identity. A live socket for another account is never sufficient.
+type accountSocketProber struct{ timeout time.Duration }
+
+func (p accountSocketProber) Ready(ctx context.Context, socketPath string) error {
+	return socketProber{timeout: p.timeout}.Ready(ctx, socketPath)
+}
+
+func (p accountSocketProber) ReadyAccount(
+	ctx context.Context,
+	socketPath string,
+	expected supervisor.AccountMetadata,
+) error {
+	client := rpc.NewClient(socketPath, p.timeout)
+	defer client.Close()
+	health, err := client.Health(ctx)
+	if err != nil {
+		return err
+	}
+	wantType := ""
+	switch expected.NetworkType {
+	case channelstore.NetworkTelegram:
+		wantType = string(appconfig.Official)
+	case channelstore.NetworkCustom:
+		wantType = string(appconfig.Custom)
+	default:
+		return supervisor.ErrAccountIdentityMismatch
+	}
+	if health.AccountID != expected.AccountID || health.OwnerUserID != expected.OwnerUserID ||
+		health.Key != expected.ServerKey || health.Type != wantType {
+		return supervisor.ErrAccountIdentityMismatch
+	}
+	if !health.RPCReady || !health.Authorized || health.State != rpc.StateConnected {
+		return errors.New("account worker is not authorized and ready")
+	}
+	return nil
 }

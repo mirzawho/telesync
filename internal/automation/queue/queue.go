@@ -310,13 +310,18 @@ func NewEnqueuer(store Store, maxAttempts int) *Enqueuer {
 }
 
 // EnqueueWebhookDelivery schedules one delivery of one event to one webhook.
-func (e *Enqueuer) EnqueueWebhookDelivery(ctx context.Context, eventID string, webhookID int64) error {
-	return e.enqueue(ctx, eventID, automation.JobWebhookDelivery, webhookID)
+//
+// owner is the account the work runs for. It is not decoration: the queue
+// refuses work with no owner, and a worker only ever claims work bound to the
+// account it holds, so a delivery scheduled for one user can never be sent by
+// another user's session.
+func (e *Enqueuer) EnqueueWebhookDelivery(ctx context.Context, eventID string, webhookID int64, owner automation.Owner) error {
+	return e.enqueue(ctx, eventID, automation.JobWebhookDelivery, webhookID, owner)
 }
 
 // EnqueueWorkflowRun schedules one workflow execution for one event.
-func (e *Enqueuer) EnqueueWorkflowRun(ctx context.Context, eventID string, workflowID int64) error {
-	return e.enqueue(ctx, eventID, automation.JobWorkflowRun, workflowID)
+func (e *Enqueuer) EnqueueWorkflowRun(ctx context.Context, eventID string, workflowID int64, owner automation.Owner) error {
+	return e.enqueue(ctx, eventID, automation.JobWorkflowRun, workflowID, owner)
 }
 
 // EnqueueMessageSend schedules one accepted send for background delivery.
@@ -325,16 +330,16 @@ func (e *Enqueuer) EnqueueWorkflowRun(ctx context.Context, eventID string, workf
 // channel it is going to. Naming the channel as the job's target is what makes
 // one channel's sends claim in order and pace themselves, instead of a
 // recovered backlog arriving at a channel all at once.
-func (e *Enqueuer) EnqueueMessageSend(ctx context.Context, operationID string, channelID int64) error {
-	return e.enqueue(ctx, operationID, automation.JobTelegramMessageSend, channelID)
+func (e *Enqueuer) EnqueueMessageSend(ctx context.Context, operationID string, channelID int64, owner automation.Owner) error {
+	return e.enqueue(ctx, operationID, automation.JobTelegramMessageSend, channelID, owner)
 }
 
 // EnqueueMessageEdit schedules one accepted edit of an existing message.
 // targetID is a stable key for (client, channel, message), so the generic
 // durable queue runs edits of the same message in order while allowing edits
 // of unrelated targets to proceed concurrently.
-func (e *Enqueuer) EnqueueMessageEdit(ctx context.Context, operationID string, targetID int64) error {
-	return e.enqueue(ctx, operationID, automation.JobTelegramMessageEdit, targetID)
+func (e *Enqueuer) EnqueueMessageEdit(ctx context.Context, operationID string, targetID int64, owner automation.Owner) error {
+	return e.enqueue(ctx, operationID, automation.JobTelegramMessageEdit, targetID, owner)
 }
 
 // Reopen gives already-queued work a fresh attempt budget.
@@ -348,21 +353,23 @@ func (e *Enqueuer) EnqueueMessageEdit(ctx context.Context, operationID string, t
 //
 // A job that already succeeded is refused: repeating it could publish the same
 // message twice.
-func (e *Enqueuer) Reopen(ctx context.Context, eventID string, kind automation.JobKind, targetID int64) error {
+func (e *Enqueuer) Reopen(ctx context.Context, eventID string, kind automation.JobKind, targetID int64, owner automation.Owner) error {
 	_, _, err := e.store.ReopenAutomationJob(ctx, channelstore.ReopenJobRequest{
 		EventID:     eventID,
 		Kind:        kind,
 		TargetID:    targetID,
+		Owner:       owner,
 		MaxAttempts: e.maxAttempts,
 	})
 	return err
 }
 
-func (e *Enqueuer) enqueue(ctx context.Context, eventID string, kind automation.JobKind, targetID int64) error {
+func (e *Enqueuer) enqueue(ctx context.Context, eventID string, kind automation.JobKind, targetID int64, owner automation.Owner) error {
 	_, _, err := e.store.EnqueueAutomationJob(ctx, channelstore.EnqueueJobRequest{
 		EventID:     eventID,
 		Kind:        kind,
 		TargetID:    targetID,
+		Owner:       owner,
 		MaxAttempts: e.maxAttempts,
 	})
 	return err

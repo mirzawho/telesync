@@ -26,11 +26,23 @@ func webhook(name, rawURL string) automation.Webhook {
 	}
 }
 
-// sourceChannel creates one managed channel and returns its local row id.
+// sourceChannel creates one legacy unbound managed channel for tests that
+// exercise accountless behavior.
 func sourceChannel(t *testing.T, store *channelstore.Store, key string, remoteID int64) int64 {
 	t.Helper()
 	rec := channel(key, remoteID)
 	saved, err := store.Upsert(context.Background(), rec)
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	return saved.ID
+}
+
+// ownedSourceChannel creates a managed channel bound to the selected account.
+func ownedSourceChannel(t *testing.T, store *channelstore.Store, accountID, key string, remoteID int64) int64 {
+	t.Helper()
+	rec := channel(key, remoteID)
+	saved, err := store.UpsertFor(context.Background(), accountID, rec)
 	if err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
@@ -48,9 +60,11 @@ func TestWebhookRoundTripKeepsTheSecretOutOfEveryRead(t *testing.T) {
 	ctx := context.Background()
 	store := open(t)
 	user := createUser(t, store, "operator")
-	channelID := sourceChannel(t, store, "client-a", 100)
+	accountID := ownerAccount(t, store, user.ID, "client-a", channelstore.NetworkTelegram, 101)
+	channelID := ownedSourceChannel(t, store, accountID, "client-a", 100)
 
 	rec := webhook("feed", "https://receiver.example.com/hook")
+	rec.AccountID = accountID
 	rec.SourceChannelIDs = []int64{channelID}
 	secret := sealedSecret(t, "whsec_aaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
@@ -241,10 +255,12 @@ func TestWebhookSourcesAreReplacedListedAndCascaded(t *testing.T) {
 	ctx := context.Background()
 	store := open(t)
 	user := createUser(t, store, "operator")
-	first := sourceChannel(t, store, "client-a", 100)
-	second := sourceChannel(t, store, "client-a", 200)
+	accountID := ownerAccount(t, store, user.ID, "client-a", channelstore.NetworkTelegram, 101)
+	first := ownedSourceChannel(t, store, accountID, "client-a", 100)
+	second := ownedSourceChannel(t, store, accountID, "client-a", 200)
 
 	rec := webhook("feed", "https://receiver.example.com/hook")
+	rec.AccountID = accountID
 	rec.SourceChannelIDs = []int64{first}
 	created, err := store.CreateWebhook(ctx, user.ID, rec, sealedSecret(t, "whsec_abc"))
 	if err != nil {

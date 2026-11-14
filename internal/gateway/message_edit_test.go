@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/automation"
 	"github.com/mirza/telesync/internal/automation/publishing"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/editing"
@@ -18,14 +19,16 @@ const editPath = "/api/v1/telegram/cat/channels/98/messages/11"
 
 type recordingEditJobs struct {
 	enqueued []string
+	owners   []automation.Owner
 	fail     error
 }
 
-func (j *recordingEditJobs) EnqueueMessageEdit(_ context.Context, operationID string, _ int64) error {
+func (j *recordingEditJobs) EnqueueMessageEdit(_ context.Context, operationID string, _ int64, owner automation.Owner) error {
 	if j.fail != nil {
 		return j.fail
 	}
 	j.enqueued = append(j.enqueued, operationID)
+	j.owners = append(j.owners, owner)
 	return nil
 }
 
@@ -76,6 +79,60 @@ func TestMessageEditPUTIsAcceptedAsynchronously(t *testing.T) {
 	}
 	if len(jobs.enqueued) != 1 {
 		t.Fatalf("edit jobs enqueued = %d, want 1", len(jobs.enqueued))
+	}
+}
+
+func TestAccountScopedEditResponsesNameTheAccountAndKeepTheServerKeyInformational(t *testing.T) {
+	s, _ := editEnv(t)
+	grantMessageEdit(t, s, true)
+	accountID := s.testEnv.account["cat"].ID
+	path := "/api/v1/telegram/accounts/" + accountID + "/channels/98/messages/11"
+
+	resp := s.send(t, defaultCaller, http.MethodPut, path,
+		`{"text":"replacement","entities":[],"media":null,"options":{"disable_web_page_preview":false}}`)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("edit status = %d, body=%s", resp.StatusCode, readBody(t, resp))
+	}
+	var accepted struct {
+		Data struct {
+			OperationID string `json:"operation_id"`
+			Target      struct {
+				AccountID string `json:"account_id"`
+				ClientKey string `json:"client_key"`
+			} `json:"target"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&accepted); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if accepted.Data.OperationID == "" || accepted.Data.Target.AccountID != accountID ||
+		accepted.Data.Target.ClientKey != "cat" {
+		t.Fatalf("accepted edit target = %+v, want account %s and informational server key cat",
+			accepted.Data.Target, accountID)
+	}
+
+	statusPath := path + "/edit/" + accepted.Data.OperationID
+	status := s.send(t, defaultCaller, http.MethodGet, statusPath, "")
+	defer status.Body.Close()
+	if status.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", status.StatusCode, readBody(t, status))
+	}
+	var polled struct {
+		Data struct {
+			Target struct {
+				AccountID string `json:"account_id"`
+				ClientKey string `json:"client_key"`
+			} `json:"target"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(status.Body).Decode(&polled); err != nil {
+		t.Fatal(err)
+	}
+	if polled.Data.Target.AccountID != accountID || polled.Data.Target.ClientKey != "cat" {
+		t.Fatalf("status target = %+v, want account %s and informational server key cat",
+			polled.Data.Target, accountID)
 	}
 }
 

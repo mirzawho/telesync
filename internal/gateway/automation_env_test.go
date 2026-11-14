@@ -157,6 +157,11 @@ type autoEnv struct {
 	transport *autoTransport
 	encrypter *secrets.Encrypter
 	services  autoServices
+	// account is the Telegram account the fixtures observe through. Every
+	// event, delivery and job this environment writes is bound to it: work with
+	// no owning account is refused rather than run as somebody else.
+	accountID string
+	ownerUser int64
 	// basePath and publicBaseURL are the two deployment settings the media link
 	// in a webhook payload is built from, so a test can move either one and see
 	// what the payload says.
@@ -174,14 +179,36 @@ func newAutoEnv(t *testing.T, mutate ...func(*gateway.Config)) *autoEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	owner := env.account(t, "automation-owner")
+	accountID := env.sessionAccount(t, owner, "official", channelstore.NetworkTelegram, readyWorker())
 	e := &autoEnv{
 		accountEnv:    env,
+		accountID:     accountID,
+		ownerUser:     owner.user.ID,
 		transport:     &autoTransport{status: http.StatusOK, response: `{"received":true}`},
 		encrypter:     encrypter,
 		publicBaseURL: autoPublicBaseURL,
 	}
 	e.rewire(t, mutate...)
 	return e
+}
+
+// workflowOwnerToken returns the Telesync principal that owns e.accountID,
+// with the application grants needed to exercise workflow destination routes.
+func (e *autoEnv) workflowOwnerToken(t *testing.T) string {
+	t.Helper()
+	err := e.store.ReplacePermissions(t.Context(), e.ownerUser, channelstore.PermissionSet{
+		Global: []channelstore.GlobalPermission{
+			channelstore.PermissionAutomationView,
+			channelstore.PermissionWorkflowsManage,
+			channelstore.PermissionChannelsView,
+			channelstore.PermissionContentPublish,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e.tokenFor(t, e.ownerUser)
 }
 
 // rewire builds fresh service instances over the suite's store and installs a
@@ -320,9 +347,12 @@ func (e *autoEnv) seedEvent(t *testing.T, managedChannelID, telegramChannelID, m
 	event := automation.MessageEvent{
 		ID: "evt_test_" + strconv.FormatInt(managedChannelID, 10) +
 			"_" + strconv.FormatInt(messageID, 10),
-		Type:              automation.EventMessageCreated,
-		NetworkKey:        "official",
-		SourceClientKey:   "official",
+		Type:            automation.EventMessageCreated,
+		NetworkKey:      "official",
+		SourceClientKey: "official",
+		// The event names the account that observed it and the user behind it.
+		// That binding is what the queue enforces on every job scheduled from it.
+		AccountID:         e.accountID,
 		ManagedChannelID:  managedChannelID,
 		TelegramChannelID: telegramChannelID,
 		MessageID:         messageID,
@@ -341,7 +371,7 @@ func (e *autoEnv) seedEvent(t *testing.T, managedChannelID, telegramChannelID, m
 			},
 			MediaURLPath: automation.MediaURLPath("official", telegramChannelID, int(messageID)),
 		},
-	}
+	}.WithOwner(e.ownerUser)
 	if _, err := e.store.InsertMessageEvent(context.Background(), event); err != nil {
 		t.Fatalf("store the source event: %v", err)
 	}
@@ -427,6 +457,7 @@ type autoWorkflowView struct {
 	UpdatedAt        string `json:"updated_at"`
 	Destinations     []struct {
 		DestinationType string         `json:"destination_type"`
+		AccountID       string         `json:"account_id"`
 		ClientKey       string         `json:"client_key"`
 		ChannelID       int64          `json:"channel_id"`
 		SiteID          int64          `json:"site_id"`

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/auth"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/gateway"
@@ -61,6 +62,22 @@ func accountsFor(t *testing.T, dir string) *testAccounts {
 
 // authHeader is the bearer header for the operator.
 func (a *testAccounts) authHeader() string { return "Bearer " + a.operatorTok }
+
+// telegramAccount adds one personal session identity for daemon routing tests.
+func (a *testAccounts) telegramAccount(t *testing.T, serverKey, networkType string) string {
+	t.Helper()
+	id, err := accountid.New()
+	if err != nil {
+		t.Fatalf("create account id: %v", err)
+	}
+	if _, err := a.store.Create(context.Background(), channelstore.Account{
+		ID: id, OwnerUserID: a.operator.ID, ServerKey: serverKey, NetworkType: networkType,
+		RemoteUserID: 1, Status: channelstore.AccountStatusConnected,
+	}); err != nil {
+		t.Fatalf("create personal Telegram account: %v", err)
+	}
+	return id
+}
 
 // with sends the operator's token on every request.
 func (a *testAccounts) with(client *http.Client) *http.Client {

@@ -65,6 +65,12 @@ type SendOperation struct {
 	// again before the send, so a withdrawn grant stops one that is still
 	// queued.
 	UserID int64
+	// AccountID is the user-owned Telegram account the send goes out on. It is
+	// recorded at acceptance and is the account the queued job is bound to, so a
+	// background send never acts as another account and never falls back to one.
+	// It is empty only on a row written before accounts existed, and such a row
+	// is refused at the queue door rather than run as somebody else.
+	AccountID string
 	// ClientKey and DestinationChannelID name the destination connection and
 	// the channel on it. The channel id is a decimal string so JavaScript
 	// cannot truncate it.
@@ -131,7 +137,7 @@ var (
 
 // sendOperationColumns is the one list of a send operation's columns, so the
 // insert, the lookup and the scans cannot drift apart.
-const sendOperationColumns = `id, public_id, user_id, client_key, destination_channel_id,
+const sendOperationColumns = `id, public_id, user_id, COALESCE(account_id, ''), client_key, destination_channel_id,
 	request_payload, media_kind, media_staging_name, media_filename, media_mime_type,
 	media_size, media_sha256, idempotency_key, request_fingerprint, random_id,
 	status, stage, attempt_count, next_attempt_at, remote_message_id,
@@ -182,13 +188,13 @@ func (s *Store) BeginSendOperation(ctx context.Context, op SendOperation) (SendO
 	status := SendQueued
 	res, err := s.db.ExecContext(ctx, `
 INSERT INTO message_send_operations (
-	public_id, user_id, client_key, destination_channel_id,
+	public_id, user_id, account_id, client_key, destination_channel_id,
 	request_payload, media_kind, media_staging_name, media_filename, media_mime_type,
 	media_size, media_sha256, idempotency_key, request_fingerprint, random_id,
 	status, stage, attempt_count, next_attempt_at, remote_message_id,
 	last_error_code, last_error_message, created_at, started_at, completed_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, NULL, 0, '', '', ?, NULL, NULL, ?)`,
-		publicID, op.UserID, op.ClientKey, op.DestinationChannelID,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, NULL, 0, '', '', ?, NULL, NULL, ?)`,
+		publicID, op.UserID, nullableText(op.AccountID), op.ClientKey, op.DestinationChannelID,
 		op.RequestPayload, op.MediaKind, op.MediaStagingName, op.MediaFilename, op.MediaMimeType,
 		op.MediaSize, op.MediaSHA256, strings.TrimSpace(op.IdempotencyKey), op.RequestFingerprint, op.RandomID,
 		string(status), formatTime(now), formatTime(now))
@@ -219,6 +225,9 @@ INSERT INTO message_send_operations (
 		ID:                   id,
 		PublicID:             publicID,
 		UserID:               op.UserID,
+		// The binding is reported back as it was stored. Leaving it out here
+		// would make a freshly created operation look ownerless to its caller.
+		AccountID:            op.AccountID,
 		ClientKey:            op.ClientKey,
 		DestinationChannelID: op.DestinationChannelID,
 		RequestPayload:       op.RequestPayload,
@@ -426,7 +435,7 @@ func scanSendOperationValues(scan func(...any) error) (SendOperation, error) {
 		updatedAt      string
 		idempotencyKey string
 	)
-	err := scan(&out.ID, &out.PublicID, &out.UserID, &out.ClientKey, &out.DestinationChannelID,
+	err := scan(&out.ID, &out.PublicID, &out.UserID, &out.AccountID, &out.ClientKey, &out.DestinationChannelID,
 		&out.RequestPayload, &out.MediaKind, &out.MediaStagingName, &out.MediaFilename, &out.MediaMimeType,
 		&out.MediaSize, &out.MediaSHA256, &idempotencyKey, &out.RequestFingerprint, &out.RandomID,
 		&status, &out.Stage, &out.AttemptCount, &nextAttemptAt, &out.RemoteMessageID,

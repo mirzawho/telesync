@@ -23,7 +23,13 @@ func at(t *testing.T, value string) time.Time {
 func source(t *testing.T, mutate ...func(*events.Source)) events.Source {
 	t.Helper()
 	s := events.Source{
-		ClientKey:         "official",
+		ClientKey: "official",
+		// The account and its owner are what make this event schedulable at
+		// all: background work with no owning account is refused rather than
+		// run as somebody else. Tests that want the quarantined case set them
+		// back to zero through mutate.
+		AccountID:         "acc_a",
+		OwnerUserID:       100,
 		NetworkKey:        "official",
 		ManagedChannelID:  7,
 		TelegramChannelID: 123456789,
@@ -153,7 +159,7 @@ func TestTheIdentityCoversTheWholeMessageIdentity(t *testing.T) {
 		t.Fatal("two messages in one channel produced one event id")
 	}
 
-	otherType := events.Identity("telegram.message.deleted", "official", 123456789, 36)
+	otherType := events.Identity("acc_a", "telegram.message.deleted", "official", 123456789, 36)
 	if base == otherType {
 		t.Fatal("two event types produced one event id")
 	}
@@ -197,22 +203,28 @@ func (f *fakeStore) InsertMessageEvent(_ context.Context, event automation.Messa
 type fakeJobs struct {
 	webhooks  []int64
 	workflows []int64
-	err       error
+	// owners is what each enqueue was bound to. A job that names no owner is
+	// work nothing may execute, so a test that ignores this would not notice
+	// fan-out dropping the binding.
+	owners []automation.Owner
+	err    error
 }
 
-func (f *fakeJobs) EnqueueWebhookDelivery(_ context.Context, eventID string, webhookID int64) error {
+func (f *fakeJobs) EnqueueWebhookDelivery(_ context.Context, eventID string, webhookID int64, owner automation.Owner) error {
 	if f.err != nil {
 		return f.err
 	}
 	f.webhooks = append(f.webhooks, webhookID)
+	f.owners = append(f.owners, owner)
 	return nil
 }
 
-func (f *fakeJobs) EnqueueWorkflowRun(_ context.Context, eventID string, workflowID int64) error {
+func (f *fakeJobs) EnqueueWorkflowRun(_ context.Context, eventID string, workflowID int64, owner automation.Owner) error {
 	if f.err != nil {
 		return f.err
 	}
 	f.workflows = append(f.workflows, workflowID)
+	f.owners = append(f.owners, owner)
 	return nil
 }
 
@@ -354,12 +366,12 @@ type fanOutFailingJobs struct {
 	failWorkflow bool
 }
 
-func (f *fanOutFailingJobs) EnqueueWebhookDelivery(_ context.Context, _ string, id int64) error {
+func (f *fanOutFailingJobs) EnqueueWebhookDelivery(_ context.Context, _ string, id int64, _ automation.Owner) error {
 	f.webhooks = append(f.webhooks, id)
 	return nil
 }
 
-func (f *fanOutFailingJobs) EnqueueWorkflowRun(_ context.Context, _ string, _ int64) error {
+func (f *fanOutFailingJobs) EnqueueWorkflowRun(_ context.Context, _ string, _ int64, _ automation.Owner) error {
 	if f.failWorkflow {
 		return errors.New("queue unavailable")
 	}

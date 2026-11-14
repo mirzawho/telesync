@@ -17,7 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mirza/telesync/internal/accountid"
 	"github.com/mirza/telesync/internal/appconfig"
+	"github.com/mirza/telesync/internal/auth"
 	"github.com/mirza/telesync/internal/avatarcache"
 	"github.com/mirza/telesync/internal/channelstore"
 	"github.com/mirza/telesync/internal/gateway"
@@ -283,6 +285,12 @@ type testEnv struct {
 	// session is the credential get and send attach when a test names none:
 	// the operator token, which every route accepts.
 	session string
+	// account holds the personal account each server key resolves to. Under
+	// user-owned accounts a keyed route acts through the caller's own account,
+	// so a test of routing needs one per key it exercises.
+	account map[string]channelstore.Account
+	// userToken is the credential of the caller who owns the accounts above.
+	userToken string
 	// onCreated, when set, is told the id of every resource the API creates.
 	onCreated func(id int64)
 	// started is the configuration the handler was built from.
@@ -298,16 +306,152 @@ func (e *testEnv) installOnCreated(fn func(id int64)) {
 
 func newEnv(t *testing.T, workers registry, mutate ...func(*gateway.Config)) *testEnv {
 	t.Helper()
+	store, err := channelstore.Open(filepath.Join(t.TempDir(), "state.db"), channelstore.Options{})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	tokens, err := auth.NewTokens(auth.TokenOptions{
+		Secret: []byte(strings.Repeat("g", 48)), TTL: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := make([]any, 0, len(mutate)+1)
+	for _, fn := range mutate {
+		args = append(args, fn)
+	}
+	return newEnvOn(t, store, tokens, workers, args...)
+}
+
+// newEnvOwned is newEnvOn for a suite that already has its own caller.
+//
+// A keyed route resolves the account of the user the request is signed as, so
+// the accounts have to belong to that user and nobody else. A suite that
+// created its own administrator and then asked for a routing environment would
+// otherwise get accounts owned by an unrelated "routing caller", and every one
+// of its requests would correctly be told it has no account on that server.
+func newEnvOwned(t *testing.T, store *channelstore.Store, tokens *auth.Tokens,
+	owner channelstore.User, workers registry, mutate ...func(*gateway.Config)) *testEnv {
+	t.Helper()
+	args := make([]any, 0, len(mutate)+1)
+	args = append(args, owner)
+	for _, fn := range mutate {
+		args = append(args, fn)
+	}
+	return newEnvOn(t, store, tokens, workers, args...)
+}
+
+// newEnvOn builds the routing environment on a caller-owned store and signer.
+//
+// The accounts the environment creates have to live in the same database the
+// gateway is configured to read, and belong to the caller the suite signs in
+// as. A suite that hands in its own store would otherwise get its account rows
+// written somewhere else entirely, and every channel registration under them
+// would fail a foreign key that is doing exactly the right thing.
+func newEnvOn(t *testing.T, store *channelstore.Store, tokens *auth.Tokens,
+	workers registry, caller ...any) *testEnv {
+	t.Helper()
+	mutate := make([]func(*gateway.Config), 0, len(caller))
+	var owner channelstore.User
+	for _, c := range caller {
+		switch v := c.(type) {
+		case channelstore.User:
+			owner = v
+		case func(*gateway.Config):
+			mutate = append(mutate, v)
+		}
+	}
+	// A keyed Telegram route resolves the caller's own account before it picks
+	// a worker. These tests are about routing and status codes, so the caller
+	// is a real user holding one account per configured server key, each with
+	// its own worker: the request then reaches exactly the worker the test
+	// names. The operator token is still the default session everywhere else —
+	// it is a credential and not an account, so it owns no Telegram identity.
+	ctx := context.Background()
+	hash, err := auth.HashPassword("gateway-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The owner is either the caller the suite already made, or a routing
+	// caller of this environment's own. Either way the accounts below belong to
+	// exactly the user the requests are signed as.
+	user := owner
+	if user.ID == 0 {
+		var err error
+		user, err = store.CreateUser(ctx, "Routing Caller", "routing-caller", hash, true)
+		if err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+	}
+	// These tests are about routing and status codes, so the caller holds the
+	// global view rather than a per-channel grant: with no local record a
+	// channel is governed by the global permission alone.
+	if err := store.ReplacePermissions(ctx, user.ID, channelstore.PermissionSet{
+		Global: channelstore.GlobalPermissions(),
+	}); err != nil {
+		t.Fatalf("ReplacePermissions: %v", err)
+	}
+	userToken, _, err := tokens.Issue(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	cfg := gateway.Config{
 		Workers:        workers,
 		RequestTimeout: 2 * time.Second,
 		Now:            func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) },
+		Users:          store,
+		Tokens:         tokens,
+		Channels:       store,
+		Accounts:       store,
+		AccountChannels: store,
+		Resolver:       gateway.NewStoreAccountResolver(store),
 	}
 	cfg.Operator = operatorToken
 	for _, fn := range mutate {
 		fn(&cfg)
 	}
-	env := &testEnv{workers: workers, session: operatorToken}
+
+	// The accounts go into the store the configuration actually names, which is
+	// the one a mutator may have replaced. Writing them anywhere else leaves
+	// every channel registration pointing at an account the store cannot see.
+	accounts := map[string]channelstore.Account{}
+	byAccount := registry{}
+	remote := int64(1)
+	seed := store
+	if scoped, ok := cfg.Accounts.(*channelstore.Store); ok {
+		seed = scoped
+	}
+	for key, w := range workers {
+		id, err := accountid.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		network := channelstore.NetworkTelegram
+		rec, err := seed.Create(ctx, channelstore.Account{
+			ID: id, OwnerUserID: user.ID, ServerKey: key, NetworkType: network,
+			RemoteUserID: remote, Status: channelstore.AccountStatusConnected,
+		})
+		remote++
+		if err != nil {
+			t.Fatalf("Create account for %s: %v", key, err)
+		}
+		accounts[key] = rec
+		byAccount[id] = w
+	}
+	cfg.Workers = byAccount
+
+	// The default session is the account holder: a keyed Telegram route needs
+	// somebody who owns an account, and these tests are about routing. Tests
+	// about the operator token or about authentication set their own.
+	//
+	// workers is the registry the gateway actually reads — the account-keyed
+	// one, not the server-keyed map the test named. A helper that registers a
+	// worker after this point has to land in the map cfg.Workers holds, or the
+	// lookup finds nothing and every route answers "no worker serves that
+	// account".
+	env := &testEnv{workers: byAccount, session: userToken, account: accounts, userToken: userToken}
 	cfg.OnCreated = func(kind channelstore.ResourceKind, id int64) {
 		if env.onCreated != nil {
 			env.onCreated(id)
@@ -414,12 +558,22 @@ func TestUnknownKeyIs404AndNeverFallsBack(t *testing.T) {
 	official := readyWorker()
 	env := newEnv(t, registry{"official": official})
 
+	// A server key the caller has no account on is not-found either. Under
+	// user-owned accounts a key alone names no identity: the route resolves the
+	// caller's own account on it, and when there is none it refuses rather than
+	// reaching for a shared session. The worker must not be touched in either
+	// case.
 	resp := env.get(t, "/api/v1/telegram/nope/health")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
 	body := decode[errorEnvelope](t, resp)
-	if body.Error.Code != "unknown_client" {
+	switch body.Error.Code {
+	case "unknown_client", "account_not_owned":
+		// Both are refusals that name no other client. A key that is not
+		// configured and a key the caller has no account on are the same
+		// answer to the question "may I act through something else?".
+	default:
 		t.Fatalf("code = %q", body.Error.Code)
 	}
 	if official.callCount() != 0 {
